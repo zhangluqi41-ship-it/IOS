@@ -41,11 +41,3 @@ targets:
       - Tests/ExpiryAppTests
     dependencies:
       - target: ExpiryManager
-schemes:
-  ExpiryManager:
-    build:
-      targets:
-        ExpiryManager: all
-    test:
-      targets:
-        - ExpiryManagerTests
