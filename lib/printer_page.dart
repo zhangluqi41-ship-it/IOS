@@ -352,6 +352,13 @@ class _PrinterPageState extends State<PrinterPage> {
     );
   }
 
+  /// 可选的打印机型号。
+  ///
+  /// iOS 上只给硕方：系统禁止经典蓝牙串口，通用 TSPL / ESC-POS 那两条通道
+  /// 在 iPhone 上根本发不出去，索性不给选，免得白折腾一轮。
+  List<PrinterKind> get _kindOptions =>
+      kIsIos ? const [PrinterKind.supvan] : PrinterKind.values;
+
   /// 打印机型号（= 通信协议）选择。决定走官方 SDK 还是通用蓝牙指令。
   ///
   /// v1.4.1 起改为**下拉菜单**，选完在下方显示该型号的一句话说明。
@@ -382,7 +389,10 @@ class _PrinterPageState extends State<PrinterPage> {
             Text(
               locked
                   ? '这台设备添加时选的就是该型号，删除后可重新以其他型号添加。'
-                  : '型号决定了用哪套通信协议，请按打印机实际品牌选择。',
+                  : (kIsIos
+                        ? 'iOS 只认走蓝牙 BLE 的硕方机型 —— 系统不允许经典蓝牙串口，'
+                              '通用 TSPL / ESC-POS 机型请在安卓上用。'
+                        : '型号决定了用哪套通信协议，请按打印机实际品牌选择。'),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -405,7 +415,7 @@ class _PrinterPageState extends State<PrinterPage> {
                 enabled: enabled,
               ),
               items: [
-                for (final k in PrinterKind.values)
+                for (final k in _kindOptions)
                   DropdownMenuItem<PrinterKind>(
                     value: k,
                     child: Text(k.label, overflow: TextOverflow.ellipsis),
@@ -621,22 +631,27 @@ class _PrinterPageState extends State<PrinterPage> {
             if (_devices.isEmpty) ...[
               const SizedBox(height: 8),
               Text(
-                '还没有设备。先在系统蓝牙设置里把打印机配对好，'
-                '或点右上角「扫描附近设备」。',
+                kIsIos
+                    ? '还没有设备。点右上角「扫描附近设备」，'
+                          '打印机记得先开机。'
+                    : '还没有设备。先在系统蓝牙设置里把打印机配对好，'
+                          '或点右上角「扫描附近设备」。',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
-            const SizedBox(height: 4),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: _busy ? null : _addManual,
-                icon: const Icon(Icons.keyboard_alt_outlined, size: 18),
-                label: const Text('手动输入 MAC 添加'),
+            if (!kIsIos) ...[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _busy ? null : _addManual,
+                  icon: const Icon(Icons.keyboard_alt_outlined, size: 18),
+                  label: const Text('手动输入 MAC 添加'),
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

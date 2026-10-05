@@ -15,6 +15,11 @@ dependencies:
   qr: ^3.0.2
   mobile_scanner: ^7.4.2
 
+  # iOS 原生通道（蓝牙打印 / 设置持久化 / PDF 保存）。
+  # 只在 iOS 生效：安卓侧的这三个 MethodChannel 由 android/ 里的 Kotlin 实现提供。
+  expiry_native_ios:
+    path: plugins/expiry_native_ios
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

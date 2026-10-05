@@ -89,6 +89,13 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "1.0.9"
+  expiry_native_ios:
+    dependency: "direct main"
+    description:
+      path: "plugins/expiry_native_ios"
+      relative: true
+    source: path
+    version: "1.0.0"
   fake_async:
     dependency: transitive
     description:

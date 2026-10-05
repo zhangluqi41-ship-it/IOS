@@ -1,6 +1,16 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+
+/// 当前跑在 iOS 上吗？
+///
+/// iOS 与安卓有两条硬性差异，界面必须跟着变：
+/// 1. **拿不到蓝牙 MAC 地址** —— 设备标识是 CoreBluetooth 的 `identifier`
+///    （UUID 字符串），所以「手动输入 MAC 添加」这条路在 iOS 上不存在；
+/// 2. **不允许经典蓝牙 SPP** —— 通用 TSPL / ESC-POS 机型在 iOS 上打印不了，
+///    只有走 BLE 的硕方机型可用。
+final bool kIsIos = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
 /// 打印机型号（= 通信协议）。
 ///
@@ -8,28 +18,13 @@ import 'package:flutter/services.dart';
 /// 原生侧 [PrinterBridge] 按 [code] 分派到对应驱动。
 enum PrinterKind {
   /// 硕方 T50 Pro / T56 Pro / T50S / T50 Plus —— 官方 SDK 私有协议，能查到状态和耗材。
-  supvan(
-    'supvan_t50pro',
-    '硕方 T50 Pro',
-    '官方 SDK 通道 · 可查状态与耗材',
-    'supvan',
-  ),
+  supvan('supvan_t50pro', '硕方 T50 Pro', '官方 SDK 通道 · 可查状态与耗材', 'supvan'),
 
   /// 通用标签机 —— TSPL 指令集，佳博/汉印/芯烨等大多数国产标签机都吃这套。
-  tspl(
-    'generic_tspl',
-    '通用标签机',
-    'TSPL 指令 · 大多数国产标签机',
-    'generic',
-  ),
+  tspl('generic_tspl', '通用标签机', 'TSPL 指令 · 大多数国产标签机', 'generic'),
 
   /// 通用热敏机 —— ESC/POS 光栅指令。
-  escpos(
-    'generic_escpos',
-    '通用热敏机',
-    'ESC/POS 指令 · 票据机 / 便携机',
-    'generic',
-  );
+  escpos('generic_escpos', '通用热敏机', 'ESC/POS 指令 · 票据机 / 便携机', 'generic');
 
   const PrinterKind(this.code, this.label, this.hint, this.family);
 
@@ -97,8 +92,15 @@ class SavedPrinter {
   final PrinterKind kind;
 
   /// 卡片副标题显示的短地址（MAC 太长，只留后 8 位便于辨认）。
-  String get shortAddress =>
-      address.length > 8 ? '…${address.substring(address.length - 8)}' : address;
+  String get shortAddress => address.length > 8
+      ? '…${address.substring(address.length - 8)}'
+      : address;
+
+  /// 地址是不是 MAC 形式。
+  ///
+  /// iOS 上地址是 CoreBluetooth 的 UUID（带横杠、没有冒号），
+  /// 当 MAC 展示会误导，界面据此换个说法。
+  bool get addressIsMac => address.contains(':');
 
   SavedPrinter copyWith({String? name, PrinterKind? kind}) => SavedPrinter(
     name: name ?? this.name,

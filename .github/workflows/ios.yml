@@ -1,0 +1,67 @@
+name: Build iOS IPA (unsigned)
+
+# 在 GitHub 免费的 macOS 机器上出一个「未签名 IPA」。
+# 下载后在 Windows 上用 Sideloadly + 免费 Apple ID 自签，装进 iPhone。
+#
+# 免费额度提示（重要）：
+#   公开仓库 → macOS 机器分钟数**免费且不限量**（推荐这样建仓库）
+#   私有仓库 → macOS 按 10 倍扣分钟，免费池 2000 分钟/月 ≈ 只够跑 4~6 次
+#
+# 触发方式：push 到 main/master，或在 Actions 页面点 "Run workflow"。
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show toolchain versions
+        run: |
+          flutter --version
+          xcodebuild -version
+          pod --version
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build iOS (release, no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="build/ios/iphoneos/Runner.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "::error::Runner.app not found at $APP_PATH"
+            exit 1
+          fi
+          rm -rf build/ios/ipa
+          mkdir -p build/ios/ipa/Payload
+          cp -R "$APP_PATH" build/ios/ipa/Payload/
+          cd build/ios/ipa
+          zip -qry ExpiryManager-unsigned.ipa Payload
+          ls -lh ExpiryManager-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExpiryManager-unsigned-ipa
+          path: build/ios/ipa/ExpiryManager-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

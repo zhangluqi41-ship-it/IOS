@@ -83,7 +83,11 @@ class _PrinterMenuPageState extends State<PrinterMenuPage> {
           children: [
             ListTile(
               title: Text(p.name),
-              subtitle: Text('${p.kind.label} · ${p.address}'),
+              subtitle: Text(
+                p.addressIsMac
+                    ? '${p.kind.label} · ${p.address}'
+                    : '${p.kind.label} · iOS 设备',
+              ),
             ),
             const Divider(height: 1),
             ListTile(
@@ -140,9 +144,8 @@ class _PrinterMenuPageState extends State<PrinterMenuPage> {
     await _svc.removePrinter(p.address);
     await _load();
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已移除 ${p.name}')));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('已移除 ${p.name}')));
   }
 
   @override
@@ -211,7 +214,8 @@ class _PrinterMenuPageState extends State<PrinterMenuPage> {
               child: EmptyStateCard(
                 icon: Icons.print_outlined,
                 title: '还没有打印机',
-                body: '点「添加打印机」选择型号，扫描并连接设备。\n'
+                body:
+                    '点「添加打印机」选择型号，扫描并连接设备。\n'
                     '连接成功会自动出现在这里，下次打开就能直接打印。',
               ),
             ),
@@ -322,7 +326,11 @@ class _SupportedKinds extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.memory_outlined, size: 18, color: theme.colorScheme.primary),
+              Icon(
+                Icons.memory_outlined,
+                size: 18,
+                color: theme.colorScheme.primary,
+              ),
               const SizedBox(width: 8),
               Text(
                 '支持哪些打印机',
