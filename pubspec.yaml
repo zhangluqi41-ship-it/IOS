@@ -1,7 +1,7 @@
 name: expiry_manager
 description: "效期管理程序 —— 生成 50x30mm 效期标签 PDF"
 publish_to: 'none'
-version: 1.5.0+8
+version: 1.6.0+9
 
 environment:
   sdk: ^3.13.5

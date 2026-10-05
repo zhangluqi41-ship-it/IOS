@@ -1,8 +1,13 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'app_shell.dart';
+import 'ios/ios_nav.dart';
+import 'ios/ios_shell.dart';
+import 'ios/ios_theme.dart';
 import 'nav.dart';
 import 'prefs.dart';
+import 'printer.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,20 +16,65 @@ Future<void> main() async {
   runApp(const ExpiryApp());
 }
 
-/// 效期管理系统。
+/// 效期管理系统 —— 按平台分流两套完全独立的 UI。
 ///
-/// 一级页面 = [HomeShell]（模板 / 打印机两节 + 底部玻璃栏），
-/// 具体的模板输入页、预览页都是它的二级 / 三级页面。
+/// **架构决策（对应用户需求第 3、8 条）**：
+/// 不再「安卓写完硬转 iOS」，而是**两端各自实现**：
+///  * iOS → `CupertinoApp` + [IosHomeShell]（`lib/ios/` 下一整套 Cupertino 组件）
+///  * 安卓 → `MaterialApp` + [HomeShell]（`lib/ui_kit.dart` 那套 Material 组件）
+///
+/// 业务逻辑（`label_template` / `label_renderer` / `printer` / `prefs`）
+/// **两端共用**，只有表现层分开，避免逻辑分叉。
 class ExpiryApp extends StatelessWidget {
   const ExpiryApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF00695C);
+    return kIsIos ? const _IosApp() : const _AndroidApp();
+  }
+}
+
+// ===========================================================================
+// iOS 分支
+// ===========================================================================
+
+class _IosApp extends StatelessWidget {
+  const _IosApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoApp(
+      title: '效期管理系统',
+      debugShowCheckedModeBanner: false,
+      navigatorObservers: <NavigatorObserver>[iosRouteObserver],
+      theme: const CupertinoThemeData(
+        brightness: Brightness.light,
+        primaryColor: IosColors.brand,
+        scaffoldBackgroundColor: IosColors.groupedLight,
+        barBackgroundColor: IosColors.cardLight,
+        textTheme: CupertinoTextThemeData(
+          primaryColor: IosColors.brand,
+        ),
+      ),
+      home: const IosHomeShell(),
+    );
+  }
+}
+
+// ===========================================================================
+// 安卓分支
+// ===========================================================================
+
+class _AndroidApp extends StatelessWidget {
+  const _AndroidApp();
+
+  @override
+  Widget build(BuildContext context) {
+    const Color seed = Color(0xFF00695C);
     return MaterialApp(
       title: '效期管理程序',
       debugShowCheckedModeBanner: false,
-      navigatorObservers: [glassRouteObserver],
+      navigatorObservers: <NavigatorObserver>[glassRouteObserver],
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: seed,
