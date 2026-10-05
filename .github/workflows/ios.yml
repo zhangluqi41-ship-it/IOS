@@ -38,6 +38,9 @@ jobs:
           xcodebuild -version
           pod --version
 
+      - name: Force CocoaPods (disable Swift Package Manager)
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Flutter pub get
         run: flutter pub get
 
