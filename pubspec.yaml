@@ -1,0 +1,37 @@
+name: expiry_manager
+description: "效期管理程序 —— 生成 50x30mm 效期标签 PDF"
+publish_to: 'none'
+version: 1.5.0+8
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  pdf: ^3.13.1
+  printing: ^5.15.1
+  qr: ^3.0.2
+  mobile_scanner: ^7.4.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  # 标签 PDF 渲染与 App UI 统一使用开源思源黑体（Noto Sans SC），
+  # 避免打包微软雅黑带来的授权问题。
+  assets:
+    - assets/fonts/
+
+  fonts:
+    - family: NotoSansSC
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/NotoSansSC-Bold.ttf
+          weight: 700
