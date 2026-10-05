@@ -24,23 +24,19 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
-      - name: Debug build settings
+      - name: Build for testing
         working-directory: swiftui
         run: |
-          xcodebuild -project ExpiryManager.xcodeproj -scheme ExpiryManager -showBuildSettings 2>/dev/null | grep -iE "GENERATE_INFOPLIST|PRODUCT_BUNDLE_IDENTIFIER|INFOPLIST_FILE"
-
-      - name: Debug build simulator and inspect Info.plist
-        working-directory: swiftui
-        run: |
-          xcodebuild build -project ExpiryManager.xcodeproj -scheme ExpiryManager -sdk iphonesimulator -derivedDataPath dbg CODE_SIGNING_ALLOWED=NO 2>&1 | tail -3
-          APP=$(find dbg/Build/Products -name "ExpiryManager.app" -type d | head -1)
-          echo "APP=$APP"
-          plutil -p "$APP/Info.plist" | head -30
+          xcodebuild build-for-testing \
+            -project ExpiryManager.xcodeproj \
+            -scheme ExpiryManager \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Run unit tests
         working-directory: swiftui
         run: |
-          xcodebuild test \
+          xcodebuild test-without-building \
             -project ExpiryManager.xcodeproj \
             -scheme ExpiryManager \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
