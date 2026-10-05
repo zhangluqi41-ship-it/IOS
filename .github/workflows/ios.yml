@@ -24,7 +24,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # v4 用的还是 Node 20 运行时（GitHub 正在淘汰，构建日志里会报黄字警告）；
+        # v6 / v7 已切到 Node 24。若哪天升版出问题，改回 @v4 即可（v4 现在仍能跑）。
+        uses: actions/checkout@v7
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -83,7 +85,8 @@ jobs:
           }
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
+        # 同上：v4 是 Node 20，v7 是 Node 24。出问题就改回 @v4。
+        uses: actions/upload-artifact@v7
         with:
           name: ExpiryManager-unsigned-ipa
           path: build/ios/ipa/ExpiryManager-unsigned.ipa
