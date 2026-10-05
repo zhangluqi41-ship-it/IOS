@@ -30,7 +30,7 @@ jobs:
           xcodebuild build-for-testing \
             -project ExpiryManager.xcodeproj \
             -scheme ExpiryManager \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -sdk iphonesimulator \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Run unit tests
