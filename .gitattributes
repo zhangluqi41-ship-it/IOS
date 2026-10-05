@@ -1,0 +1,10 @@
+# 仓库里统一用 LF 存文本，避免 Windows/macOS 之间来回转换
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 硕方 iOS SDK 是编译好的 framework：里面的二进制和 plist 一律不做换行转换，
+# 否则 CodeSignature / CodeResources 会被改坏。
+plugins/expiry_native_ios/ios/SFPrintSDK.xcframework/** -text -diff
