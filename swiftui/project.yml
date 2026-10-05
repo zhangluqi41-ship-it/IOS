@@ -28,6 +28,10 @@ targets:
     info:
       path: Sources/ExpiryApp/Info.plist
       properties:
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: $(PRODUCT_BUNDLE_PACKAGE_TYPE)
         CFBundleDisplayName: 效期管理系统
         CFBundleShortVersionString: 1.0.0
         CFBundleVersion: 1
