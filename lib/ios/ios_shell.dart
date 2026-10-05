@@ -51,6 +51,9 @@ class _IosHomeShellState extends State<IosHomeShell> {
   @override
   Widget build(BuildContext context) {
     final Brightness b = iosBrightness(context);
+    // 底部安全区（home indicator 高度）：原生 UITabBar 的标准高度是
+    // 内容区 49pt + 安全区，两者相加才是 platform view 的完整 frame。
+    final double bottomInset = MediaQuery.of(context).padding.bottom;
 
     return CupertinoPageScaffold(
       backgroundColor: IosColors.grouped(b),
@@ -78,6 +81,12 @@ class _IosHomeShellState extends State<IosHomeShell> {
           // ★ 原生 `UITabBar`（iOS 26 上是苹果原厂 Liquid Glass）。
           //   自己定位在底部，而不是塞进 `CupertinoTabScaffold`
           //   —— 后者只接受 Flutter 自绘的 `CupertinoTabBar`。
+          //
+          //   需求（2026-10-05 第 2 轮）第 1 条：
+          //   「整体轮廓上下宽度稍微小一些，横向占满，参照 App Store 的菜单栏；
+          //     图标占比太大，需要协调」。
+          //   → 显式给 `height` 收窄（不传时用原生上报高度，含安全区，会偏高）；
+          //     `iconSize` 从 25 降到 23，让图标与 17pt 文字更协调。
           Positioned(
             left: 0,
             right: 0,
@@ -85,7 +94,8 @@ class _IosHomeShellState extends State<IosHomeShell> {
             child: CNTabBar(
               currentIndex: _index,
               tint: IosColors.brand,
-              iconSize: 25,
+              height: IosSize.tabBar + bottomInset,
+              iconSize: 22,
               items: const <CNTabBarItem>[
                 CNTabBarItem(
                   label: '模板',
@@ -102,15 +112,31 @@ class _IosHomeShellState extends State<IosHomeShell> {
                   activeIcon: CNSymbol('printer.fill'),
                 ),
               ],
-              onTap: (int i) {
-                iosHaptic(HapticFeedbackType.selection);
-                setState(() => _index = i);
-              },
+              onTap: _onTabTapped,
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// 点击底栏标签。
+  ///
+  /// 需求（2026-10-05 第 2 轮）二级菜单第 2 条：
+  /// 「在二级以下菜单，点击对应按钮（比如模板、或者打印机）回到对应按钮的一级菜单」。
+  ///
+  /// 这是 iOS 第一方 App 的标准行为（设置、App Store 都这样）：
+  /// * 点**别的**标签 → 切过去，并**保留**该标签原有的页面栈；
+  /// * 点**当前**标签 → 若已在二级以下，则 pop 回该标签的根页。
+  void _onTabTapped(int i) {
+    iosHaptic(HapticFeedbackType.selection);
+    final NavigatorState nav = _navKeys[i].currentState!;
+    if (i == _index) {
+      // 同一个标签：只要有下级页面就弹回去。
+      nav.popUntil((Route<dynamic> r) => r.isFirst);
+      return;
+    }
+    setState(() => _index = i);
   }
 
   Widget _pageFor(int i) {

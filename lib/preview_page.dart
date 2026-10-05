@@ -110,6 +110,8 @@ class LabelPreviewPage extends StatelessWidget {
 
   Widget _buildIos(BuildContext context) {
     final Brightness b = iosBrightness(context);
+    // 底部安全区（home indicator 高度）。
+    final double bottomInset = MediaQuery.of(context).padding.bottom;
     return CupertinoPageScaffold(
       backgroundColor: IosColors.grouped(b),
       navigationBar: CupertinoNavigationBar(
@@ -149,43 +151,47 @@ class LabelPreviewPage extends StatelessWidget {
               ),
             ),
           ),
-          // 底栏两个 Cupertino 按钮
-          SafeArea(
-            top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(
-                IosSpace.ml,
-                IosSpace.smd,
-                IosSpace.ml,
-                IosSpace.m,
-              ),
-              decoration: BoxDecoration(
-                color: IosColors.card(b),
-                border: Border(
-                  top: BorderSide(color: IosColors.separator(b), width: 0.5),
-                ),
-              ),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: _IosBarButton(
-                      icon: CupertinoIcons.arrow_down_to_line,
-                      label: '保存到手机',
-                      onTap: () => _saveToPhone(context),
-                    ),
-                  ),
-                  const SizedBox(width: IosSpace.m),
-                  Expanded(
-                    child: _IosBarButton(
-                      icon: CupertinoIcons.printer,
-                      label: '一键打印',
-                      primary: true,
-                      onTap: () => showIosPrintSheet(context, pdf: pdfBytes),
-                    ),
-                  ),
-                ],
+          // 底栏两个 Cupertino 按钮。
+          // 三级页仍在常驻原生底栏之上 —— 底部要预留「tab bar 内容区 + 安全区」
+          // 的高度，否则按钮会被原生底栏盖住（需求：三级预览严重问题）。
+          Container(
+            padding: const EdgeInsets.fromLTRB(
+              IosSpace.ml,
+              IosSpace.smd,
+              IosSpace.ml,
+              IosSpace.m,
+            ),
+            decoration: BoxDecoration(
+              color: IosColors.card(b),
+              border: Border(
+                top: BorderSide(color: IosColors.separator(b), width: 0.5),
               ),
             ),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: _IosBarButton(
+                    icon: CupertinoIcons.arrow_down_to_line,
+                    label: '保存到手机',
+                    onTap: () => _saveToPhone(context),
+                  ),
+                ),
+                const SizedBox(width: IosSpace.m),
+                Expanded(
+                  child: _IosBarButton(
+                    icon: CupertinoIcons.printer,
+                    label: '一键打印',
+                    primary: true,
+                    onTap: () => showIosPrintSheet(context, pdf: pdfBytes),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // 预留原生底栏占用的高度（内容区 + 安全区），背景与按钮栏连成一片。
+          Container(
+            height: IosSize.tabBar + bottomInset,
+            color: IosColors.card(b),
           ),
         ],
       ),

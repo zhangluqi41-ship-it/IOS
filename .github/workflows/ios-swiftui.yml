@@ -1,0 +1,62 @@
+name: Build iOS (SwiftUI)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: swiftui
+        run: xcodegen generate
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Run unit tests
+        working-directory: swiftui
+        run: |
+          xcodebuild test \
+            -project ExpiryManager.xcodeproj \
+            -scheme ExpiryManager \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build iOS (release, no codesign)
+        working-directory: swiftui
+        run: |
+          xcodebuild build \
+            -project ExpiryManager.xcodeproj \
+            -scheme ExpiryManager \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Package unsigned IPA
+        working-directory: swiftui
+        run: |
+          APP=build/Build/Products/Release-iphoneos/ExpiryManager.app
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          zip -qry ExpiryManager-unsigned.ipa Payload
+          ls -la ExpiryManager-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExpiryManager-unsigned-ipa
+          path: swiftui/ExpiryManager-unsigned.ipa
+          retention-days: 14

@@ -27,6 +27,7 @@ library;
 
 import 'dart:async';
 
+import 'package:cupertino_native_better/cupertino_native.dart';
 import 'package:flutter/cupertino.dart';
 
 import '../prefs.dart';
@@ -741,20 +742,14 @@ class _IosPrinterPageState extends State<IosPrinterPage> {
                 IosSpace.m,
                 IosSpace.sm,
               ),
-              child: CupertinoSlidingSegmentedControl<int>(
-                groupValue: _segment,
-                children: <int, Widget>{
-                  0: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: IosSpace.s),
-                    child: Text('已配对 (${_bonded.length})'),
-                  ),
-                  1: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: IosSpace.s),
-                    child: Text('附近 (${_found.length})'),
-                  ),
-                },
-                onValueChanged: (int? v) {
-                  if (v == null) return;
+              child: CNSegmentedControl(
+                labels: <String>[
+                  '已配对 (${_bonded.length})',
+                  '附近 (${_found.length})',
+                ],
+                selectedIndex: _segment,
+                color: IosColors.brand,
+                onValueChanged: (int v) {
                   iosHaptic(HapticFeedbackType.selection);
                   setState(() => _segment = v);
                 },
@@ -1137,22 +1132,14 @@ class IosPrintOptionsEditor extends StatelessWidget {
           _label(b, '纸张类型'),
           Padding(
             padding: const EdgeInsets.only(bottom: IosSpace.sm),
-            child: CupertinoSlidingSegmentedControl<int>(
-              groupValue: options.paperType.code,
-              children: <int, Widget>{
-                for (final PaperType t in PaperType.values)
-                  t.code: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: IosSpace.s),
-                    child: Text(t.label),
-                  ),
-              },
-              onValueChanged: (int? v) {
-                if (v == null) return;
-                final PaperType t = PaperType.values.firstWhere(
-                  (PaperType x) => x.code == v,
-                  orElse: () => PaperType.gap,
-                );
-                onChanged(options.copyWith(paperType: t));
+            child: CNSegmentedControl(
+              labels: PaperType.values.map((PaperType t) => t.label).toList(),
+              selectedIndex: PaperType.values.indexWhere(
+                (PaperType t) => t.code == options.paperType.code,
+              ),
+              color: IosColors.brand,
+              onValueChanged: (int v) {
+                onChanged(options.copyWith(paperType: PaperType.values[v]));
               },
             ),
           ),
@@ -1161,25 +1148,17 @@ class IosPrintOptionsEditor extends StatelessWidget {
           _label(b, '打印头点数'),
           Padding(
             padding: const EdgeInsets.only(bottom: IosSpace.sm),
-            child: CupertinoSlidingSegmentedControl<int>(
-              groupValue: options.headDots,
-              children: const <int, Widget>{
-                384: Padding(
-                  padding: EdgeInsets.symmetric(vertical: IosSpace.s),
-                  child: Text('384'),
-                ),
-                400: Padding(
-                  padding: EdgeInsets.symmetric(vertical: IosSpace.s),
-                  child: Text('400'),
-                ),
-                576: Padding(
-                  padding: EdgeInsets.symmetric(vertical: IosSpace.s),
-                  child: Text('576'),
-                ),
-              },
-              onValueChanged: (int? v) {
-                if (v == null) return;
-                onChanged(options.copyWith(headDots: v));
+            child: CNSegmentedControl(
+              labels: const <String>['384', '400', '576'],
+              selectedIndex: const <int>[384, 400, 576]
+                  .indexOf(options.headDots)
+                  .clamp(0, 2)
+                  .toInt(),
+              color: IosColors.brand,
+              onValueChanged: (int v) {
+                onChanged(
+                  options.copyWith(headDots: const <int>[384, 400, 576][v]),
+                );
               },
             ),
           ),
@@ -1221,8 +1200,9 @@ class IosPrintOptionsEditor extends StatelessWidget {
                     ],
                   ),
                 ),
-                CupertinoSwitch(
+                CNSwitch(
                   value: options.invert,
+                  color: IosColors.brand,
                   onChanged: (bool v) =>
                       onChanged(options.copyWith(invert: v)),
                 ),

@@ -193,25 +193,21 @@ DateTime _addDays(DateTime d, int days) =>
 
 DateTime _addMonths(DateTime d, int m) => DateTime(d.year, d.month + m, d.day);
 
-DateTime _addYears(DateTime d, int y) => DateTime(d.year + y, d.month, d.day);
-
-/// 通用效期的两个快捷档位组（与安卓版完全一致）。
+/// 通用效期的两个快捷档位组。
+///
+/// 需求（2026-10-05 第 2 轮）模板二级菜单第 2 条：
+/// 「删除全部的今天，保留 +7、+15、+1 个月，再久就没有意义了」。
+/// → 两个日期都精简成同一组三档，并删掉「今天」。
 List<_QuickPreset> _expirePresets(DateTime t) => <_QuickPreset>[
-  _QuickPreset('今天', t),
   _QuickPreset('+7 天', _addDays(t, 7), recommended: true),
-  _QuickPreset('+1 月', _addMonths(t, 1)),
-  _QuickPreset('+3 月', _addMonths(t, 3)),
-  _QuickPreset('+6 月', _addMonths(t, 6)),
-  _QuickPreset('+1 年', _addYears(t, 1)),
+  _QuickPreset('+15 天', _addDays(t, 15)),
+  _QuickPreset('+1 个月', _addMonths(t, 1)),
 ];
 
 List<_QuickPreset> _bestPresets(DateTime t) => <_QuickPreset>[
-  _QuickPreset('今天', t),
   _QuickPreset('+7 天', _addDays(t, 7)),
   _QuickPreset('+15 天', _addDays(t, 15), recommended: true),
-  _QuickPreset('+1 月', _addMonths(t, 1)),
-  _QuickPreset('+2 月', _addMonths(t, 2)),
-  _QuickPreset('+3 月', _addMonths(t, 3)),
+  _QuickPreset('+1 个月', _addMonths(t, 1)),
 ];
 
 // ===========================================================================
@@ -294,10 +290,12 @@ class _IosGenericTemplatePageState extends State<IosGenericTemplatePage> {
 
     return CupertinoPageScaffold(
       backgroundColor: IosColors.grouped(b),
-      navigationBar: const CupertinoNavigationBar(
-        middle: Text('通用效期', style: IosText.navTitle),
-        backgroundColor: Color(0x00000000),
-        border: Border(bottom: BorderSide(color: Color(0x00000000), width: 0)),
+      navigationBar: CupertinoNavigationBar(
+        middle: const Text('通用效期', style: IosText.navTitle),
+        backgroundColor: IosColors.grouped(b).withValues(alpha: 0.92),
+        border: Border(
+          bottom: BorderSide(color: IosColors.separator(b), width: 0.5),
+        ),
       ),
       child: SafeArea(
         child: ListView(
@@ -332,9 +330,13 @@ class _IosGenericTemplatePageState extends State<IosGenericTemplatePage> {
               ],
             ),
             const SizedBox(height: IosSpace.lg),
+            // 需求（2026-10-05 第 2 轮）模板二级菜单第 1 条：
+            // 「奶制品中的日期是统一一起的，但通用效期就分开了」→
+            // 参照奶制品，把「原始保质期」「最佳使用时间」合并进同一个「日期」组，
+            // 两行之间用分隔线隔开，风格统一。
             IosListGroup(
               header: IosSectionHeader(
-                title: '原始保质期',
+                title: '日期',
                 padding: const EdgeInsets.fromLTRB(
                   IosSpace.xs,
                   0,
@@ -354,27 +356,14 @@ class _IosGenericTemplatePageState extends State<IosGenericTemplatePage> {
                     IosSpace.ml,
                     IosSpace.xs,
                     IosSpace.ml,
-                    IosSpace.ml,
+                    IosSpace.m,
                   ),
                   child: _QuickDates(
                     presets: _expirePresets(t),
                     onPick: (DateTime d) => setState(() => _expireDate = d),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: IosSpace.lg),
-            IosListGroup(
-              header: IosSectionHeader(
-                title: '最佳使用时间',
-                padding: const EdgeInsets.fromLTRB(
-                  IosSpace.xs,
-                  0,
-                  IosSpace.xs,
-                  IosSpace.sm,
-                ),
-              ),
-              children: <Widget>[
+                _IosRowDivider(b: b),
                 IosDateField(
                   label: '最佳使用时间',
                   value: _bestDate,
@@ -386,7 +375,7 @@ class _IosGenericTemplatePageState extends State<IosGenericTemplatePage> {
                     IosSpace.ml,
                     IosSpace.xs,
                     IosSpace.ml,
-                    IosSpace.ml,
+                    IosSpace.m,
                   ),
                   child: _QuickDates(
                     presets: _bestPresets(t),
@@ -399,6 +388,7 @@ class _IosGenericTemplatePageState extends State<IosGenericTemplatePage> {
             IosPrimaryButton(busy: _busy, onPressed: _generate),
             const SizedBox(height: IosSpace.lg),
             const IosFootNote(text: '标签规格 50 × 30 mm · 生成后可预览 / 打印 / 分享'),
+            const SizedBox(height: IosSize.tabBarInset),
           ],
         ),
       ),
@@ -580,10 +570,12 @@ class _IosDairyTemplatePageState extends State<IosDairyTemplatePage> {
 
     return CupertinoPageScaffold(
       backgroundColor: IosColors.grouped(b),
-      navigationBar: const CupertinoNavigationBar(
-        middle: Text('奶制品', style: IosText.navTitle),
-        backgroundColor: Color(0x00000000),
-        border: Border(bottom: BorderSide(color: Color(0x00000000), width: 0)),
+      navigationBar: CupertinoNavigationBar(
+        middle: const Text('奶制品', style: IosText.navTitle),
+        backgroundColor: IosColors.grouped(b).withValues(alpha: 0.92),
+        border: Border(
+          bottom: BorderSide(color: IosColors.separator(b), width: 0.5),
+        ),
       ),
       child: SafeArea(
         child: ListView(
@@ -687,6 +679,7 @@ class _IosDairyTemplatePageState extends State<IosDairyTemplatePage> {
             IosPrimaryButton(busy: _busy, onPressed: _generate),
             const SizedBox(height: IosSpace.lg),
             const IosFootNote(text: '标签三行 = 开封时间 / 原始保质期 / 最佳使用时间'),
+            const SizedBox(height: IosSize.tabBarInset),
           ],
         ),
       ),
@@ -767,10 +760,12 @@ class _IosKombuchaTemplatePageState extends State<IosKombuchaTemplatePage> {
 
     return CupertinoPageScaffold(
       backgroundColor: IosColors.grouped(b),
-      navigationBar: const CupertinoNavigationBar(
-        middle: Text('康普茶 · 一发', style: IosText.navTitle),
-        backgroundColor: Color(0x00000000),
-        border: Border(bottom: BorderSide(color: Color(0x00000000), width: 0)),
+      navigationBar: CupertinoNavigationBar(
+        middle: const Text('康普茶 · 一发', style: IosText.navTitle),
+        backgroundColor: IosColors.grouped(b).withValues(alpha: 0.92),
+        border: Border(
+          bottom: BorderSide(color: IosColors.separator(b), width: 0.5),
+        ),
       ),
       child: SafeArea(
         child: ListView(
@@ -837,6 +832,7 @@ class _IosKombuchaTemplatePageState extends State<IosKombuchaTemplatePage> {
               text: '二发请用「扫一扫」识别一发标签上的二维码',
               icon: CupertinoIcons.barcode_viewfinder,
             ),
+            const SizedBox(height: IosSize.tabBarInset),
           ],
         ),
       ),
