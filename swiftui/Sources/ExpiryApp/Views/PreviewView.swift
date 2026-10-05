@@ -96,7 +96,7 @@ struct PreviewView: View {
 
     private func printLabel() {
         // 打印逻辑由 PrinterService 处理（后续接入硕方 SDK）。
-        PrintCoordinator.shared.print(pdfData: pdfData, fileName: fileName)
+        PrintCoordinator.shared.printLabel(pdfData: pdfData, fileName: fileName)
     }
 }
 

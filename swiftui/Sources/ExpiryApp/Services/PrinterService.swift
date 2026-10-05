@@ -13,8 +13,8 @@ final class PrintCoordinator {
     private init() {}
 
     /// 打印一张标签 PDF。
-    func print(pdfData: Data, fileName: String) {
+    func printLabel(pdfData: Data, fileName: String) {
         // 占位：尚未接入打印机，真机打印待实现。
-        print("[PrinterService] print requested: \(fileName), \(pdfData.count) bytes")
+        Swift.print("[PrinterService] print requested: \(fileName), \(pdfData.count) bytes")
     }
 }
