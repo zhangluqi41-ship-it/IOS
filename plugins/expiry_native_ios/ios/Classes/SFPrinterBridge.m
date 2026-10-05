@@ -267,6 +267,14 @@ static UIImage *SFBuildTestPage(int widthMm,
 @property (nonatomic, strong) NSMutableArray<CBPeripheral *> *foundOrder;
 @property (nonatomic, strong) CBPeripheral *target;
 @property (nonatomic, assign) BOOL scanning;
+
+/// 这一轮扫描是不是 `listDevices` 触发的一次性短扫描。
+///
+/// Dart 侧每 2 秒轮询一次 `listDevices` 当兜底，每次都会起一轮 2.5 秒的扫描。
+/// 如果这段时间里用户正好点了「扫描附近设备」，那轮短扫描的收尾定时器
+/// 会把用户的扫描一起掐掉。用这个标记区分开，收尾前先确认还是自己那轮。
+@property (nonatomic, assign) BOOL oneShotScan;
+
 @property (nonatomic, strong) NSTimer *connectTimer;
 @property (nonatomic, strong) NSTimer *scanStopTimer;
 
@@ -395,12 +403,15 @@ static UIImage *SFBuildTestPage(int widthMm,
 
 - (void)startScanInternal {
   self.scanning = YES;
+  // 默认当成「用户主动扫的」；listDevices 起的那轮会随后改成 YES
+  self.oneShotScan = NO;
   [self clearFound];
   [[SFPrintSDKUtils shareInstance] startScan];
 }
 
 - (void)stopScanInternal:(BOOL)notify {
   self.scanning = NO;
+  self.oneShotScan = NO;
   [self.scanStopTimer invalidate];
   self.scanStopTimer = nil;
   [[SFPrintSDKUtils shareInstance] stopScan];
@@ -647,13 +658,19 @@ static UIImage *SFBuildTestPage(int widthMm,
       result([self snapshot]);
       return;
     }
-    // 页面加载时的一次性短扫描
+    // 页面加载时的一次性短扫描。
+    // 硕方 SDK 只会在扫描过程中回调设备，不会回吐缓存，所以想拿到列表只能现场扫。
     [self startScanInternal];
-    __weak typeof(self) weakSelf = self;
+    self.oneShotScan = YES;
+
+    // 这里故意强引用 self：它是进程级单例，不怕循环引用；
+    // 关键是**保证 result 一定被调用**，否则 Dart 侧的 Future 会一直挂着。
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-                     [weakSelf stopScanInternal:NO];
-                     result([weakSelf snapshot]);
+                     if (self.oneShotScan) {
+                       [self stopScanInternal:NO];
+                     }
+                     result([self snapshot]);
                    });
     return;
   }

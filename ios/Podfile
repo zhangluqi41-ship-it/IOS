@@ -48,4 +48,31 @@ post_install do |installer|
       config.build_settings['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
     end
   end
+
+  # ---------------------------------------------------------------- 关键一步
+  # 硕方 SFPrintSDK 是**静态** framework，官方 Demo 给 App 本体开了 `-ObjC`。
+  # 没有它，链接器会把库里「没有被直接引用」的类和分类整个剥掉，
+  # 编译能过、装到手机上却在调用时崩 "unrecognized selector sent to instance"。
+  #
+  # 注意：必须加在 App 本体（Runner）上，不是 pod 目标上 ——
+  # 剥符号发生在最终可执行文件的链接阶段。
+  installer.aggregate_targets.each do |aggregate_target|
+    user_project = aggregate_target.user_project
+    next if user_project.nil?
+
+    user_project.native_targets.each do |native_target|
+      native_target.build_configurations.each do |config|
+        flags = config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']
+        flags = [flags] if flags.is_a?(String)
+        flags = flags.dup
+        # $(inherited) 必须在，否则会把 Pods xcconfig 里的
+        # -framework "Flutter" / -framework "mobile_scanner" 等全部覆盖掉。
+        flags.unshift('$(inherited)') unless flags.include?('$(inherited)')
+        flags << '-ObjC' unless flags.include?('-ObjC')
+        config.build_settings['OTHER_LDFLAGS'] = flags
+      end
+    end
+
+    user_project.save
+  end
 end
