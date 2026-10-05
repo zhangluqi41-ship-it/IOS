@@ -15,9 +15,7 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: Sources/ExpiryApp
-        excludes:
-          - Info.plist
+      - Sources/ExpiryApp
       - path: Resources
         type: folder
         buildPhase: resources
@@ -25,9 +23,18 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager
         PRODUCT_NAME: ExpiryManager
-        INFOPLIST_FILE: Sources/ExpiryApp/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: 1.0.0
+        INFOPLIST_KEY_CFBundleDisplayName: 效期管理系统
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: 用于连接蓝牙标签打印机，打印效期标签。
+        INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription: 用于连接蓝牙标签打印机，打印效期标签。
+        INFOPLIST_KEY_NSCameraUsageDescription: 用于扫描康普茶标签上的二维码，识别制备信息。
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_UIAppFonts: "NotoSansSC-Regular.ttf NotoSansSC-Bold.ttf"
   ExpiryManagerTests:
     type: bundle.unit-test
     platform: iOS
