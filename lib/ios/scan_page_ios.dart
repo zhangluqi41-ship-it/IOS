@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:cupertino_native_better/cupertino_native.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show Material, MaterialType;
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -21,7 +22,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../label_pdf.dart';
 import '../label_renderer.dart';
 import '../label_template.dart';
-import '../preview_page.dart';
+import 'ios_nav.dart';
 import 'ios_theme.dart';
 import 'ios_widgets.dart';
 
@@ -42,14 +43,31 @@ class _IosScanPageState extends State<IosScanPage> {
   /// 已识别到标签、正在处理中，避免重复触发。
   bool _busy = false;
 
-  /// 已识别到标签但解析失败时的提示（不预设品类）。
+  /// 已识别到标签、解析失败时的提示（不预设品类）。
   String? _hintText;
   DateTime _lastHint = DateTime.fromMillisecondsSinceEpoch(0);
 
-  /// 扫描线动画。
-  double _scanLine = 0;
-
   bool _torchOn = false;
+
+  /// 扫码现在是常驻的第三个 Tab —— 切到别的 Tab 时要停相机省电，
+  /// 切回来再恢复，不然相机会一直开着。
+  bool _active = true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // `CupertinoTabView` 的 `TickerMode`/`Visibility` 在切 Tab 时不可靠，
+    // 这里用路由可见性判断：当前 Tab 是否是本页所在的路由。
+    final bool active = ModalRoute.of(context)?.isCurrent ?? true;
+    if (active != _active) {
+      _active = active;
+      if (active) {
+        _resume();
+      } else {
+        _controller.stop().catchError((Object _) {});
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -116,15 +134,9 @@ class _IosScanPageState extends State<IosScanPage> {
       );
       final Uint8List bytes = await renderLabelPdf(data);
       if (!mounted) return;
-      // 用 Cupertino 转场替换，保持与全局导航一致（原安卓版是 MaterialPageRoute）
-      Navigator.of(context).pushReplacement(
-        CupertinoPageRoute<void>(
-          builder: (_) => LabelPreviewPage(
-            pdfBytes: bytes,
-            fileName: labelFileName(data.title, now),
-          ),
-        ),
-      );
+      // 扫码是底栏的第三个 Tab，它自带导航栈 —— 这里**推入**预览页
+      //（而不是替换整个 Tab 内容），返回后扫码页还能继续用。
+      iosOpenPreview(context, bytes, labelFileName(data.title, now));
     } catch (e) {
       _busy = false;
       await _resume();
@@ -157,34 +169,26 @@ class _IosScanPageState extends State<IosScanPage> {
           ),
 
           // 暗角遮罩 + 取景框（需求 6④：四角折线 + 扫描线）
-          _ScanOverlay(onScanLineChanged: (double v) {
-            if (mounted) setState(() => _scanLine = v);
-          }),
-
-          // 顶部：返回按钮
-          Positioned(
-            top: MediaQuery.of(context).padding.top + IosSpace.sm,
-            left: IosSpace.ml,
-            child: _GlassCircleButton(
-              icon: CupertinoIcons.xmark,
-              onTap: () => Navigator.of(context).maybePop(),
-            ),
-          ),
+          const _ScanOverlay(),
 
           // 解析失败提示（通用文案，不预设品类）
           if (_hintText != null)
             Positioned(
               left: IosSpace.xl,
               right: IosSpace.xl,
-              top: MediaQuery.of(context).padding.top + 68,
+              top: MediaQuery.of(context).padding.top + 16,
               child: _HintPill(text: _hintText!),
             ),
 
-          // 需求 6③：两个功能按钮移到**屏幕下方两侧**
+          // 需求 6③：两个功能按钮移到**屏幕下方两侧**。
+          // 扫码现在是底栏的第三个 Tab —— 底栏不会消失，所以这两个按钮
+          // 要抬高到底栏之上（`IosSize.tabBar` + 安全区），否则会被压住。
           Positioned(
             left: 0,
             right: 0,
-            bottom: MediaQuery.of(context).padding.bottom + IosSpace.xl,
+            bottom: MediaQuery.of(context).padding.bottom +
+                IosSize.tabBar +
+                IosSpace.lg,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: <Widget>[
@@ -192,6 +196,7 @@ class _IosScanPageState extends State<IosScanPage> {
                   icon: _torchOn
                       ? CupertinoIcons.lightbulb_fill
                       : CupertinoIcons.lightbulb,
+                  symbol: _torchOn ? 'lightbulb.fill' : 'lightbulb',
                   label: '手电筒',
                   active: _torchOn,
                   onTap: () {
@@ -202,6 +207,7 @@ class _IosScanPageState extends State<IosScanPage> {
                 ),
                 _BottomAction(
                   icon: CupertinoIcons.camera_rotate,
+                  symbol: 'arrow.triangle.2.circlepath.camera',
                   label: '切换镜头',
                   onTap: () {
                     iosHaptic(HapticFeedbackType.light);
@@ -225,9 +231,7 @@ class _IosScanPageState extends State<IosScanPage> {
 ///
 /// 用 `AnimatedBuilder` 驱动扫描线上下往返，视觉上提示「正在识别」。
 class _ScanOverlay extends StatefulWidget {
-  const _ScanOverlay({required this.onScanLineChanged});
-
-  final ValueChanged<double> onScanLineChanged;
+  const _ScanOverlay();
 
   @override
   State<_ScanOverlay> createState() => _ScanOverlayState();
@@ -523,6 +527,7 @@ class _BottomAction extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.active = false,
+    this.symbol,
   });
 
   final IconData icon;
@@ -530,8 +535,40 @@ class _BottomAction extends StatelessWidget {
   final VoidCallback onTap;
   final bool active;
 
+  /// 对应的 SF Symbol 名（供给原生 `CNButton.icon` 用）。
+  /// 为 null 时回落到 Cupertino 自绘按钮。
+  final String? symbol;
+
   @override
   Widget build(BuildContext context) {
+    // 原生玻璃圆钮：这两个按钮悬浮在固定位置、不进滚动列表，
+    // 正是 `CNButton.icon` 的适用场景（iOS 26 上是苹果原厂玻璃材质）。
+    if (symbol != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          CNButton.icon(
+            icon: CNSymbol(symbol!),
+            tint: active ? IosColors.brand : CupertinoColors.white,
+            onPressed: onTap,
+            config: const CNButtonConfig(
+              style: CNButtonStyle.glass,
+              minHeight: 60,
+              borderRadius: 30,
+            ),
+          ),
+          const SizedBox(height: IosSpace.sm),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: IosText.caption2,
+              color: Color(0xE6FFFFFF),
+              height: 1,
+            ),
+          ),
+        ],
+      );
+    }
     return _GlassCircleButton(
       icon: icon,
       label: label,

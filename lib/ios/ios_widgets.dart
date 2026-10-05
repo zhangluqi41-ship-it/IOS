@@ -18,8 +18,7 @@
 /// 额外提供 `LiquidGlassBar`（液态玻璃容器）与 `IosSheet`（底部 sheet 封装）。
 library;
 
-import 'dart:ui' show ImageFilter;
-
+import 'package:cupertino_native_better/cupertino_native.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
@@ -285,7 +284,14 @@ class IosFootNote extends StatelessWidget {
 
 /// 主操作按钮（对应 GenerateButton）。
 ///
-/// HIG：圆角矩形填充按钮，系统蓝底白字，高度 50。
+/// 走 `cupertino_native_better` 的原生 `UIButton`：
+/// * `CNButtonStyle.prominentGlass` —— iOS 26 上是苹果原厂 Liquid Glass
+///   的「突出」变体（有色玻璃底 + 白色高光），低版本自动回落 Flutter 实现。
+/// * `busy` 时按钮自身不给 loading 态（原生按钮没有 spinner 契约），
+///   改为不可点 + 文案切「生成中…」，视觉上等价。
+///
+/// ⚠️ 原生按钮是 `UiKitView`，**不能放进滚动长列表**；本按钮都放在
+/// 表单页底部固定区，符合使用边界。
 class IosPrimaryButton extends StatelessWidget {
   const IosPrimaryButton({
     super.key,
@@ -304,48 +310,33 @@ class IosPrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool disabled = busy || onPressed == null;
     return SizedBox(
       width: double.infinity,
       height: IosSize.primaryButton,
-      child: CupertinoButton(
-        padding: EdgeInsets.zero,
-        color: color ?? IosColors.brand,
-        disabledColor: (color ?? IosColors.brand).withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(IosRadius.button),
-        onPressed: disabled ? null : onPressed,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            if (busy)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CupertinoActivityIndicator(
-                  radius: 8,
-                  color: CupertinoColors.white,
-                ),
-              )
-            else if (icon != null)
-              Icon(icon, size: 19, color: CupertinoColors.white),
-            const SizedBox(width: IosSpace.sm),
-            Text(
-              busy ? '生成中…' : label,
-              style: const TextStyle(
-                fontSize: IosText.headline,
-                fontWeight: FontWeight.w600,
-                color: CupertinoColors.white,
-                letterSpacing: -0.41,
-              ),
-            ),
-          ],
+      child: CNButton(
+        label: busy ? '生成中…' : label,
+        icon: icon == IosIcons.qrCode ? const CNSymbol('qrcode') : null,
+        tint: color ?? IosColors.brand,
+        enabled: !busy && onPressed != null,
+        onPressed: busy ? null : onPressed,
+        config: const CNButtonConfig(
+          style: CNButtonStyle.prominentGlass,
+          width: double.infinity,
+          minHeight: IosSize.primaryButton,
+          borderRadius: IosRadius.button,
+          labelFontSize: IosText.headline,
+          labelFontWeight: FontWeight.w600,
+          labelColor: CupertinoColors.white,
         ),
       ),
     );
   }
 }
 
-/// 次要按钮（对应 GlassButton）—— 白底描边。
+/// 次要按钮（对应 GlassButton）—— 原生玻璃底。
+///
+/// 走 `CNButtonStyle.glass`：iOS 26 上是苹果原厂玻璃材质，
+/// 低版本回落 Flutter 自绘（仍比裸白底描边更接近系统观感）。
 class IosSecondaryButton extends StatelessWidget {
   const IosSecondaryButton({
     super.key,
@@ -364,53 +355,23 @@ class IosSecondaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Brightness b = iosBrightness(context);
-    final bool disabled = busy || onPressed == null;
-
-    final Widget child = Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
-      children: <Widget>[
-        if (busy)
-          const SizedBox(
-            width: 16,
-            height: 16,
-            child: CupertinoActivityIndicator(radius: 7),
-          )
-        else if (icon != null)
-          Icon(icon, size: 18, color: IosColors.brand),
-        if (busy || icon != null) const SizedBox(width: IosSpace.s),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: IosText.callout,
-            fontWeight: FontWeight.w600,
-            color: disabled
-                ? IosColors.brand.withValues(alpha: 0.4)
-                : IosColors.brand,
-          ),
-        ),
-      ],
+    final CNButtonConfig cfg = CNButtonConfig(
+      style: CNButtonStyle.glass,
+      width: expand ? double.infinity : null,
+      shrinkWrap: !expand,
+      minHeight: expand ? IosSize.primaryButton : null,
+      borderRadius: IosRadius.button,
+      labelFontSize: IosText.callout,
+      labelFontWeight: FontWeight.w600,
+      labelColor: IosColors.brand,
     );
-
-    final Widget btn = CupertinoButton(
-      padding: const EdgeInsets.symmetric(
-        horizontal: IosSpace.ml,
-        vertical: IosSpace.m,
-      ),
-      color: IosColors.card(b).withValues(alpha: b == Brightness.dark ? 0.6 : 0.9),
-      borderRadius: BorderRadius.circular(IosRadius.button),
-      onPressed: disabled ? null : onPressed,
-      child: child,
+    return CNButton(
+      label: busy ? '处理中…' : label,
+      enabled: !busy && onPressed != null,
+      onPressed: busy ? null : onPressed,
+      tint: IosColors.brand,
+      config: cfg,
     );
-
-    return expand
-        ? SizedBox(
-            width: double.infinity,
-            height: IosSize.primaryButton,
-            child: btn,
-          )
-        : btn;
   }
 }
 
@@ -1257,10 +1218,14 @@ class IosChipRow extends StatelessWidget {
 // 9. 液态玻璃容器（需求第 1 条）
 // ===========================================================================
 
-/// 液态玻璃材质近似层（iOS 26 Liquid Glass 的 Flutter 视觉仿制）。
+/// 液态玻璃材质层。
 ///
-/// ⚠️ Flutter 无法调用系统真材质，本组件用
-/// 「BackdropFilter 模糊 + 半透明渐变 + 高光描边 + 柔和投影」做近似。
+/// 走 `cupertino_native_better` 的原生 `UIVisualEffectView`：
+/// **iOS 26+ 上是苹果原厂 Liquid Glass**（真实折射 + 高光 + 自适应着色），
+/// 低版本由包自动回落 Flutter 实现（`BackdropFilter` 模糊近似）。
+///
+/// ⚠️ 原生视图不能进滚动长列表；本组件用于固定悬浮元素。
+/// 若外层是弹窗 / sheet，需配合 `CNTabBarRouteObserver`（已在 `main.dart` 注册）。
 class LiquidGlassSurface extends StatelessWidget {
   const LiquidGlassSurface({
     super.key,
@@ -1279,43 +1244,16 @@ class LiquidGlassSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Brightness b = iosBrightness(context);
-    final BorderRadius r = borderRadius ?? BorderRadius.circular(IosRadius.xl);
-    final List<Color> colors =
-        tint ?? (b == Brightness.dark ? IosGlass.tintDark : IosGlass.tintLight);
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: r,
-        boxShadow: IosGlass.shadow,
+    final double r = borderRadius?.topLeft.x ?? IosRadius.xl;
+    final Widget inner = padding == null
+        ? child
+        : Padding(padding: padding!, child: child);
+    return LiquidGlassContainer(
+      config: LiquidGlassConfig(
+        cornerRadius: r,
+        tint: tint?.isNotEmpty == true ? tint!.first : null,
       ),
-      child: ClipRRect(
-        borderRadius: r,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-          child: Container(
-            padding: padding,
-            decoration: BoxDecoration(
-              borderRadius: r,
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: <Color>[
-                  colors[0].withValues(alpha: IosGlass.fillOpacity[0]),
-                  colors[1].withValues(alpha: IosGlass.fillOpacity[1]),
-                ],
-              ),
-              border: Border.all(
-                color: CupertinoColors.white.withValues(
-                  alpha: b == Brightness.dark ? 0.14 : 0.55,
-                ),
-                width: IosGlass.borderWidth,
-              ),
-            ),
-            child: child,
-          ),
-        ),
-      ),
+      child: inner,
     );
   }
 }

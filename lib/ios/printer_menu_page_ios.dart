@@ -27,7 +27,6 @@ class _IosPrinterMenuPageState extends State<IosPrinterMenuPage> {
   final PrinterService _svc = PrinterService.instance;
 
   StreamSubscription<PrinterEvent>? _sub;
-  bool _loading = true;
   List<SavedPrinter> _saved = const <SavedPrinter>[];
 
   @override
@@ -48,7 +47,6 @@ class _IosPrinterMenuPageState extends State<IosPrinterMenuPage> {
     if (!mounted) return;
     setState(() {
       _saved = list;
-      _loading = false;
     });
   }
 
@@ -215,6 +213,8 @@ class _IosPrinterMenuPageState extends State<IosPrinterMenuPage> {
                     icon: connected
                         ? CupertinoIcons.printer_fill
                         : CupertinoIcons.printer,
+                    tint: connected ? IosColors.tplKombuchaTint : null,
+                    iconFill: connected ? IosColors.tplKombuchaFill : null,
                     onTap: () => _openTarget(p),
                     onLongPress: () => _showActions(p),
                     badge: connected ? const IosConnectedBadge() : null,

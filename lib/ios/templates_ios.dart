@@ -10,6 +10,10 @@
 ///  * `SnackBar` → **`showCupertinoDialog` / Cupertino 提示**
 library;
 
+// ⚠️ `CNToast` 只在顶层 `cupertino_native_better.dart` 里导出，
+//    子层 `cupertino_native.dart` 没有 export 它。
+import 'package:cupertino_native_better/cupertino_native_better.dart'
+    show CNToast;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
@@ -117,33 +121,18 @@ class _IosField extends StatelessWidget {
 }
 
 /// iOS 风格提示（替代 SnackBar）。
+///
+/// 走 `cupertino_native_better` 的原生 toast：iOS 26 上是苹果原厂玻璃浮层，
+/// 不拦截交互、不打断操作流（原来的 `CupertinoAlertDialog` 要点「好」才能继续）。
+/// 失败文案自动用红色错误样式。
 Future<void> showIosToast(BuildContext context, String message) {
-  return showCupertinoDialog<void>(
-    context: context,
-    builder: (BuildContext ctx) {
-      final Brightness b = iosBrightness(ctx);
-      return CupertinoAlertDialog(
-        title: const Text('提示'),
-        content: Padding(
-          padding: const EdgeInsets.only(top: IosSpace.sm),
-          child: Text(
-            message,
-            style: TextStyle(
-              fontSize: IosText.subheadline,
-              color: IosColors.secondaryLabel(b),
-            ),
-          ),
-        ),
-        actions: <Widget>[
-          CupertinoDialogAction(
-            isDefaultAction: true,
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('好'),
-          ),
-        ],
-      );
-    },
-  );
+  final bool isError = message.contains('失败') || message.contains('错误');
+  if (isError) {
+    CNToast.error(context: context, message: message);
+  } else {
+    CNToast.info(context: context, message: message);
+  }
+  return Future<void>.value();
 }
 
 /// 日期快捷档位的数据结构。
@@ -160,7 +149,6 @@ class _QuickDates extends StatefulWidget {
   const _QuickDates({
     required this.onPick,
     required this.presets,
-    super.key,
   });
 
   final ValueChanged<DateTime> onPick;

@@ -89,6 +89,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "1.0.9"
+  cupertino_native_better:
+    dependency: "direct main"
+    description:
+      name: cupertino_native_better
+      sha256: "41c2a8ed69bc3448c2c05e3797e92e04fae340f1443ace396f8163035313903a"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "1.6.0"
   expiry_native_ios:
     dependency: "direct main"
     description:

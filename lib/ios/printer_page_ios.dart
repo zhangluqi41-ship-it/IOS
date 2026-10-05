@@ -87,6 +87,9 @@ class _IosPrinterPageState extends State<IosPrinterPage> {
   late PrinterKind _kind = widget.target?.kind ?? AppPrefs.lastKind;
   late PrintOptions _options = AppPrefs.printOptions;
 
+  /// 「打印参数」行是否展开（默认收起 —— 平时用不到，不该常驻占一屏）。
+  bool _optionsOpen = false;
+
   static const int _scanSeconds = 25;
 
   @override
@@ -391,7 +394,7 @@ class _IosPrinterPageState extends State<IosPrinterPage> {
       backgroundColor: IosColors.grouped(b),
       navigationBar: CupertinoNavigationBar(
         middle: Text(
-          widget.target?.name ?? '添加打印机',
+          widget.target?.name ?? '打印机',
           style: IosText.navTitle,
         ),
         backgroundColor: IosColors.grouped(b).withValues(alpha: 0.92),
@@ -411,38 +414,443 @@ class _IosPrinterPageState extends State<IosPrinterPage> {
               child: ListView(
                 padding: kIosListPadding,
                 children: <Widget>[
-                  _kindSection(locked: locked),
-                  const SizedBox(height: IosSpace.lg),
-                  if (_supported) _envSection(),
-                  if (!_supported || !_enabled) ...<Widget>[
+                  // ① 状态卡 —— 一眼看到「现在哪台、通不通」。
+                  //    原来六块平铺、连接信息排在列表下面，用户进来要滚才知道状态。
+                  _statusCard(b),
+
+                  // ② 环境异常时才提示（正常时收起来，不再常驻占地方）。
+                  if (!_supported || !_enabled || !_hasPerm) ...<Widget>[
                     const SizedBox(height: IosSpace.lg),
-                    IosBanner(
-                      tone: IosBannerTone.warn,
-                      title: '蓝牙未就绪',
-                      lines: <String>[
-                        if (!_supported) '· 当前设备不支持蓝牙打印通道',
-                        if (_supported && !_enabled) '· 请先在系统设置里打开蓝牙',
-                        if (_supported && _enabled && !_hasPerm)
-                          '· 需要授予蓝牙权限才能扫描设备',
-                      ],
-                    ),
-                  ] else ...<Widget>[
-                    const SizedBox(height: IosSpace.lg),
-                    _deviceSection(b),
+                    _envBanner(),
                   ],
-                  if (_connected != null) ...<Widget>[
-                    const SizedBox(height: IosSpace.lg),
-                    _connectedSection(b),
-                  ],
-                  const SizedBox(height: IosSpace.lg),
-                  _printSection(b),
-                  const SizedBox(height: IosSpace.lg),
-                  _aboutSection(b),
+
+                  const SizedBox(height: IosSpace.groupGap),
+
+                  // ③ 操作组 —— 选定一台机器之后，日常只用得到这几件事。
+                  _actionsSection(b, locked: locked),
+
+                  const SizedBox(height: IosSpace.groupGap),
+
+                  // ④ 设备管理组 —— 换机器、加机器。
+                  _devicesSection(b, locked: locked),
+
                   const SizedBox(height: IosSpace.xl),
+
+                  // ⑤ 型号说明收进底部折叠区，不抢主流程位置。
+                  _aboutSection(b),
+
+                  const SizedBox(height: IosSize.tabBarInset),
                 ],
               ),
             ),
     );
+  }
+
+  // ------------------------------------------------------------------ 三组结构
+
+  /// ① 状态卡：当前是哪台、连接状态如何。
+  ///
+  /// 未连接时也有一张卡，只是文案变成「未连接 / 去选一台设备」，
+  /// 而不是把整块区域藏起来 —— 界面结构保持稳定。
+  Widget _statusCard(Brightness b) {
+    final bool connected = _connected != null;
+    final bool ready = connected && _status == PrinterStatus.ready;
+
+    final Color tone = !connected
+        ? IosColors.gray
+        : (ready ? IosColors.green : IosColors.orange);
+
+    return Container(
+      padding: const EdgeInsets.all(IosSpace.ml),
+      decoration: BoxDecoration(
+        color: IosColors.card(b),
+        borderRadius: BorderRadius.circular(IosRadius.card),
+        border: Border.all(color: IosColors.separator(b), width: 0.8),
+      ),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: connected
+                  ? IosColors.tplKombuchaFill
+                  : IosColors.grouped(b),
+              borderRadius: BorderRadius.circular(IosRadius.m),
+            ),
+            child: Icon(
+              connected ? CupertinoIcons.printer_fill : CupertinoIcons.printer,
+              size: 24,
+              color: connected ? IosColors.brand : IosColors.gray,
+            ),
+          ),
+          const SizedBox(width: IosSpace.m),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  connected
+                      ? (_connected!.name.isEmpty
+                            ? '打印机'
+                            : _connected!.name)
+                      : '未连接打印机',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: IosText.headline,
+                    fontWeight: FontWeight.w600,
+                    color: IosColors.label(b),
+                  ),
+                ),
+                const SizedBox(height: IosSpace.xxs),
+                Row(
+                  children: <Widget>[
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: tone,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: IosSpace.s),
+                    Expanded(
+                      child: Text(
+                        connected
+                            ? '${_status.label} · ${_status.hint}'
+                            : (_kind.label),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: IosText.footnote,
+                          color: connected
+                              ? tone
+                              : IosColors.secondaryLabel(b),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (connected && _kind.supportsStatus)
+            CupertinoButton(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(34, 34),
+              onPressed: _queryStatus,
+              child: const Icon(
+                CupertinoIcons.arrow_clockwise,
+                size: 19,
+                color: IosColors.blue,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// ② 环境异常横幅（只在有问题时出现）。
+  ///
+  /// 原版是常驻三行「蓝牙 / 开关 / 权限」，全绿的时候纯占地方。
+  Widget _envBanner() {
+    return IosBanner(
+      tone: IosBannerTone.warn,
+      title: '蓝牙未就绪',
+      lines: <String>[
+        if (!_supported) '· iOS 蓝牙打印通道不可用',
+        if (_supported && !_enabled) '· 请先在系统设置里打开蓝牙',
+        if (_supported && _enabled && !_hasPerm) '· 需要授予蓝牙权限才能扫描设备',
+      ],
+      action: Row(
+        children: <Widget>[
+          if (!_enabled)
+            IosSecondaryButton(
+              label: '打开系统蓝牙',
+              icon: CupertinoIcons.settings,
+              onPressed: () => _svc.openBluetoothSettings(),
+            ),
+          if (!_enabled && !_hasPerm) const SizedBox(width: IosSpace.sm),
+          if (!_enabled && _hasPerm) const SizedBox.shrink(),
+          if (!_hasPerm)
+            IosSecondaryButton(
+              label: '申请权限',
+              icon: CupertinoIcons.lock_open,
+              onPressed: () async {
+                await _ensurePermission();
+                await _refresh();
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// ③ 操作组：日常真正会用到的三件事。
+  Widget _actionsSection(Brightness b, {required bool locked}) {
+    final bool connected = _connected != null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        IosSectionHeader(
+          title: '操作',
+          padding: const EdgeInsets.fromLTRB(
+            IosSpace.xs,
+            0,
+            IosSpace.xs,
+            IosSpace.sm,
+          ),
+        ),
+        IosListGroup(
+          children: <Widget>[
+            // 打印参数 —— 展开式，平时收起来不占地方。
+            IosListRow(
+              title: '打印参数',
+              subtitle: _summary(),
+              leadingIcon: CupertinoIcons.slider_horizontal_3,
+              showDivider: true,
+              showChevron: false,
+              onTap: () => setState(() => _optionsOpen = !_optionsOpen),
+              trailing: Icon(
+                _optionsOpen
+                    ? CupertinoIcons.chevron_up
+                    : CupertinoIcons.chevron_down,
+                size: 15,
+                color: IosColors.tertiaryLabel(b),
+              ),
+            ),
+            if (_optionsOpen)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  IosSpace.ml,
+                  IosSpace.sm,
+                  IosSpace.ml,
+                  IosSpace.ml,
+                ),
+                child: IosPrintOptionsEditor(
+                  kind: _kind,
+                  options: _options,
+                  onChanged: (PrintOptions o) => setState(() => _options = o),
+                ),
+              ),
+            // 打印测试页
+            IosListRow(
+              title: '打印测试页',
+              subtitle: '先确认纸型与浓度合适，再正式打印',
+              leadingIcon: CupertinoIcons.printer,
+              showDivider: connected,
+              showChevron: false,
+              onTap: _connecting ? null : _printTest,
+              trailing: _connecting
+                  ? const CupertinoActivityIndicator(radius: 8)
+                  : Icon(
+                      CupertinoIcons.chevron_forward,
+                      size: 15,
+                      color: IosColors.tertiaryLabel(b),
+                    ),
+            ),
+            // 断开连接（仅连接时出现）
+            if (connected)
+              IosListRow(
+                title: '断开连接',
+                subtitle: _connected!.name.isEmpty
+                    ? null
+                    : _connected!.name,
+                leadingIcon: CupertinoIcons.link,
+                leadingColor: IosColors.red,
+                titleColor: IosColors.red,
+                showDivider: false,
+                showChevron: false,
+                onTap: () async {
+                  await _svc.disconnect();
+                  if (mounted) setState(() => _connected = null);
+                },
+                trailing: Text(
+                  '断开',
+                  style: TextStyle(
+                    fontSize: IosText.subheadline,
+                    color: IosColors.red,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// ④ 设备管理组：选设备 / 加设备。
+  ///
+  /// 原来「型号选择 + 环境检查 + 设备列表 + 当前连接」四块平铺在一起，
+  /// 用户不知道从哪下手；现在收成一块，标题直说这是管设备的地方。
+  Widget _devicesSection(Brightness b, {required bool locked}) {
+    final List<BtDevice> list = _segment == 0 ? _bonded : _found;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        IosSectionHeader(
+          title: '设备管理',
+          subtitle: _scanning
+              ? '正在扫描，$_scanLeft 秒后自动结束'
+              : '选择要连接的打印机',
+          trailing: CupertinoButton(
+            padding: const EdgeInsets.symmetric(horizontal: IosSpace.sm),
+            minimumSize: const Size(0, 30),
+            pressedOpacity: 0.5,
+            onPressed: _toggleScan,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (_scanning) ...<Widget>[
+                  const CupertinoActivityIndicator(radius: 7),
+                  const SizedBox(width: IosSpace.s),
+                ] else
+                  const Icon(
+                    CupertinoIcons.search,
+                    size: 15,
+                    color: IosColors.blue,
+                  ),
+                Text(
+                  _scanning ? '停止' : '扫描',
+                  style: const TextStyle(
+                    fontSize: IosText.subheadline,
+                    color: IosColors.blue,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          padding: const EdgeInsets.fromLTRB(
+            IosSpace.xs,
+            0,
+            IosSpace.sm,
+            IosSpace.sm,
+          ),
+        ),
+        IosListGroup(
+          children: <Widget>[
+            // 已配对 / 附近 分段
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                IosSpace.m,
+                IosSpace.sm,
+                IosSpace.m,
+                IosSpace.sm,
+              ),
+              child: CupertinoSlidingSegmentedControl<int>(
+                groupValue: _segment,
+                children: <int, Widget>{
+                  0: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: IosSpace.s),
+                    child: Text('已配对 (${_bonded.length})'),
+                  ),
+                  1: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: IosSpace.s),
+                    child: Text('附近 (${_found.length})'),
+                  ),
+                },
+                onValueChanged: (int? v) {
+                  if (v == null) return;
+                  iosHaptic(HapticFeedbackType.selection);
+                  setState(() => _segment = v);
+                },
+              ),
+            ),
+            if (list.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: IosSpace.ml,
+                  vertical: IosSpace.xl,
+                ),
+                child: Column(
+                  children: <Widget>[
+                    Icon(
+                      _segment == 0
+                          ? CupertinoIcons.link
+                          : CupertinoIcons.bluetooth,
+                      size: 30,
+                      color: IosColors.tertiaryLabel(b),
+                    ),
+                    const SizedBox(height: IosSpace.sm),
+                    Text(
+                      _segment == 0
+                          ? '还没有已配对设备'
+                          : (_scanning ? '正在搜索附近设备…' : '点上方「扫描」开始搜索'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: IosText.subheadline,
+                        color: IosColors.secondaryLabel(b),
+                      ),
+                    ),
+                    if (_segment == 0) ...<Widget>[
+                      const SizedBox(height: IosSpace.s),
+                      Text(
+                        '请先在系统「设置 → 蓝牙」里配对打印机，\n配对后会出现在这里。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: IosText.caption1,
+                          color: IosColors.tertiaryLabel(b),
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              )
+            else
+              for (int i = 0; i < list.length; i++)
+                _deviceRow(b, list[i], isLast: i == list.length - 1),
+            if (!kIsIos)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  IosSpace.ml,
+                  0,
+                  IosSpace.ml,
+                  IosSpace.ml,
+                ),
+                child: IosSecondaryButton(
+                  label: '手动输入 MAC 添加',
+                  icon: CupertinoIcons.pencil,
+                  onPressed: _addManual,
+                ),
+              ),
+          ],
+        ),
+        // iOS 上型号只有一个（硕方），不做成下拉选项，直接一行静态说明。
+        if (kIsIos) ...<Widget>[
+          const SizedBox(height: IosSpace.sm),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: IosSpace.xs),
+            child: Text(
+              '当前支持 ${_kind.label}（官方 SDK 通道，可查状态与耗材）。',
+              style: TextStyle(
+                fontSize: IosText.caption1,
+                color: IosColors.tertiaryLabel(b),
+                height: 1.5,
+              ),
+            ),
+          ),
+        ] else ...<Widget>[
+          const SizedBox(height: IosSpace.lg),
+          _kindSection(locked: locked),
+        ],
+      ],
+    );
+  }
+
+  /// 打印参数摘要（给「打印参数」行做副标题）。
+  String _summary() {
+    final List<String> parts = <String>['${_options.copies} 份'];
+    if (_kind == PrinterKind.supvan) {
+      parts.add('浓度 ${_options.density}');
+    } else {
+      parts.add('${_options.headDots} 点');
+    }
+    return parts.join(' · ');
   }
 
   /// 型号选择（对应安卓版 `_kindCard`）。
@@ -496,204 +904,6 @@ class _IosPrinterPageState extends State<IosPrinterPage> {
     );
   }
 
-  /// 环境检查。
-  Widget _envSection() {
-    final Brightness b = iosBrightness(context);
-    return IosListGroup(
-      header: IosSectionHeader(
-        title: '环境检查',
-        padding: const EdgeInsets.fromLTRB(
-          IosSpace.xs,
-          0,
-          IosSpace.xs,
-          IosSpace.sm,
-        ),
-      ),
-      children: <Widget>[
-        _envRow(b, '蓝牙', _supported, '本机蓝牙能力'),
-        _envRow(b, '开关', _enabled, _enabled ? '已打开' : '未打开'),
-        _envRow(b, '权限', _hasPerm, _hasPerm ? '已授权' : '未授权'),
-        if (!_enabled || !_hasPerm)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              IosSpace.ml,
-              0,
-              IosSpace.ml,
-              IosSpace.ml,
-            ),
-            child: Row(
-              children: <Widget>[
-                if (!_enabled)
-                  IosSecondaryButton(
-                    label: '打开系统蓝牙',
-                    icon: CupertinoIcons.settings,
-                    onPressed: () => _svc.openBluetoothSettings(),
-                  ),
-                if (!_enabled && !_hasPerm) const SizedBox(width: IosSpace.sm),
-                if (!_hasPerm)
-                  IosSecondaryButton(
-                    label: '申请蓝牙权限',
-                    icon: CupertinoIcons.lock_open,
-                    onPressed: () async {
-                      await _ensurePermission();
-                      await _refresh();
-                    },
-                  ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _envRow(Brightness b, String label, bool ok, String detail) {
-    return IosListRow(
-      title: label,
-      value: ok ? '正常' : '异常',
-      valueColor: ok ? IosColors.green : IosColors.red,
-      subtitle: detail,
-      leadingIcon: ok
-          ? CupertinoIcons.checkmark_circle_fill
-          : CupertinoIcons.xmark_circle_fill,
-      leadingColor: ok ? IosColors.green : IosColors.red,
-      showDivider: true,
-    );
-  }
-
-  /// ★ 需求 5 的核心：设备列表（分段 + 可见倒计时 + 行内 spinner）。
-  Widget _deviceSection(Brightness b) {
-    final List<BtDevice> list = _segment == 0 ? _bonded : _found;
-
-    return IosListGroup(
-      header: IosSectionHeader(
-        title: '选择打印机',
-        subtitle: _scanning
-            ? '正在扫描，$_scanLeft 秒后自动结束'
-            : '可随时点右侧按钮重新扫描',
-        trailing: CupertinoButton(
-          padding: const EdgeInsets.symmetric(horizontal: IosSpace.sm),
-          minimumSize: const Size(0, 30),
-          pressedOpacity: 0.5,
-          onPressed: _toggleScan,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (_scanning) ...<Widget>[
-                const CupertinoActivityIndicator(radius: 7),
-                const SizedBox(width: IosSpace.s),
-              ] else
-                const Icon(
-                  CupertinoIcons.search,
-                  size: 15,
-                  color: IosColors.blue,
-                ),
-              Text(
-                _scanning ? '停止' : '扫描',
-                style: const TextStyle(
-                  fontSize: IosText.subheadline,
-                  color: IosColors.blue,
-                ),
-              ),
-            ],
-          ),
-        ),
-        padding: const EdgeInsets.fromLTRB(
-          IosSpace.xs,
-          0,
-          IosSpace.sm,
-          IosSpace.sm,
-        ),
-      ),
-      children: <Widget>[
-        // 分段控件：已配对 / 附近
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            IosSpace.m,
-            IosSpace.sm,
-            IosSpace.m,
-            IosSpace.sm,
-          ),
-          child: CupertinoSlidingSegmentedControl<int>(
-            groupValue: _segment,
-            children: <int, Widget>{
-              0: Padding(
-                padding: const EdgeInsets.symmetric(vertical: IosSpace.s),
-                child: Text('已配对 (${_bonded.length})'),
-              ),
-              1: Padding(
-                padding: const EdgeInsets.symmetric(vertical: IosSpace.s),
-                child: Text('附近 (${_found.length})'),
-              ),
-            },
-            onValueChanged: (int? v) {
-              if (v == null) return;
-              iosHaptic(HapticFeedbackType.selection);
-              setState(() => _segment = v);
-            },
-          ),
-        ),
-        if (list.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: IosSpace.ml,
-              vertical: IosSpace.xl,
-            ),
-            child: Column(
-              children: <Widget>[
-                Icon(
-                  _segment == 0
-                      ? CupertinoIcons.link
-                      : CupertinoIcons.bluetooth,
-                  size: 30,
-                  color: IosColors.tertiaryLabel(b),
-                ),
-                const SizedBox(height: IosSpace.sm),
-                Text(
-                  _segment == 0
-                      ? '还没有已配对设备'
-                      : (_scanning ? '正在搜索附近设备…' : '点右上角「扫描」开始搜索'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: IosText.subheadline,
-                    color: IosColors.secondaryLabel(b),
-                  ),
-                ),
-                if (_segment == 0) ...<Widget>[
-                  const SizedBox(height: IosSpace.s),
-                  Text(
-                    '请先在系统「设置 → 蓝牙」里配对打印机，\n配对后会出现在这里。',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: IosText.caption1,
-                      color: IosColors.tertiaryLabel(b),
-                      height: 1.5,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          )
-        else
-          for (int i = 0; i < list.length; i++)
-            _deviceRow(b, list[i], isLast: i == list.length - 1),
-        if (!kIsIos)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              IosSpace.ml,
-              0,
-              IosSpace.ml,
-              IosSpace.ml,
-            ),
-            child: IosSecondaryButton(
-              label: '手动输入 MAC 添加',
-              icon: CupertinoIcons.pencil,
-              onPressed: _addManual,
-            ),
-          ),
-      ],
-    );
-  }
-
   Widget _deviceRow(Brightness b, BtDevice d, {required bool isLast}) {
     final bool isConnected = _connected?.address == d.address;
     final bool isConnecting = _connectingAddress == d.address;
@@ -722,98 +932,6 @@ class _IosPrinterPageState extends State<IosPrinterPage> {
   }
 
   /// 已连接卡片。
-  Widget _connectedSection(Brightness b) {
-    final bool ready = _status == PrinterStatus.ready;
-    return IosListGroup(
-      header: IosSectionHeader(
-        title: '当前连接',
-        padding: const EdgeInsets.fromLTRB(
-          IosSpace.xs,
-          0,
-          IosSpace.xs,
-          IosSpace.sm,
-        ),
-      ),
-      children: <Widget>[
-        IosListRow(
-          title: _connected!.name.isEmpty ? '打印机' : _connected!.name,
-          subtitle: '${_status.label} · ${_status.hint}',
-          leadingIcon: CupertinoIcons.printer_fill,
-          leadingColor: ready ? IosColors.green : IosColors.orange,
-          showDivider: false,
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (_kind.supportsStatus)
-                CupertinoButton(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: IosSpace.xs,
-                  ),
-                  minimumSize: const Size(30, 30),
-                  onPressed: _queryStatus,
-                  child: const Icon(
-                    CupertinoIcons.arrow_clockwise,
-                    size: 18,
-                    color: IosColors.blue,
-                  ),
-                ),
-              CupertinoButton(
-                padding: const EdgeInsets.symmetric(horizontal: IosSpace.xs),
-                minimumSize: const Size(30, 30),
-                onPressed: () async {
-                  await _svc.disconnect();
-                  if (mounted) setState(() => _connected = null);
-                },
-                child: const Icon(
-                  CupertinoIcons.link,
-                  size: 18,
-                  color: IosColors.red,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// 打印测试页。
-  Widget _printSection(Brightness b) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        IosSectionHeader(
-          title: '打印测试页',
-          subtitle: '先确认纸型与浓度合适，再正式打印',
-          padding: const EdgeInsets.fromLTRB(
-            IosSpace.xs,
-            0,
-            IosSpace.xs,
-            IosSpace.sm,
-          ),
-        ),
-        IosListGroup(
-          padding: const EdgeInsets.all(IosSpace.ml),
-          children: <Widget>[
-            IosPrintOptionsEditor(
-              kind: _kind,
-              options: _options,
-              onChanged: (PrintOptions o) => setState(() => _options = o),
-            ),
-          ],
-        ),
-        const SizedBox(height: IosSpace.m),
-        IosSecondaryButton(
-          label: '打印测试页',
-          icon: CupertinoIcons.printer,
-          expand: true,
-          onPressed: _connecting ? null : _printTest,
-        ),
-      ],
-    );
-  }
-
-  /// 「为什么有的型号要单独选」说明。
   Widget _aboutSection(Brightness b) {
     return IosListGroup(
       header: IosSectionHeader(

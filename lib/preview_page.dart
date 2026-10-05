@@ -5,9 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:printing/printing.dart';
 
-import 'ios/ios_nav.dart';
 import 'ios/ios_theme.dart';
-import 'ios/ios_widgets.dart';
 import 'ios/print_sheet_ios.dart';
 import 'pdf_saver.dart';
 import 'print_sheet.dart';

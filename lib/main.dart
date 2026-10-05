@@ -1,3 +1,4 @@
+import 'package:cupertino_native_better/cupertino_native.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -46,7 +47,15 @@ class _IosApp extends StatelessWidget {
     return CupertinoApp(
       title: '效期管理系统',
       debugShowCheckedModeBanner: false,
-      navigatorObservers: <NavigatorObserver>[iosRouteObserver],
+      // ★ 必须注册 CNTabBarRouteObserver：
+      //   CNTabBar 等原生组件是嵌进 Flutter 的原生视图，其 Liquid Glass 光晕
+      //   会渗出自身边界。这个观察器负责在弹窗 / sheet 弹出时把光晕收住、
+      //   并让底栏在整屏 sheet 之上自动隐藏，否则会出现
+      //   「玻璃穿透弹窗」和「sheet 里的输入框被底栏盖住」。
+      navigatorObservers: <NavigatorObserver>[
+        iosRouteObserver,
+        CNTabBarRouteObserver(),
+      ],
       theme: const CupertinoThemeData(
         brightness: Brightness.light,
         primaryColor: IosColors.brand,

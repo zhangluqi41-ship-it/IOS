@@ -30,6 +30,17 @@ abstract final class IosColors {
   static const Color brand = Color(0xFF00695C);
   static const Color brandLight = Color(0xFF4DB6AC);
 
+  // ---- 模板卡片专属标识色（每个模板一个色族，图标底片用 50 号淡色、图标用 600 号深色）----
+  // 通用效期 = 蓝
+  static const Color tplGenericTint = Color(0xFF185FA5);
+  static const Color tplGenericFill = Color(0xFFE6F1FB);
+  // 康普茶 = 品牌绿
+  static const Color tplKombuchaTint = Color(0xFF0F6E56);
+  static const Color tplKombuchaFill = Color(0xFFE1F5EE);
+  // 奶制品 = 琥珀
+  static const Color tplDairyTint = Color(0xFF854F0B);
+  static const Color tplDairyFill = Color(0xFFFAEEDA);
+
   // ---- 分组列表背景（grouped background）----
   static const Color groupedLight = Color(0xFFF2F2F7); // light: systemGroupedBackground
   static const Color groupedDark = Color(0xFF000000); // dark

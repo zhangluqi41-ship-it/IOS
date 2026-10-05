@@ -1,17 +1,17 @@
 /// iOS 一级页外壳 —— `app_shell.dart` 的 Cupertino 对位实现。
 ///
 /// 对应需求：
-///  * 第 1 条 —— 底栏使用苹果官方 **`CupertinoTabBar`**（真·原生标签栏组件），
-///    而非安卓侧自绘的液态玻璃胶囊。玻璃质感交给系统的半透明底 + 模糊，
-///    自己不画多余装饰。
-///  * 第 3、4 条 —— 整个外壳用 Cupertino 组件独立实现，不复用 Material 外壳。
+///  * 第 1 条 —— 底栏使用苹果官方 **`CNTabBar`**（原生 `UITabBar`，
+///    iOS 26 上是系统原厂 Liquid Glass 材质）。不用自绘玻璃、不做凸起悬浮球。
+///  * 第 3、4 条 —— 整个外壳用原生 + Cupertino 组件实现，不复用 Material 外壳。
 ///
 /// 与安卓版的结构差异说明：
 ///  安卓版是「一个 shell + 页内分节标题」；iOS 版按 HIG 改成
-///  **`CupertinoTabScaffold` 双 Tab + 各自独立的大标题**——
+///  **`CupertinoTabScaffold` 三 Tab + 各自独立的大标题**——
 ///  这是 iOS 第一方 App（设置、App Store、健康）的标准骨架。
 library;
 
+import 'package:cupertino_native_better/cupertino_native.dart';
 import 'package:flutter/cupertino.dart';
 
 import 'ios_nav.dart';
@@ -23,10 +23,13 @@ import 'templates_ios.dart';
 
 /// iOS 一级页外壳。
 ///
-/// - `CupertinoTabScaffold` + `CupertinoTabBar`（苹果官方标签栏）
-/// - 两个 Tab：模板 / 打印机
-/// - 中间的「扫码」是**凸起的悬浮球**（保持与安卓版的功能对位），
-///   但用 Cupertino 的渐变圆球 + `CupertinoButton` 实现。
+/// - `CNTabBar`（**原生 `UITabBar`**，iOS 26 上是苹果原厂 Liquid Glass 材质）
+/// - 三个等规格 Tab：模板 / 扫码 / 打印机
+///
+/// **为什么不再用扫码悬浮球**（用户 2026-10-05 需求）：
+/// 悬浮球浮在内容之上、底栏中间空一格，功能入口分成两处，
+/// 用户要「在菜单栏里找到它」而不是「在页面上找它」。
+/// 现在三个入口都是平级的标签，底栏本身就是完整的导航。
 class IosHomeShell extends StatefulWidget {
   const IosHomeShell({super.key});
 
@@ -37,121 +40,89 @@ class IosHomeShell extends StatefulWidget {
 class _IosHomeShellState extends State<IosHomeShell> {
   int _index = 0;
 
+  /// 三个 Tab 各自一个 `Navigator`（HIG 要求 Tab 内导航互相独立，
+  /// 切 Tab 不丢各自的页面栈）。
+  late final List<GlobalKey<NavigatorState>> _navKeys =
+      List<GlobalKey<NavigatorState>>.generate(
+        3,
+        (_) => GlobalKey<NavigatorState>(),
+      );
+
   @override
   Widget build(BuildContext context) {
     final Brightness b = iosBrightness(context);
 
-    return CupertinoTabScaffold(
-      tabBar: CupertinoTabBar(
-        backgroundColor: IosColors.card(b).withValues(alpha: 0.94),
-        activeColor: IosColors.brand,
-        inactiveColor: IosColors.secondaryLabel(b),
-        border: Border(
-          top: BorderSide(color: IosColors.separator(b), width: 0.5),
-        ),
-        currentIndex: _index,
-        onTap: (int i) {
-          iosHaptic(HapticFeedbackType.selection);
-          setState(() => _index = i);
-        },
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(CupertinoIcons.square_grid_2x2, size: 26),
-            activeIcon: Icon(CupertinoIcons.square_grid_2x2_fill, size: 26),
-            label: '模板',
+    return CupertinoPageScaffold(
+      backgroundColor: IosColors.grouped(b),
+      child: Stack(
+        children: <Widget>[
+          // 三个 Tab 用 IndexedStack 常驻：切 Tab 不重建、不丢状态。
+          Positioned.fill(
+            child: IndexedStack(
+              index: _index,
+              children: <Widget>[
+                for (int i = 0; i < 3; i++)
+                  Navigator(
+                    key: _navKeys[i],
+                    // 每层导航只处理自己栈内的返回，不吞掉底层的。
+                    onGenerateRoute: (RouteSettings s) =>
+                        CupertinoPageRoute<void>(
+                          settings: s,
+                          builder: (_) => _pageFor(i),
+                        ),
+                  ),
+              ],
+            ),
           ),
-          BottomNavigationBarItem(
-            icon: Icon(CupertinoIcons.printer, size: 26),
-            activeIcon: Icon(CupertinoIcons.printer_fill, size: 26),
-            label: '打印机',
+
+          // ★ 原生 `UITabBar`（iOS 26 上是苹果原厂 Liquid Glass）。
+          //   自己定位在底部，而不是塞进 `CupertinoTabScaffold`
+          //   —— 后者只接受 Flutter 自绘的 `CupertinoTabBar`。
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: CNTabBar(
+              currentIndex: _index,
+              tint: IosColors.brand,
+              iconSize: 25,
+              items: const <CNTabBarItem>[
+                CNTabBarItem(
+                  label: '模板',
+                  icon: CNSymbol('square.grid.2x2'),
+                  activeIcon: CNSymbol('square.grid.2x2.fill'),
+                ),
+                CNTabBarItem(
+                  label: '扫码',
+                  icon: CNSymbol('qrcode.viewfinder'),
+                ),
+                CNTabBarItem(
+                  label: '打印机',
+                  icon: CNSymbol('printer'),
+                  activeIcon: CNSymbol('printer.fill'),
+                ),
+              ],
+              onTap: (int i) {
+                iosHaptic(HapticFeedbackType.selection);
+                setState(() => _index = i);
+              },
+            ),
           ),
         ],
       ),
-      tabBuilder: (BuildContext context, int i) {
-        return Stack(
-          children: <Widget>[
-            // 两个 Tab 各自保留导航栈（HIG 要求 Tab 内导航独立）
-            CupertinoTabView(
-              builder: (_) => i == 0
-                  ? const IosTemplatesTab()
-                  : const IosPrinterMenuPage(),
-            ),
-            // 扫码悬浮球：位于标签栏正上方居中
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: IosSize.tabBar + 6,
-              child: Center(
-                child: _ScanOrb(
-                  onTap: () => iosPush<void>(context, const IosScanPage()),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
     );
   }
-}
 
-/// 扫码悬浮球 —— Cupertino 风格的渐变圆球。
-class _ScanOrb extends StatelessWidget {
-  const _ScanOrb({required this.onTap});
-
-  final VoidCallback onTap;
-
-  static const double _d = 52;
-
-  @override
-  Widget build(BuildContext context) {
-    final Brightness b = iosBrightness(context);
-    return Semantics(
-      button: true,
-      label: '扫一扫',
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          boxShadow: <BoxShadow>[
-            BoxShadow(
-              color: IosColors.brand.withValues(alpha: 0.32),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: CupertinoButton(
-          padding: EdgeInsets.zero,
-          minimumSize: const Size(_d, _d),
-          pressedOpacity: 0.75,
-          borderRadius: BorderRadius.circular(_d / 2),
-          onPressed: () {
-            iosHaptic(HapticFeedbackType.medium);
-            onTap();
-          },
-          child: Container(
-            width: _d,
-            height: _d,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: <Color>[IosColors.brandLight, IosColors.brand],
-              ),
-              border: Border.all(
-                color: IosColors.card(b),
-                width: 3,
-              ),
-            ),
-            child: const Icon(
-              CupertinoIcons.barcode_viewfinder,
-              size: 24,
-              color: CupertinoColors.white,
-            ),
-          ),
-        ),
-      ),
-    );
+  Widget _pageFor(int i) {
+    switch (i) {
+      case 1:
+        return const IosScanPage();
+      case 2:
+        return const IosPrinterMenuPage();
+      case 0:
+      default:
+        return const IosTemplatesTab();
+    }
   }
 }
 
@@ -211,22 +182,28 @@ class IosTemplatesTab extends StatelessWidget {
               delegate: SliverChildListDelegate(<Widget>[
                 IosGridCard(
                   title: '通用效期',
-                  subtitle: '50 × 30 mm',
+                  subtitle: '自定标题与两个日期',
                   icon: CupertinoIcons.time,
+                  tint: IosColors.tplGenericTint,
+                  iconFill: IosColors.tplGenericFill,
                   onTap: () =>
                       iosPush<void>(context, const IosGenericTemplatePage()),
                 ),
                 IosGridCard(
                   title: '康普茶',
-                  subtitle: '一发 / 二发',
+                  subtitle: '自动算一发二发日期',
                   icon: CupertinoIcons.drop,
+                  tint: IosColors.tplKombuchaTint,
+                  iconFill: IosColors.tplKombuchaFill,
                   onTap: () =>
                       iosPush<void>(context, const IosKombuchaTemplatePage()),
                 ),
                 IosGridCard(
                   title: '奶制品',
-                  subtitle: '牛奶 / 燕麦 / 豆奶…',
+                  subtitle: '按品类套保质期',
                   icon: CupertinoIcons.lab_flask,
+                  tint: IosColors.tplDairyTint,
+                  iconFill: IosColors.tplDairyFill,
                   onTap: () =>
                       iosPush<void>(context, const IosDairyTemplatePage()),
                 ),
@@ -254,6 +231,10 @@ class IosTemplatesTab extends StatelessWidget {
 /// iOS 网格卡片 —— 对应安卓的 `TemplateCard`。
 ///
 /// HIG：白底、圆角 16、图标 44、标题 17 半粗、副标题 13 灰。
+///
+/// **图标改为「色块底片 + 深色图标」**（用户 2026-10-05 细节打磨需求）：
+/// 原来三个模板都是同一套线框图标、同一颜色，扫一眼分不出区别；
+/// 现在每个模板有自己的标识色，图标坐在同色系的淡色方块里。
 class IosGridCard extends StatefulWidget {
   const IosGridCard({
     super.key,
@@ -264,6 +245,8 @@ class IosGridCard extends StatefulWidget {
     this.onLongPress,
     this.badge,
     this.highlight = false,
+    this.tint,
+    this.iconFill,
   });
 
   final String title;
@@ -275,6 +258,12 @@ class IosGridCard extends StatefulWidget {
 
   /// 强调态（「添加打印机」用）。
   final bool highlight;
+
+  /// 图标主色。为 null 时回落到品牌色。
+  final Color? tint;
+
+  /// 图标底片色（同色系淡色）。为 null 时不画底片。
+  final Color? iconFill;
 
   @override
   State<IosGridCard> createState() => _IosGridCardState();
@@ -335,13 +324,28 @@ class _IosGridCardState extends State<IosGridCard> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: <Widget>[
-                    Icon(
-                      widget.icon,
-                      size: 42,
-                      color: widget.highlight
-                          ? IosColors.brand
-                          : IosColors.brand.withValues(alpha: 0.85),
-                    ),
+                    if (widget.iconFill != null)
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          color: widget.iconFill,
+                          borderRadius: BorderRadius.circular(IosRadius.m),
+                        ),
+                        child: Icon(
+                          widget.icon,
+                          size: 28,
+                          color: widget.tint ?? IosColors.brand,
+                        ),
+                      )
+                    else
+                      Icon(
+                        widget.icon,
+                        size: 42,
+                        color: widget.highlight
+                            ? IosColors.brand
+                            : IosColors.brand.withValues(alpha: 0.85),
+                      ),
                     const SizedBox(height: IosSpace.m),
                     Padding(
                       padding: const EdgeInsets.symmetric(
