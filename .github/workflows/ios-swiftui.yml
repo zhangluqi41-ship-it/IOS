@@ -63,18 +63,22 @@ jobs:
           $PB -c "Delete :LSSupportsOpeningDocumentsInPlace" "$PL" 2>/dev/null || true
           $PB -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PL"
           # ★ 字体注册：INFOPLIST_KEY_UIAppFonts 不是受支持的 key，会被丢弃，
-          #   所以这里手工把 Resources/ 里带进包根的字体登记进 UIAppFonts，
-          #   否则 FontProvider 只会回落到系统字体。
+          #   所以这里手工把包内的字体登记进 UIAppFonts（用相对包根的路径），
+          #   否则 FontProvider 只会回落到系统字体，而标签行距是按 Noto Sans SC 调的。
           echo "=== 包内字体 ==="
-          ls -la "$APP"/*.ttf || echo "(没找到 ttf)"
+          find "$APP" -maxdepth 2 \( -name '*.ttf' -o -name '*.otf' \) -print || true
           $PB -c "Delete :UIAppFonts" "$PL" 2>/dev/null || true
-          $PB -c "Add :UIAppFonts array" "$PL"
-          i=0
-          for f in "$APP"/*.ttf; do
-            [ -e "$f" ] || continue
-            $PB -c "Add :UIAppFonts:$i string $(basename "$f")" "$PL"
-            i=$((i+1))
-          done
+          FONTS=$(cd "$APP" && find . -maxdepth 2 \( -name '*.ttf' -o -name '*.otf' \) | sed 's|^\./||')
+          if [ -n "$FONTS" ]; then
+            $PB -c "Add :UIAppFonts array" "$PL"
+            i=0
+            for f in $FONTS; do
+              $PB -c "Add :UIAppFonts:$i string $f" "$PL"
+              i=$((i+1))
+            done
+          else
+            echo "!! 警告：包内没有找到字体文件，UIAppFonts 未写入"
+          fi
           echo "=== Info.plist after patch ==="
           plutil -p "$PL"
 

@@ -18,8 +18,11 @@ targets:
     platform: iOS
     sources:
       - Sources/ExpiryApp
+      # ⚠️ 不要用 `type: folder`。folder 会生成「蓝色文件夹引用」，
+      #    打包后字体落在 app 包内的 `Resources/` 子目录里（非标准位置），
+      #    UIAppFonts 里写的裸文件名就找不到文件，字体静默失效。
+      #    用默认的 group 类型 -> 每个字体作为独立资源 -> 落在包根。
       - path: Resources
-        type: folder
         buildPhase: resources
     dependencies:
       # 硕方 SFPrintSDK.xcframework 是**静态** framework（二进制是 ar 归档），
