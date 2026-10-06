@@ -10,6 +10,8 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
     CODE_SIGN_STYLE: Automatic
+    CLANG_ENABLE_CODE_COVERAGE: NO
+    GCC_INSTRUMENT_PROGRAM_FLOW_ARCS: NO
 targets:
   ExpiryManager:
     type: application
@@ -28,7 +30,11 @@ targets:
         CURRENT_PROJECT_VERSION: 11
         MARKETING_VERSION: 1.6.2
         INFOPLIST_KEY_CFBundleDisplayName: 效期管理系统
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleSignature: "????"
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: 用于读取图片以生成标签。
+        INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: 用于连接蓝牙标签打印机，打印效期标签。
         INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription: 用于连接蓝牙标签打印机，打印效期标签。
