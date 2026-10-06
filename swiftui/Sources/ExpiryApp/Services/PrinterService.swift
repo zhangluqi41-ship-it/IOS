@@ -199,7 +199,7 @@ final class PrinterService: NSObject, ObservableObject {
             self.toast = "连接超时，请确认打印机已开机并在附近"
         }
 
-        sdk.connectDevice(uuid: uuid)
+        sdk.connectDeviceUUID(uuid)
     }
 
     func connect(_ printer: SavedPrinter) {
