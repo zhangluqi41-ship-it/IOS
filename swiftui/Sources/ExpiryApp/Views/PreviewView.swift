@@ -31,7 +31,7 @@ struct PreviewView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
                     }
-                    .buttonStyle(.glass)
+                    .liquidGlassButton()
 
                     Button {
                         printLabel()
@@ -40,7 +40,7 @@ struct PreviewView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
                     }
-                    .buttonStyle(.glassProminent)
+                    .liquidGlassProminentButton()
                     .tint(Theme.brand)
                 }
                 .padding(.horizontal, 16)

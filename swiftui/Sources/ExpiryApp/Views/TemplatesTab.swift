@@ -72,7 +72,7 @@ struct TemplatesTab: View {
                 step(3, "生成标签", "预览确认后打印、分享或存到手机")
             }
             .padding(.horizontal, 16)
-            .glassEffect()
+            .liquidGlassCard()
             .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius))
         }
     }

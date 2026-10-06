@@ -75,7 +75,7 @@ struct DairyTemplateView: View {
                     }
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.glassProminent)
+                .liquidGlassProminentButton()
                 .tint(Theme.brand)
                 .disabled(busy)
             } footer: {
