@@ -2,9 +2,18 @@
 //  LabelRenderer.swift
 //  标签渲染引擎 —— 精确迁移 Flutter `label_renderer.dart` 的 paintLabel。
 //
-//  坐标：CoreGraphics PDF 坐标（原点左下、y 向上），与 Flutter 版
-//  「原点左上、y 向下再翻」的结果完全一致。
-//  文字用 CoreText（CTLineDraw），基线精确控制，等效 Flutter 的 drawString。
+//  坐标约定（★ 全文件统一，改之前先读懂这一段）：
+//    `paint(...)` 里的所有数学都按 **原点左下、y 向上**（标准 PDF/CoreGraphics）
+//    来写：`h - y` 就是把「距顶部的距离」换算成「距底部的距离」。
+//
+//  但 `UIGraphicsPDFRenderer` 交给我们的 `cgContext` 是 **UIKit 朝向**
+//  （原点左上、y 向下）——苹果文档明确写过它内部的 PDF 目标空间与
+//  CGContext 用户空间 y 轴方向相反。所以 `renderPDF` 里必须先把 CTM
+//  翻成 y 向上，`paint` 才是对的。
+//
+//  ⚠️ 不翻转的后果（曾经发生过）：
+//    整张标签**上下镜像** —— 标题跑到最底下、所有文字倒立、
+//    二维码被垂直镜像后扫码器读不出来。
 //
 
 import CoreText
@@ -18,14 +27,32 @@ enum LabelRenderer {
         let w = LabelSpec.pageW * LabelSpec.kMm
         let h = LabelSpec.pageH * LabelSpec.kMm
         let bounds = CGRect(x: 0, y: 0, width: w, height: h)
-        let renderer = UIGraphicsPDFRenderer(bounds: bounds)
+
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = [
+            kCGPDFContextTitle as String: data.title,
+            kCGPDFContextCreator as String: "效期管理系统",
+        ]
+
+        let renderer = UIGraphicsPDFRenderer(bounds: bounds, format: format)
         return renderer.pdfData { ctx in
             ctx.beginPage()
-            paint(data, in: ctx.cgContext, regular: regular, bold: bold)
+            let c = ctx.cgContext
+
+            // ★★ 把 UIKit 朝向（左上原点、y 向下）翻成绘图数学假设的
+            //    「左下原点、y 向上」。翻完之后：
+            //      · 文字正立（CoreText 在 y 向上空间里才不镜像）
+            //      · CGContext.draw(image:) 图片正立（二维码才扫得出来）
+            c.saveGState()
+            c.translateBy(x: 0, y: h)
+            c.scaleBy(x: 1, y: -1)
+            paint(data, in: c, regular: regular, bold: bold)
+            c.restoreGState()
         }
     }
 
     /// 在 CoreGraphics context 里绘制整张标签。
+    /// 前置条件：context 的坐标系必须是 y 向上（见 `renderPDF`）。
     static func paint(_ d: LabelData,
                       in c: CGContext,
                       regular: UIFont,
@@ -89,7 +116,7 @@ enum LabelRenderer {
         let titleMaxW = barRight - cx - mm(LabelSpec.titleGapRight)
         let naturalTitleW = textWidth(d.title, font: bold, size: titleSize)
         if naturalTitleW > titleMaxW && naturalTitleW > 0 {
-            fittedTitleSize = titleSize * titleMaxW / naturalTitleW
+            fittedTitleSize = max(titleSize * titleMaxW / naturalTitleW, 1)
         }
         drawText(c, bold, d.title, fittedTitleSize, cx, h - top - ascender(bold, fittedTitleSize))
 
@@ -114,28 +141,33 @@ enum LabelRenderer {
 
     /// 测量文字在给定字号下的宽度（pt）。
     static func textWidth(_ text: String, font: UIFont, size: CGFloat) -> CGFloat {
+        guard !text.isEmpty else { return 0 }
         let f = font.withSize(size)
         let attr = NSAttributedString(string: text, attributes: [.font: f])
         let line = CTLineCreateWithAttributedString(attr)
         return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
     }
 
-    /// 基线到顶的距离（pt），对应 Flutter 的 font.ascent * size。
+    /// 基线到顶的距离（pt）。`UIFont.ascender` 本身就是「点」，不要再乘字号。
     static func ascender(_ font: UIFont, _ size: CGFloat) -> CGFloat {
         font.withSize(size).ascender
     }
 
-    /// 基线到底的距离（pt），对应 Flutter 的 font.descent * size。
+    /// 基线到底的距离（pt）。
     static func descenderDepth(_ font: UIFont, _ size: CGFloat) -> CGFloat {
         -font.withSize(size).descender
     }
 
-    /// 在基线 (x, baselineY) 处绘制文字（CoreGraphics PDF 坐标）。
+    /// 在基线 (x, baselineY) 处绘制文字（要求 y 向上坐标系）。
     static func drawText(_ c: CGContext, _ font: UIFont, _ text: String,
                          _ size: CGFloat, _ x: CGFloat, _ baselineY: CGFloat) {
+        guard !text.isEmpty, size > 0 else { return }
         let f = font.withSize(size)
         let attr = NSAttributedString(string: text, attributes: [.font: f])
         let line = CTLineCreateWithAttributedString(attr)
+        // ★ 显式置为单位矩阵：UIGraphicsPDFRenderer 的上下文本身带翻转，
+        //   继承下来的 text matrix 不确定，不显式设定就有镜像风险。
+        c.textMatrix = .identity
         c.textPosition = CGPoint(x: x, y: baselineY)
         CTLineDraw(line, c)
     }
@@ -143,11 +175,13 @@ enum LabelRenderer {
     /// 在水平中心 (cx, cyTop) 处居中绘制（cyTop 为视觉中心的 top-down y）。
     static func drawCentered(_ c: CGContext, _ font: UIFont, _ text: String,
                              _ size: CGFloat, _ cx: CGFloat, _ cyTop: CGFloat) {
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, size > 0 else { return }
         let h = LabelSpec.pageH * LabelSpec.kMm
         let tw = textWidth(text, font: font, size: size)
-        // Flutter: baseline = cy + (ascent + descent) * size / 2，再翻到 PDF 坐标
-        let baseline = h - (cyTop + (ascender(font, size) + descenderDepth(font, size)) * size / 2)
+        // 视觉中心 cyTop（top-down）→ 基线（y 向上）
+        // 行高 = ascender + |descender|，两个量都已经是「点」，不再乘 size。
+        let lineHalf = (ascender(font, size) + descenderDepth(font, size)) / 2
+        let baseline = h - (cyTop + lineHalf)
         drawText(c, font, text, size, cx - tw / 2, baseline)
     }
 
@@ -157,7 +191,8 @@ enum LabelRenderer {
     /// 含 1 模块静默边，与 Flutter 版一致。
     static func drawQR(_ c: CGContext, _ data: String,
                        _ x: CGFloat, _ yTop: CGFloat, _ size: CGFloat) {
-        guard let img = QRCodeGenerator.qrImage(for: data) else { return }
+        guard !data.isEmpty, size > 0,
+              let img = QRCodeGenerator.qrImage(for: data) else { return }
         let h = LabelSpec.pageH * LabelSpec.kMm
         let modules = img.width
         let border = 1

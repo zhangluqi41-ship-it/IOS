@@ -124,6 +124,7 @@ final class PrinterService: NSObject, ObservableObject {
     }()
 
     private var printCompletion: ((Bool, String?) -> Void)?
+    private var pendingRecord: LabelRecord?
     private var lifecycleTimer: Timer?
     private var connectWatchdog: Timer?
 
@@ -277,11 +278,14 @@ final class PrinterService: NSObject, ObservableObject {
     // MARK: - 打印
 
     /// 打印一张标签 PDF。
+    /// - Parameter record: 打印成功后会写进「效期管理」的记录（在这里统一入库，
+    ///   保证无论是模板页直接打印还是预览页打印，都只走同一条路径）。
     func printLabel(pdf: Data,
                     fileName: String,
                     copies: Int,
                     density: Int,
                     paperType: Int,
+                    record: LabelRecord? = nil,
                     completion: ((Bool, String?) -> Void)? = nil) {
         guard isConnected else {
             toast = "请先连接打印机"
@@ -293,6 +297,7 @@ final class PrinterService: NSObject, ObservableObject {
         let parsed = parseLabelSize(from: fileName)
         isPrinting = true
         printCompletion = completion
+        pendingRecord = record
 
         let ok = sdk.printPDF(pdf,
                               widthMm: Int32(parsed.width),
@@ -303,6 +308,7 @@ final class PrinterService: NSObject, ObservableObject {
         if !ok {
             isPrinting = false
             printCompletion = nil
+            pendingRecord = nil
         }
     }
 
@@ -317,6 +323,7 @@ final class PrinterService: NSObject, ObservableObject {
 
         isPrinting = true
         printCompletion = completion
+        pendingRecord = nil
         let ok = sdk.printTestPageWidthMm(50,
                                           heightMm: 30,
                                           copies: Int32(max(copies, 1)),
@@ -380,9 +387,16 @@ extension PrinterService: ExpiryPrinterSDKDelegate {
     func printerDidFinishPrint(_ success: Bool, message: String?) {
         isPrinting = false
         let completion = printCompletion
+        let record = pendingRecord
         printCompletion = nil
+        pendingRecord = nil
         completion?(success, message)
-        if !success {
+
+        if success, var record {
+            // 打印成功才算「已打印」——写进效期管理列表
+            record.printedAt = record.printedAt ?? Date()
+            ExpiryStore.shared.add(record)
+        } else if !success {
             toast = message?.isEmpty == false ? "打印失败：\(message!)" : "打印失败"
         }
     }

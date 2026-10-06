@@ -60,7 +60,7 @@ struct TemplatesTab: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
-            .navigationTitle("效期管理系统")
+            .navigationTitle("效期打印")
             .background(Color(.systemGroupedBackground))
             .navigationDestination(for: TemplateRoute.self) { route in
                 switch route {
@@ -91,9 +91,9 @@ struct TemplatesTab: View {
             VStack(spacing: 0) {
                 step(1, "选择模板", "按要标注的品类进入对应模板")
                 Divider()
-                step(2, "填写信息", "标题与日期，日期可用快捷档位")
+                step(2, "填写信息", "物料名称、操作人与日期")
                 Divider()
-                step(3, "生成标签", "预览确认后打印、分享或存到手机")
+                step(3, "预览并打印", "底部工具栏左边预览、右边直接打印")
             }
             .padding(.horizontal, 16)
             .background(Color(.secondarySystemGroupedBackground),

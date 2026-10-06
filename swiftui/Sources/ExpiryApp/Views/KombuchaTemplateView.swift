@@ -1,6 +1,6 @@
 //
 //  KombuchaTemplateView.swift
-//  康普茶一发 —— 只填茶叶品种 + 制作人，三个时间全自动推算。
+//  康普茶一发 —— 只填茶叶品种 + 操作人，三个时间全自动推算。
 //
 
 import SwiftUI
@@ -8,12 +8,8 @@ import SwiftUI
 struct KombuchaTemplateView: View {
     @State private var variety = ""
     @State private var maker = Prefs.lastMaker
-    @State private var busy = false
     @State private var showVarietyAlert = false
-
-    @State private var showPreview = false
-    @State private var pdfData = Data()
-    @State private var fileName = ""
+    @State private var preview: PreviewPayload?
 
     var body: some View {
         List {
@@ -22,13 +18,23 @@ struct KombuchaTemplateView: View {
                     Image(systemName: "leaf")
                         .foregroundStyle(Theme.brand)
                         .frame(width: 22)
-                    TextField("例：红茶", text: $variety)
+                    TextField("输入茶叶品种", text: $variety)
+                        .onChange(of: variety) { _, value in
+                            if value.count > LabelTemplate.maxNameLength {
+                                variety = String(value.prefix(LabelTemplate.maxNameLength))
+                            }
+                        }
                 }
                 HStack(spacing: 12) {
                     Image(systemName: "person")
                         .foregroundStyle(Theme.brand)
                         .frame(width: 22)
-                    TextField("例：四野", text: $maker)
+                    TextField("输入操作人", text: $maker)
+                        .onChange(of: maker) { _, value in
+                            if value.count > LabelTemplate.maxNameLength {
+                                maker = String(value.prefix(LabelTemplate.maxNameLength))
+                            }
+                        }
                 }
             } footer: {
                 Text("标题自动为「康普茶-\(variety.isEmpty ? "品种" : variety)」")
@@ -42,44 +48,36 @@ struct KombuchaTemplateView: View {
                 Text("自动推算")
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            PrimaryActionBar(
-                title: "生成标签",
-                busyTitle: "生成中…",
-                hint: "二发请用「扫一扫」识别一发标签上的二维码",
-                isBusy: busy,
-                action: generate
-            )
-        }
         .navigationTitle("康普茶 · 一发")
         .navigationBarTitleDisplayMode(.inline)
+        .modifier(LabelActions(preview: $preview, build: buildDraft))
         .alert("请先填写茶叶品种", isPresented: $showVarietyAlert) {
             Button("好", role: .cancel) {}
         }
-        .fullScreenCover(isPresented: $showPreview) {
-            PreviewView(pdfData: pdfData, fileName: fileName)
-        }
     }
 
-    private func generate() {
-        let v = variety.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func buildDraft() -> LabelDraft? {
+        let v = LabelTemplate.clamp(variety, LabelTemplate.maxNameLength)
         guard !v.isEmpty else {
             showVarietyAlert = true
-            return
+            return nil
         }
-        let makerValue = maker.trimmingCharacters(in: .whitespacesAndNewlines)
+        let makerValue = LabelTemplate.clamp(maker, LabelTemplate.maxNameLength)
         let makerFinal = makerValue.isEmpty ? "未署名" : makerValue
-        Prefs.lastMaker = maker
+        Prefs.lastMaker = makerValue
 
         let now = Date()
-        let data = LabelTemplate.buildKombuchaFirst(
-            variety: v, now: now, maker: makerFinal
-        )
-        pdfData = LabelRenderer.renderPDF(data,
-                                          regular: FontProvider.regular(12),
-                                          bold: FontProvider.bold(12))
-        fileName = LabelTemplate.labelFileName(data.title, now)
-        showPreview = true
+        let data = LabelTemplate.buildKombuchaFirst(variety: v, now: now, maker: makerFinal)
+        let done = AppCalendar.shared.date(byAdding: .day,
+                                           value: LabelTemplate.kombuchaDoneDays,
+                                           to: now) ?? now
+        let best = AppCalendar.shared.date(byAdding: .day,
+                                           value: LabelTemplate.kombuchaBestDays,
+                                           to: now) ?? now
+        let record = LabelTemplate.makeRecord(kind: .kombucha, data: data, createdAt: now,
+                                              expireAt: done, bestBefore: best,
+                                              maker: makerFinal)
+        return LabelDraft(data: data, record: record)
     }
 }
 

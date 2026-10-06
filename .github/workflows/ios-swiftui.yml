@@ -6,7 +6,47 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-ios:
+  # ---------------------------------------------------------------- 单元测试
+  # ★ 独立成一个 job 并且**不加 continue-on-error**：
+  #   测试失败时整个 workflow 变红（能第一时间发现回归），
+  #   但下面的 build job 照常出包 —— 不会因为测试挂了就没 IPA 可用。
+  test:
+    name: Unit tests
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: swiftui
+        run: xcodegen generate
+
+      - name: Pick an available iPhone simulator
+        id: sim
+        run: |
+          DEVICE=$(xcrun simctl list devices available \
+            | grep -m1 -E "^[[:space:]]+iPhone" \
+            | sed -E 's/^[[:space:]]+//; s/ \(.*//')
+          echo "device=$DEVICE" >> "$GITHUB_OUTPUT"
+          echo "选定模拟器：$DEVICE"
+          xcrun simctl list runtimes
+
+      - name: Run unit tests
+        working-directory: swiftui
+        run: |
+          xcodebuild test \
+            -project ExpiryManager.xcodeproj \
+            -scheme ExpiryManager \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.device }}" \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO
+
+  # ---------------------------------------------------------------- 出包
+  build:
+    name: Build unsigned IPA
     runs-on: macos-26
     steps:
       - name: Checkout
@@ -24,15 +64,6 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
-      - name: Build for testing (compile tests)
-        working-directory: swiftui
-        run: |
-          xcodebuild build-for-testing \
-            -project ExpiryManager.xcodeproj \
-            -scheme ExpiryManager \
-            -sdk iphonesimulator \
-            CODE_SIGNING_ALLOWED=NO
-
       - name: Build iOS (release, no codesign)
         working-directory: swiftui
         run: |
@@ -45,7 +76,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
-      - name: Patch Info.plist (scene manifest + fonts + missing keys)
+      - name: Patch Info.plist (scene manifest + 本地化 + 字体 + 缺失键)
         working-directory: swiftui
         run: |
           # ★ iOS 27 起强制要求 scene-based 生命周期；xcodegen 不会自动生成该键，
@@ -53,15 +84,29 @@ jobs:
           APP=build/Build/Products/Release-iphoneos/ExpiryManager.app
           PL="$APP/Info.plist"
           PB=/usr/libexec/PlistBuddy
+
           $PB -c "Delete :UIApplicationSceneManifest" "$PL" 2>/dev/null || true
           $PB -c "Add :UIApplicationSceneManifest dict" "$PL"
           $PB -c "Add :UIApplicationSceneManifest:UIApplicationSupportsMultipleScenes bool false" "$PL"
+
           $PB -c "Delete :CFBundleSignature" "$PL" 2>/dev/null || true
           $PB -c "Add :CFBundleSignature string ????" "$PL"
+
           $PB -c "Delete :UIFileSharingEnabled" "$PL" 2>/dev/null || true
           $PB -c "Add :UIFileSharingEnabled bool true" "$PL"
+
           $PB -c "Delete :LSSupportsOpeningDocumentsInPlace" "$PL" 2>/dev/null || true
           $PB -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PL"
+
+          # ★ 本地化：开发区设成 zh_CN 并显式声明支持简体中文。
+          #   不声明的话 App 的「首选语言」是 en，日期选择器会显示英文月份 / 星期。
+          $PB -c "Delete :CFBundleDevelopmentRegion" "$PL" 2>/dev/null || true
+          $PB -c "Add :CFBundleDevelopmentRegion string zh_CN" "$PL"
+          $PB -c "Delete :CFBundleLocalizations" "$PL" 2>/dev/null || true
+          $PB -c "Add :CFBundleLocalizations array" "$PL"
+          $PB -c "Add :CFBundleLocalizations:0 string zh-Hans" "$PL"
+          $PB -c "Add :CFBundleLocalizations:1 string en" "$PL"
+
           # ★ 字体注册：INFOPLIST_KEY_UIAppFonts 不是受支持的 key，会被丢弃，
           #   所以这里手工把包内的字体登记进 UIAppFonts（用相对包根的路径），
           #   否则 FontProvider 只会回落到系统字体，而标签行距是按 Noto Sans SC 调的。
@@ -79,6 +124,7 @@ jobs:
           else
             echo "!! 警告：包内没有找到字体文件，UIAppFonts 未写入"
           fi
+
           echo "=== Info.plist after patch ==="
           plutil -p "$PL"
 
@@ -98,13 +144,3 @@ jobs:
           name: ExpiryManager-unsigned-ipa
           path: swiftui/ExpiryManager-unsigned.ipa
           retention-days: 14
-
-      - name: Run unit tests (non-blocking)
-        working-directory: swiftui
-        continue-on-error: true
-        run: |
-          xcodebuild test-without-building \
-            -project ExpiryManager.xcodeproj \
-            -scheme ExpiryManager \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
-            CODE_SIGNING_ALLOWED=NO

@@ -9,7 +9,7 @@ import XCTest
 final class LabelTemplateTests: XCTestCase {
 
     private func d(_ y: Int, _ m: Int, _ day: Int, _ h: Int = 15, _ mi: Int = 30) -> Date {
-        Calendar.current.date(from: DateComponents(year: y, month: m, day: day, hour: h, minute: mi))!
+        AppCalendar.shared.date(from: DateComponents(year: y, month: m, day: day, hour: h, minute: mi))!
     }
 
     // MARK: 日期格式化

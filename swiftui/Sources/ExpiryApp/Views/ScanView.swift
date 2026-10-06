@@ -2,8 +2,8 @@
 //  ScanView.swift
 //  扫码 —— AVFoundation 实时二维码识别。
 //
-//  用途：扫「康普茶一发」标签上的二维码，取回制备/完成/最佳使用时间，
-//  直接进入「二发」填写页（只需再填水果），避免手抄日期。
+//  用途：扫标签上的二维码。目前接的是「康普茶一发」标签 → 取回制备/完成/最佳使用时间，
+//  直接进入「二发」填写页；扫到的这条物料同时会进「效期管理」列表。
 //
 //  ★ 二维码内容就是标签页面文字顺序拼接的结果，解析规则在
 //    `LabelTemplate.parseKombuchaQr`，与安卓/Flutter 版完全一致。
@@ -35,6 +35,9 @@ final class QRScannerModel: NSObject, ObservableObject {
     /// 最近一次识别到的内容；消费后调用 `resume()` 复位。
     @Published private(set) var lastCode: String?
     @Published private(set) var torchOn = false
+    @Published private(set) var canSwitchCamera = false
+    /// 当前摄像头有没有闪光灯（前置一般没有，按钮据此置灰）。
+    @Published private(set) var canUseTorch = false
 
     let session = AVCaptureSession()
 
@@ -42,6 +45,8 @@ final class QRScannerModel: NSObject, ObservableObject {
     private var isConfigured = false
     private var isHandling = false
     private var device: AVCaptureDevice?
+    /// ★ 必须自己持有 input 引用，否则换摄像头时无法 removeInput。
+    private var currentInput: AVCaptureDeviceInput?
 
     // MARK: 生命周期
 
@@ -94,8 +99,9 @@ final class QRScannerModel: NSObject, ObservableObject {
     }
 
     private func configure() {
-        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
-                ?? AVCaptureDevice.default(for: .video),
+        let back = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+        let front = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+        guard let camera = back ?? front ?? AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: camera),
               session.canAddInput(input) else {
             DispatchQueue.main.async { self.state = .failed("无法访问摄像头，请确认设备有可用相机") }
@@ -103,6 +109,7 @@ final class QRScannerModel: NSObject, ObservableObject {
         }
 
         device = camera
+        currentInput = input
 
         session.beginConfiguration()
         session.sessionPreset = .high
@@ -126,6 +133,46 @@ final class QRScannerModel: NSObject, ObservableObject {
 
         session.commitConfiguration()
         isConfigured = true
+
+        let switchable = back != nil && front != nil
+        DispatchQueue.main.async {
+            self.canSwitchCamera = switchable
+            self.canUseTorch = camera.hasTorch
+            // 回到后置时手电筒状态复位（前置没有闪光灯）
+            self.torchOn = camera.hasTorch && camera.torchMode == .on
+        }
+    }
+
+    // MARK: 前后摄像头切换
+
+    func switchCamera() {
+        guard canSwitchCamera else { return }
+        sessionQueue.async { [weak self] in
+            guard let self, let existing = self.currentInput else { return }
+            let target: AVCaptureDevice.Position = existing.device.position == .back ? .front : .back
+            guard let next = AVCaptureDevice.default(.builtInWideAngleCamera,
+                                                     for: .video,
+                                                     position: target),
+                  let input = try? AVCaptureDeviceInput(device: next) else { return }
+
+            self.session.beginConfiguration()
+            self.session.removeInput(existing)
+            if self.session.canAddInput(input) {
+                self.session.addInput(input)
+                self.session.commitConfiguration()
+                DispatchQueue.main.async {
+                    self.currentInput = input
+                    self.device = next
+                    // 前置无闪光灯 → 复位手电筒状态与可用性
+                    self.canUseTorch = next.hasTorch
+                    self.torchOn = next.hasTorch && next.torchMode == .on
+                }
+            } else {
+                // 换失败就换回去，别把画面弄黑
+                self.session.addInput(existing)
+                self.session.commitConfiguration()
+            }
+        }
     }
 
     // MARK: 手电筒
@@ -143,7 +190,10 @@ final class QRScannerModel: NSObject, ObservableObject {
     }
 
     func turnTorchOff() {
-        guard let device, device.hasTorch, device.torchMode == .on else { return }
+        guard let device, device.hasTorch, device.torchMode == .on else {
+            torchOn = false
+            return
+        }
         try? device.lockForConfiguration()
         device.torchMode = .off
         torchOn = false
@@ -209,7 +259,6 @@ struct ScanView: View {
     @StateObject private var scanner = QRScannerModel()
     @State private var showInvalidAlert = false
     @State private var invalidText = ""
-    @State private var invalidRaw = ""
 
     private let boxSide: CGFloat = 250
 
@@ -262,7 +311,7 @@ struct ScanView: View {
 
             viewfinder
 
-            Text("将一发标签上的二维码放入框内")
+            Text("将二维码放入框内")
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.9))
                 .padding(.top, 18)
@@ -289,18 +338,32 @@ struct ScanView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Button {
                 scanner.toggleTorch()
             } label: {
                 Label(scanner.torchOn ? "关闭手电筒" : "打开手电筒",
                       systemImage: scanner.torchOn ? "flashlight.on.fill" : "flashlight.off.fill")
                     .font(.subheadline)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 10)
             }
             .liquidGlassButton()
-            .disabled(!scanner.state.isRunning)
+            .disabled(!scanner.state.isRunning || !scanner.canUseTorch)
+            .opacity(scanner.canUseTorch ? 1 : 0.45)
+
+            if scanner.canSwitchCamera {
+                Button {
+                    scanner.switchCamera()
+                } label: {
+                    Label("翻转", systemImage: "arrow.triangle.2.circlepath.camera")
+                        .font(.subheadline)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                }
+                .liquidGlassButton()
+                .disabled(!scanner.state.isRunning)
+            }
 
             if case .denied = scanner.state {
                 Button("打开设置") {
@@ -319,11 +382,23 @@ struct ScanView: View {
         guard let code, !code.isEmpty else { return }
 
         if let first = LabelTemplate.parseKombuchaQr(code) {
+            // 扫到的物料同样进「效期管理」；同一条码重复扫会按 qrText 合并
+            ExpiryStore.shared.add(
+                LabelRecord(title: first.title,
+                            kind: .kombucha,
+                            maker: first.maker,
+                            createdAt: Date(),
+                            printedAt: nil,
+                            expireAt: first.finished,
+                            bestBefore: first.bestBefore,
+                            usedAt: nil,
+                            qrText: code,
+                            source: .scanned)
+            )
             path.append(ScanRoute.secondFermentation(first))
             return
         }
 
-        invalidRaw = code
         invalidText = "识别到的内容：\n\(code.prefix(160))\n\n请扫描「康普茶」模板生成的标签二维码。"
         showInvalidAlert = true
     }

@@ -1,6 +1,6 @@
 //
 //  DairyTemplateView.swift
-//  奶制品 —— 只选类型 + 制作人，两个日期手填，快捷档位按类型推荐。
+//  奶制品 —— 只选类型 + 操作人，两个日期手填，快捷档位按类型推荐。
 //
 
 import SwiftUI
@@ -10,12 +10,8 @@ struct DairyTemplateView: View {
     @State private var maker = Prefs.lastMaker
     @State private var expireDate = Date()
     @State private var bestDate = Date()
-    @State private var busy = false
     @State private var showKindAlert = false
-
-    @State private var showPreview = false
-    @State private var pdfData = Data()
-    @State private var fileName = ""
+    @State private var preview: PreviewPayload?
 
     var body: some View {
         List {
@@ -58,57 +54,50 @@ struct DairyTemplateView: View {
                     Image(systemName: "person")
                         .foregroundStyle(Theme.brand)
                         .frame(width: 22)
-                    TextField("例：四野", text: $maker)
+                    TextField("输入操作人", text: $maker)
+                        .onChange(of: maker) { _, value in
+                            if value.count > LabelTemplate.maxNameLength {
+                                maker = String(value.prefix(LabelTemplate.maxNameLength))
+                            }
+                        }
                 }
             } footer: {
-                Text("会记住上次填写的名字")
+                Text("会记住上次填写的操作人")
             }
-        }
-        .safeAreaInset(edge: .bottom) {
-            PrimaryActionBar(
-                title: "生成标签",
-                busyTitle: "生成中…",
-                hint: "标签三行 = 开封时间 / 原始保质期 / 最佳使用时间",
-                isBusy: busy,
-                action: generate
-            )
         }
         .navigationTitle("奶制品")
         .navigationBarTitleDisplayMode(.inline)
+        .modifier(LabelActions(preview: $preview, build: buildDraft))
         .alert("请先选择奶制品类型", isPresented: $showKindAlert) {
             Button("好", role: .cancel) {}
-        }
-        .fullScreenCover(isPresented: $showPreview) {
-            PreviewView(pdfData: pdfData, fileName: fileName)
         }
     }
 
     private func applyRule(_ k: DairyKind) {
-        let cal = Calendar.current
+        let cal = AppCalendar.shared
         let today = cal.startOfDay(for: Date())
         expireDate = cal.date(byAdding: .day, value: k.expireDays, to: today) ?? today
         bestDate = cal.date(byAdding: .day, value: k.bestDays, to: today) ?? today
     }
 
-    private func generate() {
+    private func buildDraft() -> LabelDraft? {
         guard let k = kind else {
             showKindAlert = true
-            return
+            return nil
         }
-        let makerValue = maker.trimmingCharacters(in: .whitespacesAndNewlines)
+        let makerValue = LabelTemplate.clamp(maker, LabelTemplate.maxNameLength)
         let makerFinal = makerValue.isEmpty ? "未署名" : makerValue
-        Prefs.lastMaker = maker
+        Prefs.lastMaker = makerValue
 
         let now = Date()
-        let data = LabelTemplate.buildDairy(
-            kindLabel: k.label, now: now, expireDate: expireDate,
-            bestBefore: bestDate, maker: makerFinal
-        )
-        pdfData = LabelRenderer.renderPDF(data,
-                                          regular: FontProvider.regular(12),
-                                          bold: FontProvider.bold(12))
-        fileName = LabelTemplate.labelFileName(k.label, now)
-        showPreview = true
+        let data = LabelTemplate.buildDairy(kindLabel: k.label, now: now,
+                                            expireDate: expireDate,
+                                            bestBefore: bestDate,
+                                            maker: makerFinal)
+        let record = LabelTemplate.makeRecord(kind: .dairy, data: data, createdAt: now,
+                                              expireAt: expireDate, bestBefore: bestDate,
+                                              maker: makerFinal)
+        return LabelDraft(data: data, record: record)
     }
 }
 

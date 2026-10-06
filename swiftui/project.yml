@@ -36,8 +36,8 @@ targets:
         PRODUCT_NAME: ExpiryManager
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 12
-        MARKETING_VERSION: 1.6.3
+        CURRENT_PROJECT_VERSION: 13
+        MARKETING_VERSION: 1.6.4
         # 硕方 SDK 是 ObjC 且没有 modulemap，Swift 只能通过桥接头访问
         SWIFT_OBJC_BRIDGING_HEADER: Sources/ExpiryApp/Native/ExpiryApp-Bridging-Header.h
         # ★ 必须 -ObjC：静态库里只被 ObjC 类/分类引用的符号否则会被链接器剥掉，
@@ -51,7 +51,7 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: 用于连接蓝牙标签打印机，打印效期标签。
         INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription: 用于连接蓝牙标签打印机，打印效期标签。
-        INFOPLIST_KEY_NSCameraUsageDescription: 用于扫描康普茶标签上的二维码，识别制备信息。
+        INFOPLIST_KEY_NSCameraUsageDescription: 用于扫描标签上的二维码，识别物料信息。
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: 用于读取图片以生成标签。
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
@@ -62,3 +62,25 @@ targets:
       - Tests/ExpiryAppTests
     dependencies:
       - target: ExpiryManager
+
+# ★ 显式声明 scheme 并挂上 test action。
+#   xcodegen 生成的 scheme 不一定带测试动作，`xcodebuild test` 会直接报
+#   「scheme is not currently configured for the test action」。
+schemes:
+  ExpiryManager:
+    build:
+      targets:
+        ExpiryManager: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - ExpiryManagerTests
+    archive:
+      config: Release
+    profile:
+      config: Release
+    analyze:
+      config: Debug

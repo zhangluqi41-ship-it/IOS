@@ -16,12 +16,8 @@ struct KombuchaSecondView: View {
 
     @State private var fruit = ""
     @State private var maker = Prefs.lastMaker
-    @State private var busy = false
     @State private var showFruitAlert = false
-
-    @State private var showPreview = false
-    @State private var pdfData = Data()
-    @State private var fileName = ""
+    @State private var preview: PreviewPayload?
 
     var body: some View {
         List {
@@ -31,7 +27,7 @@ struct KombuchaSecondView: View {
                 LabeledContent("完成时间", value: LabelTemplate.fmtDateTime(first.finished))
                 LabeledContent("最佳使用时间", value: LabelTemplate.fmtDateTime(first.bestBefore))
                 if !first.maker.isEmpty {
-                    LabeledContent("制作人", value: first.maker)
+                    LabeledContent("操作人", value: first.maker)
                 }
             } header: {
                 Text("扫到的一发信息")
@@ -42,13 +38,23 @@ struct KombuchaSecondView: View {
                     Image(systemName: "fork.knife")
                         .foregroundStyle(Theme.brand)
                         .frame(width: 22)
-                    TextField("例：百香果", text: $fruit)
+                    TextField("输入水果名称", text: $fruit)
+                        .onChange(of: fruit) { _, value in
+                            if value.count > LabelTemplate.maxNameLength {
+                                fruit = String(value.prefix(LabelTemplate.maxNameLength))
+                            }
+                        }
                 }
                 HStack(spacing: 12) {
                     Image(systemName: "person")
                         .foregroundStyle(Theme.brand)
                         .frame(width: 22)
-                    TextField("例：四野", text: $maker)
+                    TextField("输入操作人", text: $maker)
+                        .onChange(of: maker) { _, value in
+                            if value.count > LabelTemplate.maxNameLength {
+                                maker = String(value.prefix(LabelTemplate.maxNameLength))
+                            }
+                        }
                 }
             } header: {
                 Text("本次二发")
@@ -64,49 +70,38 @@ struct KombuchaSecondView: View {
                 Text("自动推算")
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            PrimaryActionBar(
-                title: "生成标签",
-                busyTitle: "生成中…",
-                hint: "标签规格 50 × 30 mm · 生成后可预览 / 打印 / 分享",
-                isBusy: busy,
-                action: generate
-            )
-        }
         .navigationTitle("康普茶 · 二发")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("请先填写水果", isPresented: $showFruitAlert) {
+        .modifier(LabelActions(preview: $preview, build: buildDraft))
+        .alert("请先填写水果名称", isPresented: $showFruitAlert) {
             Button("好", role: .cancel) {}
-        }
-        .fullScreenCover(isPresented: $showPreview) {
-            PreviewView(pdfData: pdfData, fileName: fileName)
         }
     }
 
-    private func generate() {
-        let f = fruit.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func buildDraft() -> LabelDraft? {
+        let f = LabelTemplate.clamp(fruit, LabelTemplate.maxNameLength)
         guard !f.isEmpty else {
             showFruitAlert = true
-            return
+            return nil
         }
-        let makerValue = maker.trimmingCharacters(in: .whitespacesAndNewlines)
+        let makerValue = LabelTemplate.clamp(maker, LabelTemplate.maxNameLength)
         let makerFinal = makerValue.isEmpty ? "未署名" : makerValue
-        Prefs.lastMaker = maker
+        Prefs.lastMaker = makerValue
 
         let now = Date()
-        let data = LabelTemplate.buildKombuchaSecond(
-            firstTitle: first.title,
-            fruit: f,
-            now: now,
-            firstFinished: first.finished,
-            firstBestBefore: first.bestBefore,
-            maker: makerFinal
-        )
-        pdfData = LabelRenderer.renderPDF(data,
-                                          regular: FontProvider.regular(12),
-                                          bold: FontProvider.bold(12))
-        fileName = LabelTemplate.labelFileName(data.title, now)
-        showPreview = true
+        let data = LabelTemplate.buildKombuchaSecond(firstTitle: first.title,
+                                                     fruit: f,
+                                                     now: now,
+                                                     firstFinished: first.finished,
+                                                     firstBestBefore: first.bestBefore,
+                                                     maker: makerFinal)
+        let done = AppCalendar.shared.date(byAdding: .day,
+                                         value: LabelTemplate.kombuchaSecondDoneDays,
+                                         to: first.finished) ?? first.finished
+        let record = LabelTemplate.makeRecord(kind: .kombucha, data: data, createdAt: now,
+                                              expireAt: done, bestBefore: first.bestBefore,
+                                              maker: makerFinal)
+        return LabelDraft(data: data, record: record)
     }
 }
 
