@@ -155,11 +155,25 @@ final class LabelRendererTests: XCTestCase {
         XCTAssertGreaterThan(LabelRenderer.textWidth("测试", font: FontProvider.regular(12), size: 12), 0)
     }
 
-    /// 排障用：把版式打成 ASCII 图。平时断言为真，需要看画面时把条件反转。
+    /// 排障用：把三个模板的版式打成 ASCII 图并打印到 CI 日志里，
+    /// 方便不进 Xcode 也能肉眼确认「标题在顶部、三行内容在中部、二维码在右中」。
     func testDumpAsciiLayout() {
-        let image = raster(render(makeGeneric()))
-        let art = PDFRasterizer.asciiArt(of: image, columns: 64, rows: 24)
-        XCTAssertEqual(art.count, 24)
-        XCTAssertTrue(art.contains { $0.contains("#") }, "ASCII 墨迹图里没有任何内容")
+        let samples: [(String, LabelData)] = [
+            ("通用效期", makeGeneric()),
+            ("康普茶", LabelTemplate.buildKombuchaFirst(variety: "红茶", now: Date(), maker: "四野")),
+            ("奶制品", LabelTemplate.buildDairy(kindLabel: DairyKind.oatMilk.label, now: Date(),
+                                              expireDate: Date().addingTimeInterval(7 * 86400),
+                                              bestBefore: Date().addingTimeInterval(15 * 86400),
+                                              maker: "四野")),
+        ]
+
+        for (name, data) in samples {
+            let image = raster(render(data))
+            let art = PDFRasterizer.asciiArt(of: image, columns: 64, rows: 24)
+            print("=== 版式预览：\(name)（# 有墨 / . 空白；第一行 = 画面顶部）===")
+            for line in art { print(line) }
+            XCTAssertEqual(art.count, 24)
+            XCTAssertTrue(art.contains { $0.contains("#") }, "\(name) 的 ASCII 墨迹图里没有任何内容")
+        }
     }
 }
