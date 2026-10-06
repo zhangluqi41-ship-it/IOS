@@ -40,7 +40,7 @@ enum DairyKind: String, CaseIterable, Identifiable {
 
 // MARK: - 康普茶一发解析结果
 
-struct KombuchaFirstLabel {
+struct KombuchaFirstLabel: Hashable {
     let title: String
     let prepared: Date
     let finished: Date

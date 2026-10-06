@@ -2,12 +2,26 @@
 //  TemplatesTab.swift
 //  模板 Tab —— 三个模板卡片（通用效期 / 康普茶 / 奶制品）+ 使用流程说明。
 //
+//  ★ 导航采用 value-based（`NavigationLink(value:)` + `navigationDestination(for:)`），
+//    因为只有 value-based 跳转才会写进父级传入的 NavigationPath；
+//    首页切走 Tab 时要靠清空这个 path 回到一级菜单，destination-based 的
+//    NavigationLink 不会写 path，重置会失效。
+//
 
 import SwiftUI
 
+/// 模板二级页路由。
+enum TemplateRoute: Hashable {
+    case generic
+    case kombucha
+    case dairy
+}
+
 struct TemplatesTab: View {
+    @Binding var path: NavigationPath
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
@@ -21,7 +35,7 @@ struct TemplatesTab: View {
                             systemImage: "clock",
                             tint: Theme.tplGenericTint,
                             fill: Theme.tplGenericFill,
-                            destination: AnyView(GenericTemplateView())
+                            route: .generic
                         )
                         TemplateCard(
                             title: "康普茶",
@@ -29,7 +43,7 @@ struct TemplatesTab: View {
                             systemImage: "drop.fill",
                             tint: Theme.tplKombuchaTint,
                             fill: Theme.tplKombuchaFill,
-                            destination: AnyView(KombuchaTemplateView())
+                            route: .kombucha
                         )
                         TemplateCard(
                             title: "奶制品",
@@ -37,7 +51,7 @@ struct TemplatesTab: View {
                             systemImage: "flask.fill",
                             tint: Theme.tplDairyTint,
                             fill: Theme.tplDairyFill,
-                            destination: AnyView(DairyTemplateView())
+                            route: .dairy
                         )
                     }
 
@@ -48,6 +62,16 @@ struct TemplatesTab: View {
             }
             .navigationTitle("效期管理系统")
             .background(Color(.systemGroupedBackground))
+            .navigationDestination(for: TemplateRoute.self) { route in
+                switch route {
+                case .generic:
+                    GenericTemplateView()
+                case .kombucha:
+                    KombuchaTemplateView()
+                case .dairy:
+                    DairyTemplateView()
+                }
+            }
         }
     }
 
@@ -100,19 +124,17 @@ struct TemplatesTab: View {
     }
 }
 
-/// 模板卡片：色块图标 + 标题 + 副标题，iOS 26 液态玻璃底。
+/// 模板卡片：色块图标 + 标题 + 副标题，系统语义背景。
 struct TemplateCard: View {
     let title: String
     let subtitle: String
     let systemImage: String
     let tint: Color
     let fill: Color
-    let destination: AnyView
+    let route: TemplateRoute
 
     var body: some View {
-        NavigationLink {
-            destination
-        } label: {
+        NavigationLink(value: route) {
             VStack(spacing: 10) {
                 Image(systemName: systemImage)
                     .font(.system(size: 26, weight: .semibold))
@@ -140,5 +162,5 @@ struct TemplateCard: View {
 }
 
 #Preview {
-    TemplatesTab()
+    TemplatesTab(path: .constant(NavigationPath()))
 }

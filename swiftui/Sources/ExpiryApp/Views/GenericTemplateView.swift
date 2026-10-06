@@ -35,24 +35,15 @@ struct GenericTemplateView: View {
             } header: {
                 Text("日期")
             }
-
-            Section {
-                Button {
-                    generate()
-                } label: {
-                    HStack {
-                        if busy { ProgressView().tint(.white) }
-                        Text(busy ? "生成中…" : "生成标签")
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .liquidGlassProminentButton()
-                .tint(Theme.brand)
-                .disabled(busy)
-            } footer: {
-                Text("标签规格 50 × 30 mm · 生成后可预览 / 打印 / 分享")
-            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            PrimaryActionBar(
+                title: "生成标签",
+                busyTitle: "生成中…",
+                hint: "标签规格 50 × 30 mm · 生成后可预览 / 打印 / 分享",
+                isBusy: busy,
+                action: generate
+            )
         }
         .navigationTitle("通用效期")
         .navigationBarTitleDisplayMode(.inline)

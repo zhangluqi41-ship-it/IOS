@@ -28,4 +28,33 @@ enum Prefs {
     static func setSavedPrintersJSON(_ json: String?) {
         d.set(json, forKey: "savedPrinters")
     }
+
+    // MARK: - 打印参数
+
+    /// 打印浓度 1~9；0 表示「自动」（交给打印机自己判断）。
+    static var printDensity: Int {
+        get {
+            let v = d.object(forKey: "printDensity") as? Int
+            return v ?? 0
+        }
+        set { d.set(newValue, forKey: "printDensity") }
+    }
+
+    /// 打印份数，最少 1。
+    static var printCopies: Int {
+        get {
+            let v = d.object(forKey: "printCopies") as? Int
+            return max(v ?? 1, 1)
+        }
+        set { d.set(max(newValue, 1), forKey: "printCopies") }
+    }
+
+    /// 纸张类型码值（1 间隙 / 2 普通黑标 / 5 黑标卡纸）。
+    static var paperType: Int {
+        get {
+            let v = d.object(forKey: "paperType") as? Int
+            return v ?? 1
+        }
+        set { d.set(newValue, forKey: "paperType") }
+    }
 }

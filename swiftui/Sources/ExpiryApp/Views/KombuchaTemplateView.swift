@@ -41,24 +41,15 @@ struct KombuchaTemplateView: View {
             } header: {
                 Text("自动推算")
             }
-
-            Section {
-                Button {
-                    generate()
-                } label: {
-                    HStack {
-                        if busy { ProgressView().tint(.white) }
-                        Text(busy ? "生成中…" : "生成标签")
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .liquidGlassProminentButton()
-                .tint(Theme.brand)
-                .disabled(busy)
-            } footer: {
-                Text("二发请用「扫一扫」识别一发标签上的二维码")
-            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            PrimaryActionBar(
+                title: "生成标签",
+                busyTitle: "生成中…",
+                hint: "二发请用「扫一扫」识别一发标签上的二维码",
+                isBusy: busy,
+                action: generate
+            )
         }
         .navigationTitle("康普茶 · 一发")
         .navigationBarTitleDisplayMode(.inline)

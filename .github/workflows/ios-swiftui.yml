@@ -45,7 +45,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
-      - name: Patch Info.plist (scene manifest + missing keys)
+      - name: Patch Info.plist (scene manifest + fonts + missing keys)
         working-directory: swiftui
         run: |
           # ★ iOS 27 起强制要求 scene-based 生命周期；xcodegen 不会自动生成该键，
@@ -62,6 +62,19 @@ jobs:
           $PB -c "Add :UIFileSharingEnabled bool true" "$PL"
           $PB -c "Delete :LSSupportsOpeningDocumentsInPlace" "$PL" 2>/dev/null || true
           $PB -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PL"
+          # ★ 字体注册：INFOPLIST_KEY_UIAppFonts 不是受支持的 key，会被丢弃，
+          #   所以这里手工把 Resources/ 里带进包根的字体登记进 UIAppFonts，
+          #   否则 FontProvider 只会回落到系统字体。
+          echo "=== 包内字体 ==="
+          ls -la "$APP"/*.ttf || echo "(没找到 ttf)"
+          $PB -c "Delete :UIAppFonts" "$PL" 2>/dev/null || true
+          $PB -c "Add :UIAppFonts array" "$PL"
+          i=0
+          for f in "$APP"/*.ttf; do
+            [ -e "$f" ] || continue
+            $PB -c "Add :UIAppFonts:$i string $(basename "$f")" "$PL"
+            i=$((i+1))
+          done
           echo "=== Info.plist after patch ==="
           plutil -p "$PL"
 

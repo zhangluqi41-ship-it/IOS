@@ -63,24 +63,15 @@ struct DairyTemplateView: View {
             } footer: {
                 Text("会记住上次填写的名字")
             }
-
-            Section {
-                Button {
-                    generate()
-                } label: {
-                    HStack {
-                        if busy { ProgressView().tint(.white) }
-                        Text(busy ? "生成中…" : "生成标签")
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .liquidGlassProminentButton()
-                .tint(Theme.brand)
-                .disabled(busy)
-            } footer: {
-                Text("标签三行 = 开封时间 / 原始保质期 / 最佳使用时间")
-            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            PrimaryActionBar(
+                title: "生成标签",
+                busyTitle: "生成中…",
+                hint: "标签三行 = 开封时间 / 原始保质期 / 最佳使用时间",
+                isBusy: busy,
+                action: generate
+            )
         }
         .navigationTitle("奶制品")
         .navigationBarTitleDisplayMode(.inline)

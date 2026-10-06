@@ -1,6 +1,6 @@
 //
 //  PreviewView.swift
-//  标签预览 —— PDF 展示 + 保存到手机 + 分享 + 一键打印。
+//  标签预览 —— PDF 展示 + 保存到手机 + 分享 + 一键打印（真实打印）。
 //
 
 import PDFKit
@@ -11,17 +11,34 @@ struct PreviewView: View {
     let pdfData: Data
     let fileName: String
 
+    @ObservedObject private var printer = PrinterService.shared
+
     @Environment(\.dismiss) private var dismiss
-    @State private var saveAlert = false
-    @State private var saveMessage = ""
+    @State private var noticeTitle = ""
+    @State private var noticeBody = ""
+    @State private var showNotice = false
     @State private var showShare = false
     @State private var shareURL: URL?
+
+    @AppStorage("printCopies") private var copies: Int = 1
+    @AppStorage("printDensity") private var density: Int = 0
+    @AppStorage("paperType") private var paperType: Int = 1
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 PDFKitView(data: pdfData)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if printer.isPrinting {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("正在发送到打印机…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 8)
+                }
 
                 HStack(spacing: 12) {
                     Button {
@@ -42,6 +59,7 @@ struct PreviewView: View {
                     }
                     .liquidGlassProminentButton()
                     .tint(Theme.brand)
+                    .disabled(printer.isPrinting)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -61,8 +79,10 @@ struct PreviewView: View {
                     }
                 }
             }
-            .alert(saveMessage, isPresented: $saveAlert) {
+            .alert(noticeTitle, isPresented: $showNotice) {
                 Button("好", role: .cancel) {}
+            } message: {
+                Text(noticeBody)
             }
             .sheet(isPresented: $showShare) {
                 if let url = shareURL {
@@ -72,14 +92,15 @@ struct PreviewView: View {
         }
     }
 
+    // MARK: - 保存 / 分享
+
     private func saveToPhone() {
         do {
             let path = try PdfSaver.save(pdfData, fileName: fileName)
-            saveMessage = "已保存到：\n\(path)\n\n也可在「文件」App → 我的 iPhone → 效期管理系统 中查看。"
+            notice("已保存", "位置：\n\(path)\n\n也可在「文件」App → 我的 iPhone → 效期管理系统 中查看。")
         } catch {
-            saveMessage = "保存失败：\(error.localizedDescription)"
+            notice("保存失败", error.localizedDescription)
         }
-        saveAlert = true
     }
 
     private func prepareShare() {
@@ -89,14 +110,35 @@ struct PreviewView: View {
             shareURL = tmp
             showShare = true
         } catch {
-            saveMessage = "分享失败：\(error.localizedDescription)"
-            saveAlert = true
+            notice("分享失败", error.localizedDescription)
         }
     }
 
+    // MARK: - 打印
+
     private func printLabel() {
-        // 打印逻辑由 PrinterService 处理（后续接入硕方 SDK）。
-        PrintCoordinator.shared.printLabel(pdfData: pdfData, fileName: fileName)
+        guard printer.isConnected else {
+            notice("还没有连接打印机",
+                   "请到「打印机」标签页扫描并连接硕方 T50 Pro，再回来打印。")
+            return
+        }
+        printer.printLabel(pdf: pdfData,
+                           fileName: fileName,
+                           copies: copies,
+                           density: density,
+                           paperType: paperType) { ok, message in
+            if ok {
+                notice("已发送到打印机", "份数 \(copies) · 浓度 \(density == 0 ? "自动" : "\(density)")")
+            } else {
+                notice("打印失败", message?.isEmpty == false ? message! : "请检查打印机状态后重试。")
+            }
+        }
+    }
+
+    private func notice(_ title: String, _ body: String) {
+        noticeTitle = title
+        noticeBody = body
+        showNotice = true
     }
 }
 
