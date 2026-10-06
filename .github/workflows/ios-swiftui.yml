@@ -45,10 +45,31 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
+      - name: Patch Info.plist (scene manifest + missing keys)
+        working-directory: swiftui
+        run: |
+          # ★ iOS 27 起强制要求 scene-based 生命周期；xcodegen 不会自动生成该键，
+          #   且 INFOPLIST_KEY_* 里不认识的键会被静默丢弃 -> 必须直接改写 Info.plist。
+          APP=build/Build/Products/Release-iphoneos/ExpiryManager.app
+          PL="$APP/Info.plist"
+          PB=/usr/libexec/PlistBuddy
+          $PB -c "Delete :UIApplicationSceneManifest" "$PL" 2>/dev/null || true
+          $PB -c "Add :UIApplicationSceneManifest dict" "$PL"
+          $PB -c "Add :UIApplicationSceneManifest:UIApplicationSupportsMultipleScenes bool false" "$PL"
+          $PB -c "Delete :CFBundleSignature" "$PL" 2>/dev/null || true
+          $PB -c "Add :CFBundleSignature string ????" "$PL"
+          $PB -c "Delete :UIFileSharingEnabled" "$PL" 2>/dev/null || true
+          $PB -c "Add :UIFileSharingEnabled bool true" "$PL"
+          $PB -c "Delete :LSSupportsOpeningDocumentsInPlace" "$PL" 2>/dev/null || true
+          $PB -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PL"
+          echo "=== Info.plist after patch ==="
+          plutil -p "$PL"
+
       - name: Package unsigned IPA
         working-directory: swiftui
         run: |
           APP=build/Build/Products/Release-iphoneos/ExpiryManager.app
+          rm -rf Payload ExpiryManager-unsigned.ipa
           mkdir -p Payload
           cp -r "$APP" Payload/
           zip -qry ExpiryManager-unsigned.ipa Payload
