@@ -270,9 +270,11 @@ static UIImage *SFBuildTestPage(int widthMm,
   if (self) {
     _found = [NSMutableDictionary dictionary];
     _foundOrder = [NSMutableArray array];
+    // ⚠️ 这里**故意不碰 CBCentralManager**。
+    //    一碰它系统就会立刻弹蓝牙授权框；如果在 init 里碰，App 一启动就弹，
+    //    用户还没进打印机页就被问权限（不符合苹果「就近申请」的规范，
+    //    实测也确实在启动那一秒就弹了）。改为等真正用到蓝牙时再建。
     [self setupSDKCallbacks];
-    // 一碰 CBCentralManager 系统就会弹蓝牙授权框
-    (void)self.centralManager;
   }
   return self;
 }

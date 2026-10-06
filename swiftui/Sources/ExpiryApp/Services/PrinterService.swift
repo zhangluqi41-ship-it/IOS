@@ -111,8 +111,17 @@ final class PrinterService: NSObject, ObservableObject {
     /// 一次性提示文案（视图弹 toast 后置回 nil）。
     @Published var toast: String?
 
-    private let sdk = ExpiryPrinterSDK.shared()
     private let defaults: UserDefaults
+
+    /// ★ 延迟创建：构造 `ExpiryPrinterSDK` 会碰到 CoreBluetooth，
+    /// 而一碰 CoreBluetooth 系统就弹蓝牙授权框。放在 lazy 里，
+    /// 只有真正进「打印机」页（startMonitoring）或要扫描/打印时才创建，
+    /// 权限弹窗才会出现在用户有预期的时刻。
+    private lazy var sdk: ExpiryPrinterSDK = {
+        let instance = ExpiryPrinterSDK.shared()
+        instance.delegate = self
+        return instance
+    }()
 
     private var printCompletion: ((Bool, String?) -> Void)?
     private var lifecycleTimer: Timer?
@@ -124,8 +133,6 @@ final class PrinterService: NSObject, ObservableObject {
         // 与 Flutter 版原生桥共用同一 suite，升级后可沿用已添加的打印机
         defaults = UserDefaults(suiteName: "expiry_printer") ?? .standard
         super.init()
-        sdk.delegate = self
-        refreshBluetooth()
         loadSaved()
     }
 
