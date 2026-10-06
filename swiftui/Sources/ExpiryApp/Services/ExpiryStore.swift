@@ -17,8 +17,8 @@
 //  只对最近 60 天内的记录排，最多 20 条记录，避免撞上系统 64 条待发通知上限。
 //
 
+import Combine
 import Foundation
-import UIKit
 import UserNotifications
 
 final class ExpiryStore: ObservableObject {
