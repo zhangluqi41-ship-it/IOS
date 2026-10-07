@@ -327,10 +327,14 @@ static UIImage *SFBuildTestPage(int widthMm,
 #pragma mark - 扫描
 
 - (void)startScan {
-  if (self.scanning) return;
+  if (self.scanning) {
+    NSLog(@"[Printer] startScan 被忽略：已在扫描中");
+    return;
+  }
   self.scanning = YES;
   [self clearFound];
   [[SFPrintSDKUtils shareInstance] startScan];
+  NSLog(@"[Printer] startScan 已发起（30 秒后自动收尾）");
 
   [self.scanStopTimer invalidate];
   __weak typeof(self) weakSelf = self;
@@ -356,6 +360,7 @@ static UIImage *SFBuildTestPage(int widthMm,
   [self.scanStopTimer invalidate];
   self.scanStopTimer = nil;
   [[SFPrintSDKUtils shareInstance] stopScan];
+  NSLog(@"[Printer] stopScan 已调用");
 
   NSObject<ExpiryPrinterSDKDelegate> *d = self.delegate;
   if ([d respondsToSelector:@selector(printerDidStopScan)]) {
@@ -385,6 +390,7 @@ static UIImage *SFBuildTestPage(int widthMm,
   if (isNew) {
     self.found[uuid] = peripheral;
     [self.foundOrder addObject:peripheral];
+    NSLog(@"[Printer] 发现设备 %@ (%@)", peripheral.name, uuid);
   }
   if (!self.scanning) return;
 
@@ -403,6 +409,7 @@ static UIImage *SFBuildTestPage(int widthMm,
 
   NSString *uuid = peripheral.identifier.UUIDString ?: @"";
   NSString *name = peripheral ? [self friendlyNameFor:peripheral] : @"硕方 T50 Pro";
+  NSLog(@"[Printer] 连接回调 ok=%d uuid=%@ name=%@", (int)ok, uuid, name);
   NSObject<ExpiryPrinterSDKDelegate> *d = self.delegate;
 
   if (ok) {
@@ -429,6 +436,8 @@ static UIImage *SFBuildTestPage(int widthMm,
 - (void)connectPeripheral:(CBPeripheral *)peripheral {
   self.target = peripheral;
   [self.connectTimer invalidate];
+  NSLog(@"[Printer] 开始连接 %@ (%@)",
+        peripheral.name, peripheral.identifier.UUIDString);
 
   __weak typeof(self) weakSelf = self;
   self.connectTimer = [NSTimer scheduledTimerWithTimeInterval:kConnectTimeoutSeconds
@@ -440,16 +449,28 @@ static UIImage *SFBuildTestPage(int widthMm,
   [[SFPrintSDKUtils shareInstance] connectedBlueteeth:peripheral];
 }
 
-- (void)connectDeviceUUID:(NSString *)uuid {
-  if (uuid.length == 0) return;
+- (void)connectDeviceUUID:(NSString *)uuid name:(nullable NSString *)name {
+  if (uuid.length == 0 && name.length == 0) return;
 
+  NSLog(@"[Printer] connect 请求 uuid=%@ name=%@", uuid, name);
+
+  // ① 本轮扫描结果里直接有 —— 最常见的情况。
   CBPeripheral *known = self.found[uuid];
+  if (known == nil && name.length > 0) {
+    // ② UUID 失效（重装 App 后 identifier 会变）时按名字回退。
+    known = [self peripheralMatchingName:name];
+    if (known != nil) {
+      NSLog(@"[Printer] UUID 已失效，按名字匹配到 %@ -> %@",
+            name, known.identifier.UUIDString);
+    }
+  }
   if (known != nil) {
     [self connectPeripheral:known];
     return;
   }
 
-  // 目标设备还没扫到（例如从「已添加」进来）：先扫一轮再连。
+  // ③ 还没扫到：先扫一轮再连。
+  NSLog(@"[Printer] 未在本轮扫描结果中，重新扫描后再连");
   [self startScan];
 
   __block NSInteger ticks = 0;
@@ -464,6 +485,9 @@ static UIImage *SFBuildTestPage(int widthMm,
                                                          return;
                                                        }
                                                        CBPeripheral *found = strongSelf.found[uuid];
+                                                       if (found == nil && name.length > 0) {
+                                                         found = [strongSelf peripheralMatchingName:name];
+                                                       }
                                                        if (found != nil) {
                                                          [inner invalidate];
                                                          [strongSelf stopScan];
@@ -471,12 +495,28 @@ static UIImage *SFBuildTestPage(int widthMm,
                                                          return;
                                                        }
                                                        if (ticks >= kScanUntilFoundTicks) {
+                                                         NSLog(@"[Printer] 扫描 %ld 秒仍未发现目标设备",
+                                                               (long)ticks);
                                                          [inner invalidate];
                                                          [strongSelf stopScan];
                                                          [strongSelf finishConnectWithPeripheral:nil ok:NO];
                                                        }
                                                      }];
   [timer fire];
+}
+
+/// 在已发现的设备里按显示名找一个（UUID 失效时的回退手段）。
+- (nullable CBPeripheral *)peripheralMatchingName:(NSString *)name {
+  if (name.length == 0) return nil;
+  for (CBPeripheral *peripheral in self.foundOrder) {
+    NSString *candidate = peripheral.name;
+    if (candidate.length == 0) {
+      candidate = [[SFPrintSDKUtils shareInstance] getDeviceNameWithperipheralName:peripheral.name];
+    }
+    if (candidate.length == 0) continue;
+    if ([candidate isEqualToString:name]) return peripheral;
+  }
+  return nil;
 }
 
 - (void)disconnect {

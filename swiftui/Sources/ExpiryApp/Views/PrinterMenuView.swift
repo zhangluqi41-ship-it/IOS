@@ -1,6 +1,6 @@
 //
 //  PrinterMenuView.swift
-//  打印机 —— 蓝芽状态 / 当前连接 / 已添加的打印机 / 打印参数。
+//  打印机 —— 型号选择 / 当前连接 / 已添加的打印机 / 打印参数。
 //
 //  设计红线（规格 6.1）：Liquid Glass 只属于导航层与浮层。
 //  本页是内容页，所以列表行一律用系统语义背景 + 系统按钮，
@@ -16,6 +16,7 @@ struct PrinterMenuView: View {
 
     @State private var showScanner = false
     @State private var testResult: String?
+    @State private var showClearSaved = false
 
     @AppStorage("printDensity") private var density: Int = 0
     @AppStorage("printCopies") private var copies: Int = 1
@@ -24,7 +25,7 @@ struct PrinterMenuView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                bluetoothSection
+                environmentSection
                 currentSection
                 savedSection
                 optionsSection
@@ -37,7 +38,7 @@ struct PrinterMenuView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
-                    .disabled(!printer.bluetooth.isReady)
+                    .disabled(!printer.bluetooth.isReady || printer.isConnecting)
                 }
             }
             .sheet(isPresented: $showScanner) {
@@ -54,6 +55,12 @@ struct PrinterMenuView: View {
                 Button("好", role: .cancel) { testResult = nil }
             } message: {
                 Text(testResult ?? "")
+            }
+            .confirmationDialog("清除全部已添加的打印机？", isPresented: $showClearSaved, titleVisibility: .visible) {
+                Button("清除", role: .destructive) { printer.removeAllSaved() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("重装 App 后旧记录会失效，清掉后重新扫描添加即可。")
             }
         }
     }
@@ -74,30 +81,44 @@ struct PrinterMenuView: View {
         )
     }
 
-    // MARK: - 蓝牙状态
+    // MARK: - 连接环境
 
-    private var bluetoothSection: some View {
+    /// 型号选择 + 蓝牙异常提示。
+    ///
+    /// ★ 原来这里常驻一行「蓝牙 已开启」——信息量为零，反而占掉了本该放
+    ///   「打印机型号」的位置（用户反馈）。现在蓝牙**只在出问题时**才出现，
+    ///   平时这一栏就是型号下拉菜单。
+    private var environmentSection: some View {
         Section {
-            HStack(spacing: 12) {
-                Image(systemName: bluetoothIcon)
-                    .foregroundStyle(printer.bluetooth.isReady ? Theme.brand : .secondary)
-                    .frame(width: 22)
-                Text("蓝牙")
-                Spacer()
-                Text(printer.bluetooth.message)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.trailing)
+            Picker("打印机型号", selection: $printer.kind) {
+                ForEach(PrinterKind.allCases) { kind in
+                    Text(kind.label).tag(kind)
+                }
             }
+            .pickerStyle(.menu)
 
-            if printer.bluetooth == .denied || printer.bluetooth == .off {
-                Button("打开系统设置") {
-                    printer.openSystemSettings()
+            if !printer.bluetooth.isReady {
+                HStack(spacing: 12) {
+                    Image(systemName: bluetoothIcon)
+                        .foregroundStyle(.orange)
+                        .frame(width: 22)
+                    Text(printer.bluetooth.message)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                if printer.bluetooth == .denied || printer.bluetooth == .off {
+                    Button("打开系统设置") { printer.openSystemSettings() }
                 }
             }
         } header: {
             Text("连接环境")
         } footer: {
-            Text("硕方 T50 Pro 通过蓝牙低功耗（BLE）连接。iOS 不提供蓝牙 MAC 地址，设备以系统分配的标识区分。")
+            if let note = printer.kind.note {
+                Text(note)
+            } else {
+                Text("通过蓝牙低功耗（BLE）连接。iOS 不提供蓝牙 MAC 地址，设备以系统分配的标识区分。")
+            }
         }
     }
 
@@ -164,25 +185,14 @@ struct PrinterMenuView: View {
                     Text("未连接")
                         .foregroundStyle(.secondary)
                 }
-                Button {
-                    showScanner = true
-                } label: {
-                    HStack {
-                        Image(systemName: "dot.radiowaves.left.and.right")
-                        Text("扫描并连接打印机")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.footnote)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .disabled(!printer.bluetooth.isReady)
             }
         } header: {
             Text("当前打印机")
         } footer: {
             if printer.isConnected {
                 Text("测试页用于确认走纸、边距与浓度是否合适。")
+            } else if !printer.isConnecting {
+                Text("点右上角 ＋ 扫描并连接打印机。")
             }
         }
     }
@@ -225,11 +235,16 @@ struct PrinterMenuView: View {
                         printer.removeSaved(printer.saved[index])
                     }
                 }
+
+                Button("清除全部") {
+                    showClearSaved = true
+                }
+                .foregroundStyle(.red)
             }
         } header: {
             Text("已添加")
         } footer: {
-            Text("左滑可删除。点一下即连接。")
+            Text("左滑可删除，点一下即连接。只有**连接成功**的设备才会出现在这里。")
         }
     }
 
@@ -292,14 +307,15 @@ struct ScanDevicesSheet: View {
                         if printer.isScanning {
                             ProgressView()
                         }
-                        Text(printer.isScanning ? "正在扫描附近设备…" : "未发现设备")
+                        Text(printer.isScanning ? "正在扫描附近设备…" : "未发现设备，可点右上角刷新重试")
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 ForEach(printer.devices) { device in
                     Button {
-                        printer.addSaved(uuid: device.uuid, name: device.name)
+                        // ★ 这里只发起连接；**连上之后**才写入「已添加」。
+                        //   以前是点一下就加，无论成败都加，列表里全是连不上的僵尸条目。
                         printer.connect(device.uuid, name: device.name)
                         dismiss()
                     } label: {
@@ -326,11 +342,15 @@ struct ScanDevicesSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        printer.startScan()
+                        // ★ 刷新 = 重开一轮扫描。
+                        //   原来直接调 startScan，而原生有「已在扫描就忽略」的保护 +
+                        //   30 秒自动收尾，导致这 30 秒内点刷新毫无反应（用户实测反馈）。
+                        printer.restartScan()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
-                    .disabled(printer.isScanning)
+                    // 不再因为「正在扫描」而禁用：扫描是持续 30 秒的，
+                    // 禁用等于按钮长时间点不动。
                 }
             }
             .onAppear { printer.startScan() }

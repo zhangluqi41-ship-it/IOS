@@ -1,17 +1,23 @@
 //
 //  PrinterService.swift
-//  打印机服务 —— 硕方 T50 Pro 蓝牙（BLE）连接状态与打印协调。
+//  打印机服务 —— 蓝牙（BLE）连接状态与打印协调。
 //
 //  真正的蓝牙跑在 ObjC 封装 `ExpiryPrinterSDK` 里（硕方 SDK 是 ObjC 框架，
-//  且没有 modulemap，Swift 不能直接 import）。本类只做三件事：
+//  且没有 modulemap，Swift 不能直接 import）。本类只做四件事：
 //   1. 把 delegate 回调翻译成 SwiftUI 可观察的状态（@Published）；
-//   2. 维护「已添加的打印机」持久化（与 Flutter 版共用同一 UserDefaults suite，
-//      老数据可直接沿用）；
-//   3. 给视图层提供 connect / print / testPage 这类语义化接口。
+//   2. 维护「已添加的打印机」持久化（与 Flutter 版共用同一 UserDefaults suite）；
+//   3. 给视图层提供 connect / print / testPage 这类语义化接口；
+//   4. 兜住「回调没来但实际已连上」的情况（轮询 SDK 的连接状态）。
 //
 //  ★ iOS 硬限制（勿踩）：拿不到蓝牙 MAC 地址、系统不允许经典蓝牙 SPP，
 //    所以「通用标签机（TSPL）/ 通用热敏机（ESC-POS）」在 iOS 上不可用，
-//    只支持走 BLE 的硕方机型。iOS 侧用 peripheral.identifier（UUID）当设备地址。
+//    只支持走 BLE 的机型。iOS 侧用 peripheral.identifier（UUID）当设备地址。
+//
+//  ★★ 关于「重装之后就连不上了」：iOS 的 `peripheral.identifier` 是**按 App 安装**
+//    分配的，重装 App（我们每 7 天都要重签重装一次）之后旧 UUID 就失效了。
+//    「已添加」里存的就是这种旧 UUID —— 点它必然扫不到、永远连不上。
+//    现在连接时会带设备名，原生层在 UUID 匹配失败后按**名字回退匹配**，
+//    连上后再把新 UUID 回写覆盖旧记录。
 //
 
 import Combine
@@ -23,17 +29,38 @@ import UIKit
 
 enum PrinterKind: String, CaseIterable, Identifiable {
     case supvan = "supvan_t50pro"
+    case urovoK329 = "urovo_k329"
+    case generic = "generic"
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .supvan: return "硕方 T50 Pro"
+        case .urovoK329: return "UROVO K329"
+        case .generic: return "通用"
+        }
+    }
+
+    /// 该机型在 iOS 上能不能直接打印。
+    ///
+    /// ★ iOS 不允许经典蓝牙 SPP，也没有通用的 BLE 打印协议 ——
+    ///   目前只有硕方 SDK 这一条可用通路。其余机型可以扫描、尝试连接，
+    ///   但打印不保证成功（如实告知，不要假装支持）。
+    var printsOnIOS: Bool { self == .supvan }
+
+    var note: String? {
+        switch self {
+        case .supvan: return nil
+        case .urovoK329:
+            return "UROVO K329 尚未验证。iOS 不允许经典蓝牙 SPP，只能尝试 BLE 连接，打印可能不成功。"
+        case .generic:
+            return "通用机型需要经典蓝牙 SPP 或厂商协议，iOS 系统不支持，仅能扫描/连接，无法打印。"
         }
     }
 
     static func label(for code: String) -> String {
-        PrinterKind(rawValue: code)?.label ?? "硕方 T50 Pro"
+        PrinterKind(rawValue: code)?.label ?? PrinterKind.supvan.label
     }
 }
 
@@ -111,6 +138,14 @@ final class PrinterService: NSObject, ObservableObject {
     /// 一次性提示文案（视图弹 toast 后置回 nil）。
     @Published var toast: String?
 
+    /// 当前选择的打印机型号（持久化）。
+    @Published var kind: PrinterKind = .supvan {
+        didSet {
+            guard kind != oldValue else { return }
+            defaults.set(kind.rawValue, forKey: Self.kindKey)
+        }
+    }
+
     private let defaults: UserDefaults
 
     /// ★ 延迟创建：构造 `ExpiryPrinterSDK` 会碰到 CoreBluetooth，
@@ -123,18 +158,34 @@ final class PrinterService: NSObject, ObservableObject {
         return instance
     }()
 
+    /// 正在进行的连接意图。连上之后才据此写入「已添加」。
+    private struct ConnectIntent {
+        let uuid: String
+        let name: String
+        let kind: String
+        /// 是不是从「已添加」里点进来的（失败时给更准确的提示）。
+        let fromSaved: Bool
+    }
+
+    private var intent: ConnectIntent?
     private var printCompletion: ((Bool, String?) -> Void)?
     private var pendingRecord: LabelRecord?
     private var lifecycleTimer: Timer?
     private var connectWatchdog: Timer?
+    private var connectPollTimer: Timer?
 
     private static let savedKey = "saved_printers"
+    private static let kindKey = "printer_kind"
 
     override private init() {
         // 与 Flutter 版原生桥共用同一 suite，升级后可沿用已添加的打印机
         defaults = UserDefaults(suiteName: "expiry_printer") ?? .standard
         super.init()
         loadSaved()
+        if let raw = defaults.string(forKey: Self.kindKey),
+           let value = PrinterKind(rawValue: raw) {
+            kind = value
+        }
     }
 
     // MARK: - 蓝牙状态
@@ -184,34 +235,72 @@ final class PrinterService: NSObject, ObservableObject {
         sdk.startScan()
     }
 
+    /// 「刷新」：强制重开一轮扫描。
+    ///
+    /// ★ 原来这里直接调 startScan，而原生 `startScan` 有「已在扫描就忽略」的保护，
+    ///   再加上扫描有 30 秒自动收尾 —— 结果在这 30 秒里点刷新毫无反应，
+    ///   按钮还因为 `isScanning` 被禁用（用户实测反馈）。所以必须先停再起。
+    func restartScan() {
+        guard bluetooth.isReady else {
+            toast = bluetooth.message
+            return
+        }
+        sdk.stopScan()
+        isScanning = false
+        devices = []
+        sdk.startScan()
+    }
+
     func stopScan() {
+        // ★ 连接进行中绝不停扫描：扫描表一关就会走 onDisappear -> stopScan，
+        //   而那时 BLE 连接才刚发起，停扫描很容易把这次连接一起打断。
+        guard !isConnecting else { return }
         sdk.stopScan()
     }
 
     // MARK: - 连接
 
-    func connect(_ uuid: String, name: String) {
+    func connect(_ uuid: String, name: String, kind: String? = nil) {
+        beginConnect(uuid: uuid, name: name,
+                     kind: kind ?? self.kind.rawValue, fromSaved: false)
+    }
+
+    func connect(_ printer: SavedPrinter) {
+        beginConnect(uuid: printer.address, name: printer.name,
+                     kind: printer.kind, fromSaved: true)
+    }
+
+    private func beginConnect(uuid: String, name: String, kind: String, fromSaved: Bool) {
         guard bluetooth.isReady else {
             toast = bluetooth.message
             return
         }
         guard !isConnecting else { return }
+
+        // ★ 先停扫描再连，和已验证过的 Flutter 版顺序一致。
+        sdk.stopScan()
+        isScanning = false
+
+        intent = ConnectIntent(uuid: uuid, name: name, kind: kind, fromSaved: fromSaved)
         isConnecting = true
         connectedUUID = nil
         connectedName = nil
 
         connectWatchdog?.invalidate()
         connectWatchdog = Timer.scheduledTimer(withTimeInterval: 20, repeats: false) { [weak self] _ in
-            guard let self, self.isConnecting else { return }
-            self.isConnecting = false
-            self.toast = "连接超时，请确认打印机已开机并在附近"
+            self?.failConnect(message: "连接超时，请确认打印机已开机并在附近")
         }
 
-        sdk.connectDeviceUUID(uuid)
-    }
+        // ★ 兜底：硕方的 connectSuccessBlock 偶发不回调（真机反馈过），
+        //   而 SDK 自己的 getDeviceStatus 是可靠的。连上就主动落状态。
+        connectPollTimer?.invalidate()
+        connectPollTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            guard let self, self.isConnecting, self.sdk.isConnected else { return }
+            self.markConnected(uuid: self.sdk.connectedUUID ?? self.intent?.uuid ?? "",
+                               name: self.intent?.name ?? self.connectedDisplayName)
+        }
 
-    func connect(_ printer: SavedPrinter) {
-        connect(printer.address, name: printer.name)
+        sdk.connectDeviceUUID(uuid, name: name)
     }
 
     func disconnect() {
@@ -219,15 +308,63 @@ final class PrinterService: NSObject, ObservableObject {
         connectedUUID = nil
         connectedName = nil
         isConnecting = false
+        intent = nil
         connectWatchdog?.invalidate()
         connectWatchdog = nil
+        connectPollTimer?.invalidate()
+        connectPollTimer = nil
     }
 
     var isConnected: Bool { connectedUUID != nil }
 
     /// 当前连接名（用于状态卡展示）。
     var connectedDisplayName: String {
-        connectedName ?? PrinterKind.supvan.label
+        connectedName ?? kind.label
+    }
+
+    // MARK: - 连接结果
+
+    private func markConnected(uuid: String, name: String) {
+        connectWatchdog?.invalidate()
+        connectWatchdog = nil
+        connectPollTimer?.invalidate()
+        connectPollTimer = nil
+
+        let pending = intent
+        intent = nil
+        isConnecting = false
+
+        let finalUUID = uuid.isEmpty ? (pending?.uuid ?? "") : uuid
+        let finalName = name.isEmpty ? (pending?.name ?? kind.label) : name
+        connectedUUID = finalUUID
+        connectedName = finalName
+
+        // ★ 连上了才写进「已添加」。以前是「点一下设备就加」，无论成败都加，
+        //   结果列表里堆一堆连不上的僵尸条目（用户实测反馈）。
+        if let pending, !finalUUID.isEmpty {
+            addSaved(uuid: finalUUID, name: finalName, kind: pending.kind)
+        }
+        toast = "已连接 \(finalName)"
+    }
+
+    private func failConnect(message: String) {
+        connectWatchdog?.invalidate()
+        connectWatchdog = nil
+        connectPollTimer?.invalidate()
+        connectPollTimer = nil
+
+        let pending = intent
+        intent = nil
+        isConnecting = false
+        connectedUUID = nil
+        connectedName = nil
+
+        // 从「已添加」进来的失败，多半是重装 App 后旧标识失效 —— 直接给出可操作的建议。
+        if pending?.fromSaved == true {
+            toast = "没找到这台打印机。重装 App 后设备标识会变，请在右上角「+」里重新扫描添加。"
+        } else {
+            toast = message
+        }
     }
 
     // MARK: - 已添加的打印机
@@ -254,9 +391,12 @@ final class PrinterService: NSObject, ObservableObject {
         let address = uuid.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !address.isEmpty else { return false }
         let safeName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? PrinterKind.label(for: kind) : name
+            ? PrinterKind.label(for: kind) : name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // ★ 同名也去重：按名字回退连上后 UUID 会变，旧记录得被顶掉，
+        //   否则「已添加」里会同时留下新旧两条同名记录。
         var list = [SavedPrinter(address: address, name: safeName, kind: kind)]
-        list.append(contentsOf: saved.filter { $0.address != address })
+        list.append(contentsOf: saved.filter { $0.address != address && $0.name != safeName })
         persistSaved(list)
         return true
     }
@@ -273,6 +413,11 @@ final class PrinterService: NSObject, ObservableObject {
                 ? SavedPrinter(address: $0.address, name: trimmed, kind: $0.kind)
                 : $0
         })
+    }
+
+    /// 清掉连不上的历史条目（重装后 UUID 全失效时用）。
+    func removeAllSaved() {
+        persistSaved([])
     }
 
     // MARK: - 打印
@@ -341,7 +486,7 @@ final class PrinterService: NSObject, ObservableObject {
     }
 }
 
-// MARK: - 硕方 SDK 回调
+// MARK: - SDK 回调
 
 extension PrinterService: ExpiryPrinterSDKDelegate {
 
@@ -360,27 +505,20 @@ extension PrinterService: ExpiryPrinterSDKDelegate {
     }
 
     func printerDidConnectUUID(_ uuid: String, name: String) {
-        connectWatchdog?.invalidate()
-        connectWatchdog = nil
-        isConnecting = false
-        connectedUUID = uuid
-        connectedName = name
-        toast = "已连接 \(name)"
+        markConnected(uuid: uuid, name: name)
     }
 
     func printerDidFailToConnect() {
-        connectWatchdog?.invalidate()
-        connectWatchdog = nil
-        isConnecting = false
-        connectedUUID = nil
-        connectedName = nil
-        toast = "连接失败，请确认打印机已开机并在附近"
+        failConnect(message: "连接失败，请确认打印机已开机并在附近")
     }
 
     func printerDidDisconnect() {
         connectedUUID = nil
         connectedName = nil
         isConnecting = false
+        intent = nil
+        connectPollTimer?.invalidate()
+        connectPollTimer = nil
         toast = "打印机已断开"
     }
 

@@ -59,8 +59,17 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)startScan;
 - (void)stopScan;
-/// 连接指定设备。已在本次扫描结果里则直接连；否则先扫一轮（最多 8 秒）再连。
-- (void)connectDeviceUUID:(NSString *)uuid;
+/// 连接指定设备。
+///
+/// - Parameters:
+///   - uuid: 目标设备的 `peripheral.identifier`。
+///   - name: 设备名，可空。**UUID 找不到时会按名字回退匹配**。
+///
+/// ★ 为什么必须支持按名字回退：iOS 的 `peripheral.identifier` 是**按 App 安装**
+///   分配的 —— 重装 App（我们每周都要重签重装）之后，旧 UUID 就指向不存在的设备了。
+///   「已添加」里存的就是这种旧 UUID，点它必然扫不到、永远连不上。
+///   此时按名字匹配才能救回来，连上后再把新 UUID 回写覆盖。
+- (void)connectDeviceUUID:(NSString *)uuid name:(nullable NSString *)name;
 - (void)disconnect;
 
 /// 硕方 SDK 只暴露「已连接 / 未连接」，没有更细的状态码。
