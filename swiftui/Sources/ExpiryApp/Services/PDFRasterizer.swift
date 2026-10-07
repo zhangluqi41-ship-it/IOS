@@ -112,6 +112,68 @@ enum PDFRasterizer {
         return total == 0 ? 0 : Double(bright) / Double(total)
     }
 
+    /// ★★ 全分辨率**墨迹**比例（不降采样）。
+    ///
+    /// ⚠️ 窄带判「有没有东西」必须用这个，**不要用 `inkRatio`**。
+    ///
+    /// `inkRatio` 会把整页降采样成 **160 像素宽**再数深色像素 ——
+    /// 50mm 的标签上 **1 个采样像素 = 0.3125mm**，于是：
+    ///   · 任何窄于 ~0.6mm 的窗口只有一两列，边界完全被栅格吞掉；
+    ///   · 窗口边界压在黑条边缘上时，那一列会**把黑条本身算进来**。
+    /// 实测踩过一次：一条 0.3mm 宽的「右黑条左侧应该是干净的」检测带，
+    /// 量出 45% 墨迹（= 10/22，全是右黑条漏进来的），白红了两轮 CI ——
+    /// 被测的内容其实老老实实待在 44.9mm 以内。
+    ///
+    /// - Parameter rect: 归一化坐标（0~1），原点在**左上**。
+    static func darkRatio(of image: UIImage, in rect: CGRect, below: UInt8 = 200) -> Double {
+        guard let cg = image.cgImage,
+              let buf = GrayBuffer(cgImage: cg, whiteBackground: false) else { return 0 }
+
+        let x0 = clamp(Int((rect.minX * CGFloat(buf.width)).rounded(.down)), 0, buf.width)
+        let x1 = clamp(Int((rect.maxX * CGFloat(buf.width)).rounded(.up)), 0, buf.width)
+        let y0 = clamp(Int((rect.minY * CGFloat(buf.height)).rounded(.down)), 0, buf.height)
+        let y1 = clamp(Int((rect.maxY * CGFloat(buf.height)).rounded(.up)), 0, buf.height)
+        guard x1 > x0, y1 > y0 else { return 0 }
+
+        var dark = 0
+        var total = 0
+        for y in y0..<y1 {
+            let row = y * buf.width
+            for x in x0..<x1 {
+                total += 1
+                if buf.pixels[row + x] < below { dark += 1 }
+            }
+        }
+        return total == 0 ? 0 : Double(dark) / Double(total)
+    }
+
+    /// 归一化区域内**最右侧**深色像素的归一化 x（原点左上）；区域内没有深色返回 nil。
+    ///
+    /// 用来断言「内容没有越过某条线」—— 比在固定窗口里数比例可靠得多：
+    /// 比例只能回答「这块区域里有没有东西」，回答不了「东西停在哪」。
+    /// 全分辨率，不降采样（原因见 `darkRatio`）。
+    static func rightmostDarkX(of image: UIImage, in rect: CGRect,
+                               below: UInt8 = 200) -> CGFloat? {
+        guard let cg = image.cgImage,
+              let buf = GrayBuffer(cgImage: cg, whiteBackground: false) else { return nil }
+
+        let x0 = clamp(Int((rect.minX * CGFloat(buf.width)).rounded(.down)), 0, buf.width)
+        let x1 = clamp(Int((rect.maxX * CGFloat(buf.width)).rounded(.up)), 0, buf.width)
+        let y0 = clamp(Int((rect.minY * CGFloat(buf.height)).rounded(.down)), 0, buf.height)
+        let y1 = clamp(Int((rect.maxY * CGFloat(buf.height)).rounded(.up)), 0, buf.height)
+        guard x1 > x0, y1 > y0 else { return nil }
+
+        var found: Int? = nil
+        for y in y0..<y1 {
+            let row = y * buf.width
+            for x in x0..<x1 where buf.pixels[row + x] < below {
+                if found == nil || x > found! { found = x }
+            }
+        }
+        guard let fx = found else { return nil }
+        return CGFloat(fx + 1) / CGFloat(buf.width)
+    }
+
     /// 归一化区域内的**最大灰度值**（0~255）。
     /// 和 `brightRatio` 配合用来分辨两种失败：
     ///   · maxLuma ≈ 0   → 那儿根本什么都没有（字没画出来 / 画到别处去了）

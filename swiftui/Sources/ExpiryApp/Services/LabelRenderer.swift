@@ -137,27 +137,37 @@ enum LabelRenderer {
 
         // ---- 制作人：贴底一条页脚，与二维码左缘对齐 ----
         // ★ 字号放大到 1.8mm 后，名字长一点就会横着顶到右黑条上
-        //   （「制作人：」+ 20 字姓名 = 24 个汉字 ≈ 43mm，可用只有十几毫米）。
-        //   所以跟标题一样做一次「超宽自动缩字号」，宁可小一点也不要压坏版式。
-        //
-        // ★ 两个细节，都是「不这么写就会画到黑条上」：
-        //   ① `makerMaxW` 要和标题一样**再让出一个 `titleGapRight`**。
-        //      否则缩字号是「缩到刚好等于可用宽度」，长名字会精确地贴在
-        //      `barRight` 上 —— 黑字压在黑条边缘，既是毛边又难看。
-        //   ② 下限 0.8mm 太高：最坏情况是 24 个汉字（「制作人：」+ 20 字上限），
-        //      0.8mm 时总宽 19.2mm > 14.0mm 可用宽 → **照样戳进右黑条 4mm**。
-        //      压到 0.5mm 后 24 × 0.5 = 12.0mm，才真正保证任何输入都不会越界。
-        var makerSize = mm(LabelSpec.makerSz)
-        let makerMaxW = barRight - qrLeft - mm(LabelSpec.titleGapRight)
-        let naturalMakerW = textWidth(d.maker, font: bold, size: makerSize)
-        if naturalMakerW > makerMaxW && naturalMakerW > 0 {
-            makerSize = max(makerSize * makerMaxW / naturalMakerW, mm(0.5))
-        }
-        drawText(c, bold, d.maker, makerSize, qrLeft,
-                 mm(LabelSpec.makerBottom) - ascender(bold, makerSize))
+        //   （「制作人：」+ 20 字上限 = 24 个汉字 ≈ 43mm，可用只有十几毫米），
+        //   所以跟标题一样做一次超宽缩字号 —— 逻辑在 `makerFit` 里，有单测。
+        let maker = makerFit(d.maker, font: bold, desired: mm(LabelSpec.makerSz),
+                             x: qrLeft, barRight: barRight,
+                             margin: mm(LabelSpec.makerGapRight))
+        drawText(c, bold, d.maker, maker.size, qrLeft,
+                 mm(LabelSpec.makerBottom) - ascender(bold, maker.size))
 
         // ---- 二维码 ----
         drawQR(c, d.qrText, qrLeft, mm(LabelSpec.qrTop), qs)
+    }
+
+    /// 制作人页脚：从 `x` 起排，右侧不得超过 `barRight − margin`；超宽就等比缩字号。
+    ///
+    /// 返回 `(字号, 宽度)`，恒定满足 `x + width ≤ barRight − margin`（浮点误差内）。
+    ///
+    /// ★ 缩字号时**不设「可读性下限」**：宁可小到看不清，也不许越界。
+    ///   越界是直接印到黑条上的可见版式损坏；而「制作人：」+20 字上限
+    ///   = 24 个汉字本来就不是正常输入（正常就 2~3 个字）。
+    ///   以前给过 0.8mm 的下限，结果 24 字 × 0.8 = 19.2mm > 14mm 可用宽，
+    ///   **照样戳进黑条 4mm** —— 下限在这里纯属帮倒忙。
+    static func makerFit(_ text: String, font: UIFont, desired: CGFloat,
+                         x: CGFloat, barRight: CGFloat,
+                         margin: CGFloat) -> (size: CGFloat, width: CGFloat) {
+        guard !text.isEmpty, desired > 0 else { return (0, 0) }
+        let maxW = max(barRight - x - margin, 0)
+        let natural = textWidth(text, font: font, size: desired)
+        guard natural > 0, maxW > 0 else { return (0, 0) }
+        var size = desired
+        if natural > maxW { size = desired * maxW / natural }
+        return (size, textWidth(text, font: font, size: size))
     }
 
     // MARK: - 文字测量与绘制

@@ -79,6 +79,12 @@ enum LabelSpec {
     static let rowStep: CGFloat = 6.7  // 每组占高（字号放大后由 5.65 撑开）
     static let rowGap: CGFloat = 3.28  // 标签与值行距
     static let makerSz: CGFloat = 1.8  // 制作人字号（原来 1.4；超宽时自动缩小）
+    static let makerGapRight: CGFloat = 0.8 // 制作人右端与右黑条的最小间距
+                                            // ★ 为什么比 titleGapRight(0.6) 更宽：
+                                            //   超长姓名会被缩到 0.6mm 这种极小字号，
+                                            //   那时「按比例缩到刚好放下」的宽度会有
+                                            //   子像素舍入（实测 PIL 整数取整就差 0.3mm），
+                                            //   贴太死就会蹭到黑条上。留 0.8 一次到位。
 
     static let qrSize: CGFloat = 14.0   // 二维码边长（原来 12.8）
     static let qrGap: CGFloat = 0.3     // 二维码与「文字右端 / 右黑条」的最小间距

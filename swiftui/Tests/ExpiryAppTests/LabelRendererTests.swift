@@ -390,20 +390,91 @@ final class LabelRendererTests: XCTestCase {
     }
 
     /// ★ 回归：**超长制作人名字不许戳进右黑条**。
-    ///   字号放大到 1.8mm 后，「制作人：」+ 20 字上限 = 24 个汉字 ≈ 43mm，
-    ///   而二维码左缘到右黑条之间只有约 14mm —— 全靠 `paint` 里绘制前那次
-    ///   「超宽自动缩字号」兜住。这里放一个 19 字的名字，并检查
-    ///   右黑条左侧那条 0.3mm 宽的空白带是不是干净的。
-    ///   （旧实现把 `makerMaxW` 取成整段可用宽、字号下限又给到 0.8mm，
-    ///     文字会精确地贴在 45.5mm 上/甚至戳进去 4mm —— 这条断言会红。）
+    ///
+    /// 字号放大到 1.8mm 后，「制作人：」+ 20 字上限 = 24 个汉字 ≈ 43mm，
+    /// 而二维码左缘到右黑条之间只有约 14mm —— 全靠绘制前那次超宽缩字号兜住。
+    /// 旧实现把制作人可用宽取成整段、字号下限又给到 0.8mm，
+    /// 24 字 × 0.8 = 19.2mm **照样戳进黑条 4mm**。
+    ///
+    /// 分三段验：
+    ///   ① 几何（精确算术）：直接调 `LabelRenderer.makerFit`，姓名从 1 个字扫到
+    ///      20 个字上限，断言右端永远不超过 `barRight − makerGapRight`；
+    ///   ② 位图（量位置）：`rightmostDarkX` 量制作人墨迹最右端落在哪，
+    ///      长名字必须「缩到接近上限但不过线」，短名字必须没伸那么远；
+    ///   ③ 位图（量区域）：右黑条左侧那条窄带必须是干净的白。
+    ///
+    /// ⚠️ ②③ 必须用**全分辨率**的 `darkRatio` / `rightmostDarkX`，**不能用 `inkRatio`**：
+    ///    后者把整页降采样到 160 像素宽（1 像素 = 0.3125mm），窗口边界一旦压在
+    ///    黑条左缘（45.5mm）上就会**把黑条自己算进来** —— 实测一条 0.3mm 的
+    ///    「应该干净」检测带量出 45% 墨迹（10/22 个采样点落在黑条里），
+    ///    跟被测内容毫无关系，白白红了两轮 CI。
     func testLongMakerNameDoesNotReachRightBar() {
-        let long = String(repeating: "欧阳", count: 8)   // 16 字 → 制作人：+16 = 19 字
-        let image = raster(render(makeGeneric(maker: long)))
-        let strip = norm(mmX: 45.0, mmY: 26.0, mmW: 0.4, mmH: 3.2, inset: 0.05)
-        let ink = PDFRasterizer.inkRatio(of: image, in: strip)
-        print("[diag] 超长制作人 右黑条左缘空白带：ink = \(ink)")
-        XCTAssertLessThan(ink, 0.02,
-                          "超长制作人名字压到了右黑条左边（ink=\(ink)）")
+        let mm = LabelSpec.kMm
+        let regular = FontProvider.regular(12)
+        let bold = FontProvider.bold(12)
+
+        // ① 几何：字号从 1 个字扫到 20 个字
+        for n in 1...LabelTemplate.maxNameLength {
+            let data = makeGeneric(maker: String(repeating: "欧", count: n))
+            let g = contentGeometry(data, regular: regular, bold: bold)
+            let qr = LabelRenderer.qrBox(textRight: g.cx + g.maxTextW, barRight: g.barRight,
+                                         desired: LabelSpec.qrSize * mm,
+                                         gap: LabelSpec.qrGap * mm)
+            let m = LabelRenderer.makerFit(data.maker, font: bold,
+                                           desired: LabelSpec.makerSz * mm,
+                                           x: qr.left, barRight: g.barRight,
+                                           margin: LabelSpec.makerGapRight * mm)
+            let right = qr.left + m.width
+            let limit = g.barRight - LabelSpec.makerGapRight * mm
+            if n == 1 || n == 4 || n == LabelTemplate.maxNameLength {
+                print("[diag] 制作人 \(data.maker.count) 字：字号 \(m.size / mm)mm，"
+                      + "宽 \(m.width / mm)mm，右端 \(right / mm)mm，上限 \(limit / mm)mm")
+            }
+            XCTAssertLessThanOrEqual(right, limit + 0.05,
+                                     "姓名 \(n) 字时制作人右端 \(right / mm)mm 越过了 "
+                                     + "上限 \(limit / mm)mm（字号 \(m.size / mm)mm）")
+            XCTAssertGreaterThan(m.size, 0, "姓名 \(n) 字时字号被算成了 0")
+        }
+
+        // ② 位图：**直接量「制作人墨迹最右端落在哪」**，而不是在某个固定窗口里数比例。
+        //
+        // 为什么不用「右黑条左侧那条窄带必须是干净的」这种写法：
+        //   窄带的宽度必须卡在黑条左缘（45.5mm）的抗锯齿列（45.44~45.5）左边，
+        //   留给被测内容的余量就只剩零点几毫米；再加上「缩到极小的字号」这一侧
+        //   也有取整误差，窄带很容易既假红又假绿。量位置没有这个问题。
+        //
+        // 窗口：x 20~45.4mm、y 26.0~28.6mm —— 罩住制作人页脚（字形顶 26.3mm），
+        // 右边界停在黑条抗锯齿列之前，纵向避开黑条两端。
+        let win = norm(mmX: 20.0, mmY: 26.0, mmW: 25.4, mmH: 2.6, inset: 0)
+
+        // ★ 用「欧阳欧阳」（制作人：+4 = 8 字）而不是 20 字做位图取样：
+        //   20 字会被缩到 0.70mm（≈2pt），汉字笔画在那个尺寸下全是抗锯齿浅灰，
+        //   阈值 200 未必数得到，位图断言就成了掷骰子。8 字只缩到 1.74mm（≈5pt），
+        //   墨色扎实。**极端长度的不变量交给上面的几何扫描**（那里是精确算术）。
+        let image = raster(render(makeGeneric(maker: "欧阳欧阳")))
+        let longEdge = (PDFRasterizer.rightmostDarkX(of: image, in: win) ?? 0)
+            * LabelSpec.pageW
+        print("[diag] 8 字制作人：墨迹最右端 \(longEdge)mm"
+              + "（缩到上限 44.70mm，右黑条左缘 45.5mm）")
+        XCTAssertLessThanOrEqual(longEdge, 45.0,
+                                 "制作人伸到了 \(longEdge)mm，离右黑条（45.5mm）太近")
+        XCTAssertGreaterThanOrEqual(longEdge, 44.0,
+                                    "对照组失败：窗口里没量到制作人（最右 \(longEdge)mm），"
+                                    + "说明窗口摆错了地方，这条断言等于没测")
+
+        // 短名字对照：制作人不该伸得那么远 —— 证明上面那条量到的确实是「被缩过」的长名字
+        let shortEdge = (PDFRasterizer.rightmostDarkX(
+            of: raster(render(makeGeneric(maker: "四野"))), in: win) ?? 0) * LabelSpec.pageW
+        print("[diag] 2 字制作人：墨迹最右端 \(shortEdge)mm")
+        XCTAssertLessThan(shortEdge, 43.0, "短名字的制作人也伸到了 \(shortEdge)mm，异常")
+
+        // ③ 空白带（全分辨率）：短名字时右黑条左侧那条带必须是干净的白。
+        //   这条用的是「区域里有没有东西」的语义，和上面的「东西停在哪」互补。
+        let strip = norm(mmX: 45.2, mmY: 25.0, mmW: 0.2, mmH: 3.5, inset: 0)
+        let dark = PDFRasterizer.darkRatio(of: raster(render(makeGeneric(maker: "四野"))),
+                                           in: strip)
+        print("[diag] 右黑条左缘空白带 dark = \(dark)")
+        XCTAssertLessThan(dark, 0.02, "右黑条左侧的空白带里有东西（dark=\(dark)）")
     }
 
     func testRenderHandlesEmptyMaker() {
