@@ -252,6 +252,18 @@ static UIImage *SFBuildTestPage(int widthMm,
 @property (nonatomic, strong, nullable) NSTimer *connectTimer;
 @property (nonatomic, strong, nullable) NSTimer *scanStopTimer;
 
+/// ★★ 是否有一次连接正在飞行中。
+///
+/// 为什么必须有这个标记：真机实测（v1.6.7）证明**「刚发起连接就 stopScan」会把
+/// 这次连接掐死** —— 当时的扫描表点设备后是 `connect(...)` 紧跟着 `dismiss()`，
+/// sheet 一关就走 `onDisappear -> stopScan()`，用户那边表现就是「打印机完全无法连接」。
+///
+/// Swift 层已经在 `isConnecting` 时拒绝转调 stopScan，但**下面那个 30 秒自动收尾
+/// 定时器是直接调本方法的**，绕过了 Swift 层的守卫：用户如果在扫描的第 28 秒才
+/// 点设备，自动收尾正好落在连接过程中，就会复现同一个坑。
+/// 所以这一层也要挡。
+@property (nonatomic, assign) BOOL connecting;
+
 @end
 
 @implementation ExpiryPrinterSDK
@@ -351,6 +363,24 @@ static UIImage *SFBuildTestPage(int widthMm,
 }
 
 - (void)stopScan {
+  // ★★ 连接进行中绝不真的去停扫描 —— 见 `connecting` 属性的注释。
+  //    真停下去会把刚发起的 BLE 连接掐掉（v1.6.7 的「完全无法连接」就是这么来的）。
+  //    改成就地**推迟 5 秒再收尾**：连接超时是 15 秒，最多推迟三四次；
+  //    连接一旦有结果（成功/失败都会调 finishConnectWithPeripheral:）就放行，
+  //    不会让扫描无限期跑下去。
+  if (self.connecting) {
+    NSLog(@"[Printer] stopScan 推迟执行：正在连接中");
+    [self.scanStopTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.scanStopTimer =
+        [NSTimer scheduledTimerWithTimeInterval:5.0
+                                        repeats:NO
+                                          block:^(NSTimer *timer) {
+                                            [weakSelf stopScan];
+                                          }];
+    return;
+  }
+
   if (!self.scanning) {
     [self.scanStopTimer invalidate];
     self.scanStopTimer = nil;
@@ -406,6 +436,7 @@ static UIImage *SFBuildTestPage(int widthMm,
 - (void)finishConnectWithPeripheral:(CBPeripheral *)peripheral ok:(BOOL)ok {
   [self.connectTimer invalidate];
   self.connectTimer = nil;
+  self.connecting = NO;
 
   NSString *uuid = peripheral.identifier.UUIDString ?: @"";
   NSString *name = peripheral ? [self friendlyNameFor:peripheral] : @"硕方 T50 Pro";
@@ -435,6 +466,7 @@ static UIImage *SFBuildTestPage(int widthMm,
 
 - (void)connectPeripheral:(CBPeripheral *)peripheral {
   self.target = peripheral;
+  self.connecting = YES;
   [self.connectTimer invalidate];
   NSLog(@"[Printer] 开始连接 %@ (%@)",
         peripheral.name, peripheral.identifier.UUIDString);
@@ -525,6 +557,7 @@ static UIImage *SFBuildTestPage(int widthMm,
     [[SFPrintSDKUtils shareInstance] disConnectedBlueteeth:target];
   }
   self.target = nil;
+  self.connecting = NO;
   [self.connectTimer invalidate];
   self.connectTimer = nil;
 }
