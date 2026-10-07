@@ -753,17 +753,16 @@ static UIImage *SFBuildTestPage(int widthMm,
 
     // ★ 四个回调块还在不在。
     //   之前 SDK 内部的 KVC 探法（`utils` → `cbCM` / `connectPeripheral`）
-    //   实测不可用：`SFPrintSDKUtils.utils` 返回的是 `SFPrintUtils` 实例，
-    //   那个类对这两个 key 都不 KVC-compliant，每次都只会在日志里刷两行
-    //   失败信息（还把日志文件撑到 4.8 万字节）。这块信息量更大：
+    //   实测不可用：`utils` 拿到的是 `SFPrintUtils` 实例，那个类对这两个 key
+    //   都不 KVC-compliant，每次都只会在日志里刷两行失败信息（还把日志文件
+    //   撑到 4.8 万字节）。改用 `SFPrintSDKUtils` 自己声明的四个 block 属性
+    //   （见 SFPrintSDKUtils.h 第 19~25 行），信息量更大也不再刷垃圾：
     //   只要 success=nil 就说明是「回调被清了」，不用再猜。
-    id find = [utils valueForKey:@"findDeviceBlock"];
-    id success = [utils valueForKey:@"connectSuccessBlock"];
-    id fail = [utils valueForKey:@"connectFailBlock"];
-    id disc = [utils valueForKey:@"disconnectBlock"];
     [out appendFormat:@"| blocks find=%@ success=%@ fail=%@ disc=%@",
-                      find ? @"Y" : @"nil", success ? @"Y" : @"nil",
-                      fail ? @"Y" : @"nil", disc ? @"Y" : @"nil"];
+                      utils.findDeviceBlock ? @"Y" : @"nil",
+                      utils.connectSuccessBlock ? @"Y" : @"nil",
+                      utils.connectFailBlock ? @"Y" : @"nil",
+                      utils.disconnectBlock ? @"Y" : @"nil"];
   } @catch (NSException *e) {
     [out appendFormat:@"| KVC 失败: %@", e.reason];
   }

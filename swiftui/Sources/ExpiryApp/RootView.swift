@@ -26,21 +26,56 @@ enum AppTab: Hashable, CaseIterable {
 /// 主壳的导航状态。
 ///
 /// ★ 为什么 `selection` 要放在**引用类型**里而不是 `@State`：
-///   重置导航栈必须**延后**到 Tab 切换动画之后（原因见下方 `onChange`），
+///   重置导航栈必须**延后**到 Tab 切换动画之后（原因见 `RootView.onChange`），
 ///   而延后的闭包是在 `body` 里捕获的 —— SwiftUI 的 View 是**值类型**，
 ///   闭包里的 `self.selection` 会永远停在「创建那一刻」的值。
 ///   放进 class 里，闭包读到的就永远是**当前**值。
 final class RootNav: ObservableObject {
     @Published var selection: AppTab = .templates
 
+    /// 已经离开过、但还没完成「归位到一级菜单」的 Tab。
+    ///
+    /// 为什么要登记而不是当场重置：切换动画期间动导航栈会黑屏（见 `onChange`）。
+    /// 而「等动画结束再重置」又会漏掉一种情况 —— 用户切走之后**很快又切回来**，
+    /// 那时目标 Tab 已经重新可见，就不能再动它了。登记下来，下一轮再清。
+    private(set) var pendingReset: Set<AppTab> = []
+
+    func noteLeft(_ tab: AppTab) {
+        pendingReset.insert(tab)
+    }
+
+    /// 取走现在可以安全重置的 Tab（**当前不可见**的那些）。
+    ///
+    /// - Parameter force: 重试用尽时置 true —— 说明用户已经在别的 Tab 上待稳了，
+    ///   此时即便它又变成当前 Tab 也要清掉（极罕见：切走又秒切回来）。
+    ///   宁可有一次可见的「弹回一级」，也不要留下一个退不出去的黑屏。
+    func takeResettable(force: Bool) -> [AppTab] {
+        let ready = force ? pendingReset : pendingReset.subtracting([selection])
+        pendingReset.subtract(ready)
+        return ready.sorted { $0.order < $1.order }
+    }
+
+    var hasPending: Bool { !pendingReset.isEmpty }
+
     /// 需要归位到一级菜单的 Tab = **除当前之外**的全部。
     ///
     /// ★ 单独抽成静态函数是为了能被单测钉住：**绝不重置当前可见的 Tab**
-    ///   是这次「切 Tab 黑屏」修复的核心约束 —— 在切换动画期间（或之后
-    ///   立刻）动当前 Tab 的导航栈，就会渲染成一片黑。
+    ///   是这次「切 Tab 黑屏」修复的核心约束。
     static func tabsToReset(current: AppTab,
                             all: [AppTab] = AppTab.allCases) -> [AppTab] {
         all.filter { $0 != current }
+    }
+}
+
+extension AppTab {
+    /// 稳定的先后顺序（只用于让 `Set` 转数组的结果确定，便于测试与日志）。
+    var order: Int {
+        switch self {
+        case .templates: return 0
+        case .scan: return 1
+        case .expiry: return 2
+        case .printer: return 3
+        }
     }
 }
 
@@ -88,21 +123,41 @@ struct RootView: View {
             //   修法：① 延后到切换动画结束之后再重置；
             //        ② 只重置**当前不可见**的那些 Tab —— 既天然满足
             //           「切走就回一级菜单」，又绝不会在用户眼前弹栈。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                resetInactiveTabs(current: nav.selection)
-            }
+            nav.noteLeft(old)
+            scheduleResetFlush()
         }
-        .onAppear { resetInactiveTabs(current: nav.selection) }
+        .onAppear {
+            // 冷启动时四个栈本来就是空的；这一句是防状态恢复后残留二级页。
+            resetInactiveTabs(current: nav.selection)
+        }
     }
 
-    /// 把所有**非当前** Tab 的导航栈归位到一级菜单。
+    /// 延后把所有已登记、且**当前不可见**的 Tab 归位到一级菜单。
     ///
-    /// 幂等、可重复调用；只碰看不见的 Tab，所以不会造成可见的弹栈动画。
+    /// 幂等；只碰看不见的 Tab。若登记表里还有「又变回可见」的残留，
+    /// 会在下一轮重试（最多 3 轮，然后强制清掉）。
+    ///
+    /// 延迟 0.35 秒 = Tab 切换转场动画的典型时长；到那时再动导航栈就不会黑屏。
+    private func scheduleResetFlush(attempt: Int = 0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            let force = attempt >= 2
+            for tab in nav.takeResettable(force: force) { clearPath(tab) }
+            if nav.hasPending { scheduleResetFlush(attempt: attempt + 1) }
+        }
+    }
+
+    private func clearPath(_ tab: AppTab) {
+        switch tab {
+        case .templates: if !templatesPath.isEmpty { templatesPath = NavigationPath() }
+        case .scan: if !scanPath.isEmpty { scanPath = NavigationPath() }
+        case .expiry: if !expiryPath.isEmpty { expiryPath = NavigationPath() }
+        case .printer: if !printerPath.isEmpty { printerPath = NavigationPath() }
+        }
+    }
+
+    /// 把所有**非当前** Tab 的导航栈归位到一级菜单（一次性做完，测试/兜底用）。
     private func resetInactiveTabs(current: AppTab) {
-        if current != .templates, !templatesPath.isEmpty { templatesPath = NavigationPath() }
-        if current != .scan, !scanPath.isEmpty { scanPath = NavigationPath() }
-        if current != .expiry, !expiryPath.isEmpty { expiryPath = NavigationPath() }
-        if current != .printer, !printerPath.isEmpty { printerPath = NavigationPath() }
+        for tab in RootNav.tabsToReset(current: current) { clearPath(tab) }
     }
 }
 
