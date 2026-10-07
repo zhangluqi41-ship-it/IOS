@@ -277,10 +277,16 @@ final class PrinterService: NSObject, ObservableObject {
         }
         guard !isConnecting else { return }
 
-        // ★ 先停扫描再连，和已验证过的 Flutter 版顺序一致。
-        sdk.stopScan()
-        isScanning = false
-
+        // ★★ 这里**故意不停扫描**。
+        //   真机验证过能连上的 Flutter 版（`SFPrinterBridge.m` 的 `connect`）
+        //   就是「一边扫描一边连」—— 拿到 CBPeripheral 后直接调
+        //   `connectedBlueteeth:`，中间没有 stopScan。
+        //   硕方 SDK 是闭源的，无法确认它的 `stopScan` 会不会顺手把内部
+        //   CBCentralManager 收掉；一旦收掉，紧跟其后的连接请求就会静默失败。
+        //   「不主动停扫描」才是已验证的路径。
+        //
+        //   至于「扫描表一关就 onDisappear -> stopScan 把连接掐掉」，
+        //   由本类的 `stopScan()` 在 `isConnecting` 时直接返回来兜住。
         intent = ConnectIntent(uuid: uuid, name: name, kind: kind, fromSaved: fromSaved)
         isConnecting = true
         connectedUUID = nil
@@ -295,7 +301,9 @@ final class PrinterService: NSObject, ObservableObject {
         //   而 SDK 自己的 getDeviceStatus 是可靠的。连上就主动落状态。
         connectPollTimer?.invalidate()
         connectPollTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            guard let self, self.isConnecting, self.sdk.isConnected else { return }
+            // ★ ObjC 的 `- (BOOL)isConnected` 被 Swift 导入成**方法**（不是属性），
+            //   必须带括号调用；写成 `sdk.isConnected` 会编译不过。
+            guard let self, self.isConnecting, self.sdk.isConnected() else { return }
             self.markConnected(uuid: self.sdk.connectedUUID ?? self.intent?.uuid ?? "",
                                name: self.intent?.name ?? self.connectedDisplayName)
         }
