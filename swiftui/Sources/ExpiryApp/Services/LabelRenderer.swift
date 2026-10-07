@@ -74,12 +74,14 @@ enum LabelRenderer {
         c.fill(CGRect(x: rx0, y: top, width: rx1 - rx0, height: barH))
 
         // ---- 左黑条三排（星期 / 中文日 / 英文缩写）----
+        // ★ 黑底白字：颜色必须**同时**写进属性串（见 `drawText` 的说明），
+        //   只 setFillColor 会让字变成黑色、跟黑条糊在一起。
         let lcx = (lx0 + lx1) / 2
         let seg = barH / 3
         c.setFillColor(UIColor.white.cgColor)
-        drawCentered(c, bold, "星期", mm(LabelSpec.weekCnSz), lcx, top + seg * 0.5)
-        drawCentered(c, bold, d.weekdayCn, mm(LabelSpec.weekDaySz), lcx, top + seg * 1.5)
-        drawCentered(c, bold, d.weekdayEn, mm(LabelSpec.weekEnSz), lcx, top + seg * 2.5)
+        drawCentered(c, bold, "星期", mm(LabelSpec.weekCnSz), lcx, top + seg * 0.5, color: .white)
+        drawCentered(c, bold, d.weekdayCn, mm(LabelSpec.weekDaySz), lcx, top + seg * 1.5, color: .white)
+        drawCentered(c, bold, d.weekdayEn, mm(LabelSpec.weekEnSz), lcx, top + seg * 2.5, color: .white)
 
         // ---- 右黑条：竖排时间 HH:MM，每字符居中等分整条 ----
         let rc = d.rightText
@@ -89,7 +91,8 @@ enum LabelRenderer {
         let rcx = (rx0 + rx1) / 2
         c.setFillColor(UIColor.white.cgColor)
         for (i, ch) in rc.enumerated() {
-            drawCentered(c, bold, String(ch), fz, rcx, top + cell * CGFloat(i) + cell / 2)
+            drawCentered(c, bold, String(ch), fz, rcx,
+                         top + cell * CGFloat(i) + cell / 2, color: .white)
         }
 
         // ---- 内容区 ----
@@ -159,11 +162,23 @@ enum LabelRenderer {
     }
 
     /// 在基线 (x, baselineY) 处绘制文字（要求 y 向上坐标系）。
+    ///
+    /// ★★ `color` 必须写进属性串里，**不能只靠 `CGContext.setFillColor`**：
+    ///    CoreText 只有在属性串**没有前景色**时才会回退去用上下文的 fill color，
+    ///    而 `UIGraphicsPDFRenderer` 包装过的上下文里这条回退并不可靠 ——
+    ///    实测结果是：黑条上的白字全被画成了**黑色**，和黑条糊在一起，
+    ///    一个亮像素都没有（用户肉眼反馈「左右两侧黑竖条里的字不见了」，
+    ///    由 `brightRatio` 断言精确定位）。写进 `.foregroundColor` 才是
+    ///    CoreText 的主路径，稳定可靠。
     static func drawText(_ c: CGContext, _ font: UIFont, _ text: String,
-                         _ size: CGFloat, _ x: CGFloat, _ baselineY: CGFloat) {
+                         _ size: CGFloat, _ x: CGFloat, _ baselineY: CGFloat,
+                         color: UIColor = .black) {
         guard !text.isEmpty, size > 0 else { return }
         let f = font.withSize(size)
-        let attr = NSAttributedString(string: text, attributes: [.font: f])
+        let attr = NSAttributedString(string: text, attributes: [
+            .font: f,
+            .foregroundColor: color,
+        ])
         let line = CTLineCreateWithAttributedString(attr)
         // ★ 显式置为单位矩阵：UIGraphicsPDFRenderer 的上下文本身带翻转，
         //   继承下来的 text matrix 不确定，不显式设定就有镜像风险。
@@ -174,7 +189,8 @@ enum LabelRenderer {
 
     /// 在水平中心 (cx, cyTop) 处居中绘制（cyTop 为视觉中心的 top-down y）。
     static func drawCentered(_ c: CGContext, _ font: UIFont, _ text: String,
-                             _ size: CGFloat, _ cx: CGFloat, _ cyTop: CGFloat) {
+                             _ size: CGFloat, _ cx: CGFloat, _ cyTop: CGFloat,
+                             color: UIColor = .black) {
         guard !text.isEmpty, size > 0 else { return }
         let h = LabelSpec.pageH * LabelSpec.kMm
         let tw = textWidth(text, font: font, size: size)
@@ -182,7 +198,7 @@ enum LabelRenderer {
         // 行高 = ascender + |descender|，两个量都已经是「点」，不再乘 size。
         let lineHalf = (ascender(font, size) + descenderDepth(font, size)) / 2
         let baseline = h - (cyTop + lineHalf)
-        drawText(c, font, text, size, cx - tw / 2, baseline)
+        drawText(c, font, text, size, cx - tw / 2, baseline, color: color)
     }
 
     // MARK: - 二维码

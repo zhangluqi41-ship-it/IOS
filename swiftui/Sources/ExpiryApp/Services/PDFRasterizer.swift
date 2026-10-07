@@ -112,6 +112,49 @@ enum PDFRasterizer {
         return total == 0 ? 0 : Double(bright) / Double(total)
     }
 
+    /// 归一化区域内的**最大灰度值**（0~255）。
+    /// 和 `brightRatio` 配合用来分辨两种失败：
+    ///   · maxLuma ≈ 0   → 那儿根本什么都没有（字没画出来 / 画到别处去了）
+    ///   · maxLuma = 255 → 有白字，只是比例低（多半是抗锯齿/字号问题）
+    static func maxLuma(of image: UIImage, in rect: CGRect) -> UInt8 {
+        guard let cg = image.cgImage,
+              let buf = GrayBuffer(cgImage: cg, whiteBackground: false) else { return 0 }
+        let x0 = clamp(Int((rect.minX * CGFloat(buf.width)).rounded(.down)), 0, buf.width)
+        let x1 = clamp(Int((rect.maxX * CGFloat(buf.width)).rounded(.up)), 0, buf.width)
+        let y0 = clamp(Int((rect.minY * CGFloat(buf.height)).rounded(.down)), 0, buf.height)
+        let y1 = clamp(Int((rect.maxY * CGFloat(buf.height)).rounded(.up)), 0, buf.height)
+        guard x1 > x0, y1 > y0 else { return 0 }
+        var best: UInt8 = 0
+        for y in y0..<y1 {
+            let row = y * buf.width
+            for x in x0..<x1 { best = max(best, buf.pixels[row + x]) }
+        }
+        return best
+    }
+
+    /// 指定区域的 ASCII 墨迹图（归一化 rect，原点左上）。排障用。
+    /// 黑底白字会显示成 `#` 里的 `.`，一眼能看出字有没有画出来、画在哪儿。
+    static func asciiArt(of image: UIImage, in rect: CGRect,
+                         columns: Int = 40, rows: Int = 30) -> [String] {
+        guard let cg = image.cgImage else { return [] }
+        let px = Int((rect.minX * CGFloat(cg.width)).rounded(.down))
+        let py = Int((rect.minY * CGFloat(cg.height)).rounded(.down))
+        let pw = Int((rect.width * CGFloat(cg.width)).rounded(.up))
+        let ph = Int((rect.height * CGFloat(cg.height)).rounded(.up))
+        let x = max(px, 0)
+        let y = max(py, 0)
+        let w = min(pw, cg.width - x)
+        let h = min(ph, cg.height - y)
+        guard w >= 1, h >= 1,
+              let crop = cg.cropping(to: CGRect(x: x, y: y, width: w, height: h)),
+              let s = graySamples(of: crop, width: columns, height: rows) else { return [] }
+        return (0..<rows).map { r in
+            (0..<columns).map { c in
+                s.pixels[r * columns + c] < 200 ? "#" : "."
+            }.joined()
+        }
+    }
+
     /// 把位图打成 ASCII 墨迹图，用于单元测试与排障时肉眼确认版式。
     /// - Returns: 每行一个字符串（`#` 有墨、`.` 空白），第一行对应画面顶部。
     static func asciiArt(of image: UIImage, columns: Int = 64, rows: Int = 24) -> [String] {

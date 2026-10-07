@@ -95,9 +95,11 @@ final class LabelRendererTests: XCTestCase {
         // 左黑条：左留白 1.5mm 起、宽 6.2mm → 归一化 0.030~0.154；上下留白 1mm。
         let bar = CGRect(x: 0.032, y: 0.05, width: 0.120, height: 0.90)
         let bright = PDFRasterizer.brightRatio(of: image, in: bar)
-        print("[diag] 左黑条亮像素比例 = \(bright)")
+        let peak = PDFRasterizer.maxLuma(of: image, in: bar)
+        print("[diag] 左黑条：亮像素比例 = \(bright)，最大灰度 = \(peak)")
+        if bright <= 0.008 { dump(bar, of: image) }
         XCTAssertGreaterThan(bright, 0.008,
-                             "左侧黑条里没有白色文字 —— 竖排的星期/中文日/英文缩写没画出来（bright=\(bright)）")
+                             "左侧黑条里没有白色文字 —— 竖排的星期/中文日/英文缩写没画出来（bright=\(bright) peak=\(peak)）")
         XCTAssertLessThan(bright, 0.6, "左黑条几乎全白，黑条本身可能没画（bright=\(bright)）")
     }
 
@@ -106,10 +108,21 @@ final class LabelRendererTests: XCTestCase {
         // 右黑条：右留白 1.5mm、宽 3.8mm → 归一化 0.894~0.970。
         let bar = CGRect(x: 0.896, y: 0.05, width: 0.072, height: 0.90)
         let bright = PDFRasterizer.brightRatio(of: image, in: bar)
-        print("[diag] 右黑条亮像素比例 = \(bright)")
+        let peak = PDFRasterizer.maxLuma(of: image, in: bar)
+        print("[diag] 右黑条：亮像素比例 = \(bright)，最大灰度 = \(peak)")
+        if bright <= 0.008 { dump(bar, of: image) }
         XCTAssertGreaterThan(bright, 0.008,
-                             "右侧黑条里没有白色文字 —— 竖排的时间没画出来（bright=\(bright)）")
+                             "右侧黑条里没有白色文字 —— 竖排的时间没画出来（bright=\(bright) peak=\(peak)）")
         XCTAssertLessThan(bright, 0.6, "右黑条几乎全白，黑条本身可能没画（bright=\(bright)）")
+    }
+
+    /// 断言要挂的时候把该区域打成 ASCII 图（黑底白字会显示成 `#` 里的 `.`），
+    /// 这样一条 CI 日志就能看出「字到底有没有画、画在哪」，不用再来回猜。
+    private func dump(_ rect: CGRect, of image: UIImage) {
+        print("[diag] ---- 区域 ASCII（. 为亮像素）----")
+        for line in PDFRasterizer.asciiArt(of: image, in: rect, columns: 28, rows: 34) {
+            print("[diag] \(line)")
+        }
     }
 
     // MARK: - 朝向（防上下镜像）
