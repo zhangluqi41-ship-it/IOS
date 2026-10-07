@@ -84,6 +84,34 @@ final class LabelRendererTests: XCTestCase {
         XCTAssertLessThan(bottomCenter, 0.05, "页面底部中间不该有内容（ink=\(bottomCenter)）")
     }
 
+    // MARK: - 黑条里的竖排白字
+
+    /// ★★ 补掉的盲区：上面那条黑条断言阈值是 `> 0.7`，
+    ///    而「纯黑的黑条(1.0)」和「黑底白字(~0.85)」**都能通过** ——
+    ///    于是左右竖排的星期/时间根本没画出来，测试照样是绿的（用户实测发现了）。
+    ///    这里改成直接数**亮像素**：黑条内部是纯黑，只有文字在那儿才会出现亮像素。
+    func testLeftBlackBarCarriesWhiteWeekdayText() {
+        let image = raster(render(makeGeneric()))
+        // 左黑条：左留白 1.5mm 起、宽 6.2mm → 归一化 0.030~0.154；上下留白 1mm。
+        let bar = CGRect(x: 0.032, y: 0.05, width: 0.120, height: 0.90)
+        let bright = PDFRasterizer.brightRatio(of: image, in: bar)
+        print("[diag] 左黑条亮像素比例 = \(bright)")
+        XCTAssertGreaterThan(bright, 0.008,
+                             "左侧黑条里没有白色文字 —— 竖排的星期/中文日/英文缩写没画出来（bright=\(bright)）")
+        XCTAssertLessThan(bright, 0.6, "左黑条几乎全白，黑条本身可能没画（bright=\(bright)）")
+    }
+
+    func testRightBlackBarCarriesWhiteTimeText() {
+        let image = raster(render(makeGeneric()))
+        // 右黑条：右留白 1.5mm、宽 3.8mm → 归一化 0.894~0.970。
+        let bar = CGRect(x: 0.896, y: 0.05, width: 0.072, height: 0.90)
+        let bright = PDFRasterizer.brightRatio(of: image, in: bar)
+        print("[diag] 右黑条亮像素比例 = \(bright)")
+        XCTAssertGreaterThan(bright, 0.008,
+                             "右侧黑条里没有白色文字 —— 竖排的时间没画出来（bright=\(bright)）")
+        XCTAssertLessThan(bright, 0.6, "右黑条几乎全白，黑条本身可能没画（bright=\(bright)）")
+    }
+
     // MARK: - 朝向（防上下镜像）
 
     /// ★★ 关键回归测试：绘制坐标系一旦少一次翻转，整张标签会上下镜像 ——

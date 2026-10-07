@@ -187,26 +187,52 @@ enum LabelRenderer {
 
     // MARK: - 二维码
 
+    /// 每边静默边宽度（单位：模块）。与 Flutter 版一致。
+    static let qrQuietModules = 1
+
     /// 在 (x, yTop) 处绘制边长为 size 的二维码（yTop 为顶边的 top-down y）。
-    /// 含 1 模块静默边，与 Flutter 版一致。
+    ///
+    /// ★★ 逐模块**矢量**绘制，不是把一张小位图放大。
+    /// 位图放大的两个恶果（实机上肉眼可见）：
+    ///   · 源图只有「1 像素 = 1 模块」（二十来像素），放大到 600dpi 是十几倍插值 → 糊；
+    ///   · 块与块之间会出现大小不一的接缝，看起来发乱。
+    /// 这里每个模块就是一个实心方块，打印是纯黑、预览缩放也不糊，
+    /// 而且静默边由 `qrQuietModules` 精确控制，不会出现多余的黑框。
     static func drawQR(_ c: CGContext, _ data: String,
                        _ x: CGFloat, _ yTop: CGFloat, _ size: CGFloat) {
         guard !data.isEmpty, size > 0,
-              let img = QRCodeGenerator.qrImage(for: data) else { return }
+              let m = QRCodeGenerator.matrix(for: data) else { return }
+
         let h = LabelSpec.pageH * LabelSpec.kMm
-        let modules = img.width
-        let border = 1
-        let total = CGFloat(modules + border * 2)
-        let inset = size * CGFloat(border) / total // 每边静默边
-        let rect = CGRect(
-            x: x + inset,
-            y: h - yTop - size + inset,
-            width: size - inset * 2,
-            height: size - inset * 2
-        )
+        let quiet = qrQuietModules
+        let total = CGFloat(m.size + quiet * 2)
+        let pitch = size / total
+
+        // size 是**含静默边**的整体尺寸（与 Flutter 版一致）。
+        let boxBottom = h - yTop - size          // y 向上的坐标系里，框的下边
+        let originX = x + pitch * CGFloat(quiet)
+        let originY = boxBottom + pitch * CGFloat(quiet)
+
         c.saveGState()
-        c.interpolationQuality = .none // 最近邻，保持方块锐利
-        c.draw(img, in: rect)
+
+        // 先铺一层白：静默边永远是干净的白。页面本来就是白的，这里是双保险，
+        // 也顺手把「四周多出一圈黑框」这种历史问题彻底堵死。
+        c.setFillColor(UIColor.white.cgColor)
+        c.fill(CGRect(x: x, y: boxBottom, width: size, height: size))
+
+        c.setFillColor(UIColor.black.cgColor)
+        // 相邻方块之间多画 0.01mm，避免 PDF 光栅化时出现发丝级白缝。
+        let bleed = pitch * 0.02
+        for row in 0..<m.size {
+            // row 0 是符号最上面一行，而 y 向上 → 要翻过来算。
+            let y = originY + CGFloat(m.size - 1 - row) * pitch
+            for col in 0..<m.size where m.isDark(row, col) {
+                c.fill(CGRect(x: originX + CGFloat(col) * pitch,
+                              y: y,
+                              width: pitch + bleed,
+                              height: pitch + bleed))
+            }
+        }
         c.restoreGState()
     }
 }

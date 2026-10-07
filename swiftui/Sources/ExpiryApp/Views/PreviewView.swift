@@ -11,6 +11,13 @@
 //  ★ 再加一道自检：栅格化后统计墨迹比例。如果画面上几乎没有墨，
 //    直接告诉用户「渲染异常」，而不是给一张白纸让人以为是自己操作错了。
 //
+//  ★★ 为什么预览必须「自己算缩放」而不是丢进 ScrollView 里用 aspectRatio：
+//    双向 ScrollView 会给子视图一个无界的尺寸建议，`aspectRatio(contentMode: .fit)`
+//    在没有确定建议尺寸时是算不出来的 —— 它会退化成图片的**像素尺寸**
+//    （栅格化是 1600px 宽，而屏幕只有 390pt），结果一进预览看到的就是放大了
+//    四倍的一张纸、还必须左右拖着看（用户实测反馈过）。这里改成先用
+//    GeometryReader 量出可用区域，再把图片等比缩到刚好放得下。
+//
 
 import SwiftUI
 import UIKit
@@ -30,12 +37,19 @@ struct PreviewView: View {
     @State private var notice: Notice?
     @State private var shareURL: URL?
     @State private var showShare = false
-    @State private var zoomed = false
+
+    /// 相对于「刚好放得下」那一档的放大倍数。1.0 = 完整可见（默认）。
+    @State private var scale: CGFloat = 1
+    @State private var scaleAnchor: CGFloat = 1
+
+    private let maxScale: CGFloat = 6
+    private let doubleTapScale: CGFloat = 2.6
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 previewArea
+                footer
                 actionBar
             }
             .navigationTitle("标签预览")
@@ -43,6 +57,11 @@ struct PreviewView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("完成") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if scale > 1.001 {
+                        Button("还原") { resetZoom() }
+                    }
                 }
             }
             .task { renderPreview() }
@@ -69,52 +88,67 @@ struct PreviewView: View {
 
     @ViewBuilder
     private var previewArea: some View {
-        ScrollView([.horizontal, .vertical]) {
-            VStack(spacing: 12) {
+        GeometryReader { geo in
+            ZStack {
+                Color(.systemGroupedBackground)
+
                 if let image {
-                    // 下面两种写法分开，避免 nil 尺寸的 frame 把布局压塌
-                    if zoomed {
+                    // 先算出「刚好放得下」的尺寸，放大倍数再乘上去。
+                    let fitted = fitSize(image.size, into: geo.size)
+                    ScrollView([.horizontal, .vertical]) {
                         Image(uiImage: image)
                             .resizable()
                             .interpolation(.high)
-                            .frame(width: image.size.width, height: image.size.height)
-                            .background(Color.white)
-                            .onTapGesture { withAnimation(.snappy) { zoomed = false } }
-                            .padding(.horizontal, 8)
-                    } else {
-                        Image(uiImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
+                            .frame(width: fitted.width * scale,
+                                   height: fitted.height * scale)
                             .background(Color.white)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-                            .onTapGesture { withAnimation(.snappy) { zoomed = true } }
-                            .padding(.horizontal, 20)
+                            .padding(14)
+                            // 内容比可视区小时居中；放大后才有得滚。
+                            .frame(minWidth: geo.size.width,
+                                   minHeight: geo.size.height)
+                    }
+                    .defaultScrollAnchor(
+                        scale > 1.001 ? UnitPoint.center : UnitPoint.top
+                    )
+                    .gesture(magnifyGesture)
+                    .onTapGesture(count: 2) {
+                        withAnimation(.snappy) {
+                            scale = scale > 1.001 ? 1 : doubleTapScale
+                            scaleAnchor = scale
+                        }
                     }
                 } else {
                     ProgressView("正在渲染标签…")
-                        .frame(height: 180)
-                }
-
-                Text(zoomed ? "点标签缩小" : "50 × 30 mm · 点标签放大")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-
-                if inkRatio < 0.05 && image != nil {
-                    Label("标签内容异常（画面几乎没有内容），请返回重新生成",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
         }
-        .background(Color(.systemGroupedBackground))
         .frame(maxHeight: .infinity)
+    }
+
+    // MARK: - 底部说明
+
+    @ViewBuilder
+    private var footer: some View {
+        VStack(spacing: 6) {
+            Text(scale > 1.001 ? "双指缩放 · 双击还原" : "50 × 30 mm · 双击放大")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+
+            if inkRatio < 0.05 && image != nil {
+                Label("标签内容异常（画面几乎没有内容），请返回重新生成",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+        }
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 
     // MARK: - 操作区
@@ -130,42 +164,71 @@ struct PreviewView: View {
                 }
             }
 
-            HStack(spacing: 12) {
-                Button {
+            HStack(spacing: 10) {
+                actionButton(title: "保存", icon: "arrow.down.to.line") {
                     saveToPhone()
-                } label: {
-                    Label("保存到手机", systemImage: "arrow.down.to.line")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
                 }
                 .liquidGlassButton()
 
-                Button {
+                actionButton(title: "分享", icon: "square.and.arrow.up") {
                     prepareShare()
-                } label: {
-                    Label("分享", systemImage: "square.and.arrow.up")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
                 }
                 .liquidGlassButton()
 
-                Button {
+                actionButton(title: "打印", icon: "printer") {
                     printLabel()
-                } label: {
-                    Label("打印", systemImage: "printer")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
                 }
                 .liquidGlassProminentButton()
                 .tint(Theme.brand)
                 .disabled(printer.isPrinting)
             }
-            .font(.subheadline)
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 10)
         .background(.bar)
+    }
+
+    /// 三个按钮共用同一套排版，避免长文案的那一个被挤得比别的更大。
+    private func actionButton(title: String,
+                              icon: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.subheadline)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+        }
+    }
+
+    // MARK: - 手势
+
+    private var magnifyGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                scale = min(max(scaleAnchor * value.magnification, 1), maxScale)
+            }
+            .onEnded { _ in
+                scaleAnchor = scale
+            }
+    }
+
+    private func resetZoom() {
+        withAnimation(.snappy) {
+            scale = 1
+            scaleAnchor = 1
+        }
+    }
+
+    /// 等比缩放到「完全装得进 available」的尺寸（只缩不放）。
+    private func fitSize(_ size: CGSize, into available: CGSize) -> CGSize {
+        // 留出 14pt×2 的 padding
+        let w = max(available.width - 28, 1)
+        let h = max(available.height - 28, 1)
+        guard size.width > 0, size.height > 0 else { return CGSize(width: w, height: h) }
+        let k = min(w / size.width, h / size.height)
+        return CGSize(width: size.width * k, height: size.height * k)
     }
 
     // MARK: - 渲染

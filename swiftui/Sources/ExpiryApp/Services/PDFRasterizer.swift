@@ -82,6 +82,36 @@ enum PDFRasterizer {
         return total == 0 ? 0 : Double(dark) / Double(total)
     }
 
+    /// ★ 全分辨率统计：归一化区域内「接近纯白」的像素比例。
+    ///
+    /// 为什么不能用 `inkRatio` 代替：`inkRatio` 是**降采样**后按阈值 200 数深色像素，
+    /// 而黑条本身已经全黑 —— 里面有没有白字，统计结果都一样是「深色」，
+    /// 于是「竖排白字根本没画出来」这种 bug 它永远发现不了（实测踩过）。
+    /// 这个方法不降采样、只数亮像素，才能真的验证黑底上的白字存在。
+    ///
+    /// - Parameter rect: 归一化坐标（0~1），原点在**左上**。
+    static func brightRatio(of image: UIImage, in rect: CGRect, above: UInt8 = 220) -> Double {
+        guard let cg = image.cgImage,
+              let buf = GrayBuffer(cgImage: cg, whiteBackground: false) else { return 0 }
+
+        let x0 = clamp(Int((rect.minX * CGFloat(buf.width)).rounded(.down)), 0, buf.width)
+        let x1 = clamp(Int((rect.maxX * CGFloat(buf.width)).rounded(.up)), 0, buf.width)
+        let y0 = clamp(Int((rect.minY * CGFloat(buf.height)).rounded(.down)), 0, buf.height)
+        let y1 = clamp(Int((rect.maxY * CGFloat(buf.height)).rounded(.up)), 0, buf.height)
+        guard x1 > x0, y1 > y0 else { return 0 }
+
+        var bright = 0
+        var total = 0
+        for y in y0..<y1 {
+            let row = y * buf.width
+            for x in x0..<x1 {
+                total += 1
+                if buf.pixels[row + x] > above { bright += 1 }
+            }
+        }
+        return total == 0 ? 0 : Double(bright) / Double(total)
+    }
+
     /// 把位图打成 ASCII 墨迹图，用于单元测试与排障时肉眼确认版式。
     /// - Returns: 每行一个字符串（`#` 有墨、`.` 空白），第一行对应画面顶部。
     static func asciiArt(of image: UIImage, columns: Int = 64, rows: Int = 24) -> [String] {
@@ -127,5 +157,92 @@ enum PDFRasterizer {
                                   bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
         return Samples(pixels: pixels, width: width, height: height)
+    }
+}
+
+// MARK: - 全分辨率灰度位图
+
+/// 一张 CGImage 的**全分辨率**灰度像素。
+///
+/// 与 `PDFRasterizer` 内部那个降采样到 160px 的快速统计不同，这里一个像素都不丢，
+/// 用来做「某个位置到底是黑是白」这种精确判断 —— 比如读取二维码的模块矩阵。
+struct GrayBuffer {
+    let pixels: [UInt8]
+    let width: Int
+    let height: Int
+
+    /// - Parameter whiteBackground: 为 true 时先把缓冲区铺成白色再合成，
+    ///   这样源图里的**透明**区域会变成白色而不是黑色。
+    ///   二维码就是这么用的：CIQRCodeGenerator 的输出有时带透明背景，
+    ///   铺黑底会让整张图变成一块黑，极性判断跟着一起错。
+    init?(cgImage: CGImage, whiteBackground: Bool = true) {
+        let w = cgImage.width
+        let h = cgImage.height
+        guard w > 0, h > 0 else { return nil }
+
+        var buffer = [UInt8](repeating: whiteBackground ? 255 : 0, count: w * h)
+        let drawn = buffer.withUnsafeMutableBytes { raw -> Bool in
+            guard let base = raw.baseAddress,
+                  let ctx = CGContext(data: base,
+                                      width: w,
+                                      height: h,
+                                      bitsPerComponent: 8,
+                                      bytesPerRow: w,
+                                      space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+            // 1:1 读取，绝不能插值 —— 否则模块边缘被平滑，极性判定就会在
+            // 阈值附近摇摆。
+            ctx.interpolationQuality = .none
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return nil }
+
+        pixels = buffer
+        width = w
+        height = h
+    }
+
+    /// 越界返回白色，省得调用处到处判边界。
+    func value(x: Int, y: Int) -> UInt8 {
+        guard x >= 0, x < width, y >= 0, y < height else { return 255 }
+        return pixels[y * width + x]
+    }
+
+    /// 去掉四周「整行/整列颜色均匀」的边，返回剩下的矩形。
+    ///
+    /// 二维码用它来剥掉静默边：QR 符号最外一圈永远含定位图案或分隔符，
+    /// 不可能是均匀的，所以只会削掉真正的静默边。
+    func uniformBorderTrimmed(tolerance: Int = 8) -> (minX: Int, minY: Int, width: Int, height: Int) {
+        func rowVaries(_ y: Int) -> Bool {
+            var lo: UInt8 = 255
+            var hi: UInt8 = 0
+            for x in 0..<width {
+                let v = pixels[y * width + x]
+                lo = min(lo, v)
+                hi = max(hi, v)
+            }
+            return Int(hi) - Int(lo) > tolerance
+        }
+        func colVaries(_ x: Int) -> Bool {
+            var lo: UInt8 = 255
+            var hi: UInt8 = 0
+            for y in 0..<height {
+                let v = pixels[y * width + x]
+                lo = min(lo, v)
+                hi = max(hi, v)
+            }
+            return Int(hi) - Int(lo) > tolerance
+        }
+
+        var minX = 0
+        var maxX = width - 1
+        var minY = 0
+        var maxY = height - 1
+        while minY < maxY && !rowVaries(minY) { minY += 1 }
+        while maxY > minY && !rowVaries(maxY) { maxY -= 1 }
+        while minX < maxX && !colVaries(minX) { minX += 1 }
+        while maxX > minX && !colVaries(maxX) { maxX -= 1 }
+        return (minX, minY, maxX - minX + 1, maxY - minY + 1)
     }
 }
