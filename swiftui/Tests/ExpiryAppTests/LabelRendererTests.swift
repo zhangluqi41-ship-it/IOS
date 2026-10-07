@@ -48,6 +48,62 @@ final class LabelRendererTests: XCTestCase {
                    weekdayCn: "", weekdayEn: "", rightText: "", maker: "")
     }
 
+    // MARK: - 几何：毫米 → 归一化矩形
+
+    /// 把 `LabelSpec` 的**毫米**几何换算成栅格图上的归一化矩形（原点左上）。
+    ///
+    /// ★ 为什么不直接写 0.04 / 0.90 这种数字：
+    ///   左右留白从 1.5mm 改成 0.7mm 之后，原来手写的「右条 0.90~0.965」
+    ///   就只剩 84% 的面积落在黑条上，离 `> 0.7` 的阈值只差一点 ——
+    ///   换个字号就会莫名其妙变红。改成从 `LabelSpec` 推导后，
+    ///   以后改版式时这些断言会跟着一起动，不会再出现「改版式改红测试」。
+    ///
+    /// - Parameter inset: 采样窗向内收（mm）。黑条边缘有抗锯齿过渡带，
+    ///   贴着边缘取样会让墨迹比例飘，所以默认每条边收 0.4mm。
+    private func norm(mmX: CGFloat, mmY: CGFloat, mmW: CGFloat, mmH: CGFloat,
+                      inset: CGFloat = 0.4) -> CGRect {
+        let pw = LabelSpec.pageW
+        let ph = LabelSpec.pageH
+        return CGRect(x: (mmX + inset) / pw,
+                      y: (mmY + inset) / ph,
+                      width: max(mmW - inset * 2, 0.02) / pw,
+                      height: max(mmH - inset * 2, 0.02) / ph)
+    }
+
+    /// 左黑条（`padH` 起、宽 `barWL`，上下各留 `padV`）。
+    private var leftBarRect: CGRect {
+        norm(mmX: LabelSpec.padH, mmY: LabelSpec.padV,
+             mmW: LabelSpec.barWL, mmH: LabelSpec.pageH - LabelSpec.padV * 2)
+    }
+
+    /// 右黑条（距右边 `padHR`、宽 `barWR`）。
+    private var rightBarRect: CGRect {
+        norm(mmX: LabelSpec.pageW - LabelSpec.padHR - LabelSpec.barWR,
+             mmY: LabelSpec.padV,
+             mmW: LabelSpec.barWR, mmH: LabelSpec.pageH - LabelSpec.padV * 2)
+    }
+
+    /// 内容列几何 —— 与 `LabelRenderer.paint` 里那几行**保持一致**。
+    /// （`cx` 内容起点 / `barRight` 右黑条左缘 / `qrLeft` 二维码左缘）
+    private func contentGeometry(_ data: LabelData, regular: UIFont, bold: UIFont)
+        -> (cx: CGFloat, barRight: CGFloat, maxTextW: CGFloat, qrLeft: CGFloat, qs: CGFloat) {
+        let mm = LabelSpec.kMm
+        let cx = (LabelSpec.padH + LabelSpec.barWL + LabelSpec.gapBar) * mm
+        let barRight = (LabelSpec.pageW - LabelSpec.padHR - LabelSpec.barWR) * mm
+        var maxTextW: CGFloat = 0
+        for r in data.rows {
+            maxTextW = max(maxTextW, LabelRenderer.textWidth(r.label, font: regular,
+                                                            size: LabelSpec.labSz * mm))
+            maxTextW = max(maxTextW, LabelRenderer.textWidth(r.value, font: bold,
+                                                             size: LabelSpec.rowSz * mm))
+        }
+        let textRight = cx + maxTextW
+        let qs = LabelSpec.qrSize * mm
+        let qrLeft = min(max(textRight + (barRight - textRight - qs) / 2, textRight),
+                         max(barRight - qs, textRight))
+        return (cx, barRight, maxTextW, qrLeft, qs)
+    }
+
     // MARK: - 基本合法性
 
     func testRenderPDFProducesValidPDF() {
@@ -69,19 +125,81 @@ final class LabelRendererTests: XCTestCase {
     }
 
     /// 左右两条黑竖条是位置最稳的特征：用来确认页面没被裁掉、也没整体偏移。
-    /// （阈值放到 0.7 是因为黑条里还有白色文字，不是纯黑。）
+    /// 归一化坐标由 LabelSpec 直接算出来（见 `leftBarRect` / `rightBarRect`），
+    /// **不要再手写死数字**。
+    /// （阈值只要 0.7 而不是 0.95，是因为黑条里还有白色竖排文字，不是纯黑。）
     func testSideBarsExistOnLeftAndRight() {
         let image = raster(render(makeGeneric()))
-        let left = PDFRasterizer.inkRatio(of: image, in: CGRect(x: 0.04, y: 0.10,
-                                                               width: 0.10, height: 0.80))
-        let right = PDFRasterizer.inkRatio(of: image, in: CGRect(x: 0.90, y: 0.10,
-                                                                width: 0.065, height: 0.80))
-        // 页面底部中间应该是干净的（内容行与二维码都不在那里）
-        let bottomCenter = PDFRasterizer.inkRatio(of: image, in: CGRect(x: 0.20, y: 0.90,
-                                                                       width: 0.15, height: 0.07))
+        let left = PDFRasterizer.inkRatio(of: image, in: leftBarRect)
+        let right = PDFRasterizer.inkRatio(of: image, in: rightBarRect)
+        // 页面底部中间应该是干净的（内容行、二维码、制作人都不在那里）
+        let bottomCenter = PDFRasterizer.inkRatio(of: image,
+                                                  in: norm(mmX: 9.5, mmY: 27.0,
+                                                           mmW: 6.5, mmH: 2.0))
         XCTAssertGreaterThan(left, 0.7, "左侧黑条不见了（ink=\(left)）")
         XCTAssertGreaterThan(right, 0.7, "右侧黑条不见了（ink=\(right)）")
         XCTAssertLessThan(bottomCenter, 0.05, "页面底部中间不该有内容（ink=\(bottomCenter)）")
+    }
+
+    /// ★ 版式硬约束的回归测试（纯几何，不栅格化）：
+    ///   「最长的一行文字」+「二维码」必须能**同时**塞进内容区。
+    ///    可用内容宽度 = 50 − padH(0.7) − barWL(6.2) − gapBar(0.45)
+    ///                    − barWR(3.8) − padHR(0.7) = 38.15mm
+    ///    最长行「2026/10/14 18:40」@ rowSz ≈ 23mm，二维码 = qrSize。
+    ///   一旦有人把 rowSz / qrSize / barWL 往大改到越界，`paint` 里的
+    ///   `qrLeft` 夹取保护就会把二维码顶到文字上（本地预览实测过一次），
+    ///   这条断言会先红 —— 而不是等用户拿到一张糊成一团的标签。
+    func testContentColumnPlusQRCodeFitsBetweenBars() {
+        let regular = FontProvider.regular(12)
+        let bold = FontProvider.bold(12)
+        let samples: [(String, LabelData)] = [
+            ("通用效期", makeGeneric()),
+            ("奶制品", LabelTemplate.buildDairy(
+                kindLabel: DairyKind.oatMilk.label, now: Date(),
+                expireDate: Date().addingTimeInterval(45 * 86400),
+                bestBefore: Date().addingTimeInterval(5 * 86400), maker: "四野")),
+            ("康普茶", LabelTemplate.buildKombuchaFirst(variety: "红茶", now: Date(), maker: "四野")),
+        ]
+        let mm = LabelSpec.kMm
+        for (name, data) in samples {
+            let g = contentGeometry(data, regular: regular, bold: bold)
+            let textRightMm = (g.cx + g.maxTextW) / mm
+            let slack = (g.barRight - g.cx - g.maxTextW - g.qs) / mm
+            print("[diag] \(name)：文字右端 \(textRightMm)mm，二维码 \(LabelSpec.qrSize)mm，"
+                  + "剩余 \(slack)mm（右黑条左缘 \((g.barRight) / mm)mm）")
+            XCTAssertGreaterThanOrEqual(
+                slack, 0.2,
+                "\(name) 的内容列 + 二维码挤爆内容区：文字 \(textRightMm)mm + 码 "
+                + "\(LabelSpec.qrSize)mm，只剩 \(slack)mm —— 二维码会被顶到文字上")
+        }
+    }
+
+    /// ★ 纵向硬约束（纯几何）：制作人页脚必须和第三行数值**拉开距离**。
+    ///   字号从 2.3 放大到 2.7 之后三行一路排到 26.3mm，
+    ///   而当时制作人「距底 5.0mm」（= 字形顶 25.0mm）—— 正好落在第三行的
+    ///   行盒里，预览里看着像是第三行数值的尾巴。现在靠 `makerBottom 3.7`
+    ///   把它压到 26.3mm 以下。
+    ///
+    /// ★ 判据不用 `ascender + |descender|` 去算「内容底」：
+    ///   那是字体的**行盒**高度，比汉字/数字的实际字形高一截（CJK 几乎没有下伸部），
+    ///   拿它做上界会让断言随字体度量浮动、动不动就红。这里只比
+    ///   「制作人字形顶」和「最后一行数值的字形顶 + 一个 em」，语义清楚且稳定。
+    func testMakerFooterIsSeparatedFromLastRow() {
+        let data = makeGeneric()
+        let lastValueTop = LabelSpec.firstRow
+            + CGFloat(data.rows.count - 1) * LabelSpec.rowStep + LabelSpec.rowGap
+        let makerTop = LabelSpec.pageH - LabelSpec.makerBottom
+        let barBottom = LabelSpec.pageH - LabelSpec.padV
+
+        print("[diag] 制作人字形顶 \(makerTop)mm，最后一行数值顶 \(lastValueTop)mm，"
+              + "黑条下缘 \(barBottom)mm")
+
+        XCTAssertGreaterThan(makerTop, lastValueTop + LabelSpec.rowSz,
+                             "制作人和最后一行数值挨得太近，看起来会像同一行"
+                             + "（制作人顶 \(makerTop)mm，最后一行顶 \(lastValueTop)mm）")
+        XCTAssertLessThanOrEqual(makerTop + LabelSpec.makerSz, barBottom,
+                                 "制作人字形底部越过了黑条下缘"
+                                 + "（\(makerTop + LabelSpec.makerSz)mm > \(barBottom)mm）")
     }
 
     // MARK: - 黑条里的竖排白字
@@ -92,8 +210,8 @@ final class LabelRendererTests: XCTestCase {
     ///    这里改成直接数**亮像素**：黑条内部是纯黑，只有文字在那儿才会出现亮像素。
     func testLeftBlackBarCarriesWhiteWeekdayText() {
         let image = raster(render(makeGeneric()))
-        // 左黑条：左留白 1.5mm 起、宽 6.2mm → 归一化 0.030~0.154；上下留白 1mm。
-        let bar = CGRect(x: 0.032, y: 0.05, width: 0.120, height: 0.90)
+        // 左黑条：左留白 0.7mm 起、宽 6.2mm（坐标由 LabelSpec 推导，别再写死）
+        let bar = leftBarRect
         let bright = PDFRasterizer.brightRatio(of: image, in: bar)
         let peak = PDFRasterizer.maxLuma(of: image, in: bar)
         print("[diag] 左黑条：亮像素比例 = \(bright)，最大灰度 = \(peak)")
@@ -105,8 +223,8 @@ final class LabelRendererTests: XCTestCase {
 
     func testRightBlackBarCarriesWhiteTimeText() {
         let image = raster(render(makeGeneric()))
-        // 右黑条：右留白 1.5mm、宽 3.8mm → 归一化 0.894~0.970。
-        let bar = CGRect(x: 0.896, y: 0.05, width: 0.072, height: 0.90)
+        // 右黑条：右留白 0.7mm、宽 3.8mm → 45.5~49.3mm（同样由 LabelSpec 推导）
+        let bar = rightBarRect
         let bright = PDFRasterizer.brightRatio(of: image, in: bar)
         let peak = PDFRasterizer.maxLuma(of: image, in: bar)
         print("[diag] 右黑条：亮像素比例 = \(bright)，最大灰度 = \(peak)")
@@ -178,9 +296,37 @@ final class LabelRendererTests: XCTestCase {
         let long = String(repeating: "超长标题", count: 20)
         let image = raster(render(makeGeneric(title: long)))
         // 标题超宽时应该缩字号，而不是溢出把右黑条盖掉
-        let right = PDFRasterizer.inkRatio(of: image, in: CGRect(x: 0.90, y: 0.10,
-                                                                width: 0.065, height: 0.80))
+        let right = PDFRasterizer.inkRatio(of: image, in: rightBarRect)
         XCTAssertGreaterThan(right, 0.7, "超长标题盖住了右侧黑条（ink=\(right)）")
+    }
+
+    // MARK: - 制作人页脚（字号放大后新增的边界）
+
+    /// 制作人是**独立页脚**，不能空着，也不能跑到别处去。
+    func testMakerFooterBandHasInk() {
+        let image = raster(render(makeGeneric()))
+        let band = norm(mmX: 30.0, mmY: 26.2, mmW: 15.0, mmH: 3.0)
+        let ink = PDFRasterizer.inkRatio(of: image, in: band)
+        print("[diag] 制作人页脚带：ink = \(ink)")
+        XCTAssertGreaterThan(ink, 0.01, "制作人页脚带没有墨迹，制作人没画出来（ink=\(ink)）")
+        XCTAssertLessThan(ink, 0.5, "制作人页脚带墨迹过多，可能压上了别的内容（ink=\(ink)）")
+    }
+
+    /// ★ 回归：**超长制作人名字不许戳进右黑条**。
+    ///   字号放大到 1.8mm 后，「制作人：」+ 20 字上限 = 24 个汉字 ≈ 43mm，
+    ///   而二维码左缘到右黑条之间只有约 14mm —— 全靠 `paint` 里绘制前那次
+    ///   「超宽自动缩字号」兜住。这里放一个 19 字的名字，并检查
+    ///   右黑条左侧那条 0.3mm 宽的空白带是不是干净的。
+    ///   （旧实现把 `makerMaxW` 取成整段可用宽、字号下限又给到 0.8mm，
+    ///     文字会精确地贴在 45.5mm 上/甚至戳进去 4mm —— 这条断言会红。）
+    func testLongMakerNameDoesNotReachRightBar() {
+        let long = String(repeating: "欧阳", count: 8)   // 16 字 → 制作人：+16 = 19 字
+        let image = raster(render(makeGeneric(maker: long)))
+        let strip = norm(mmX: 45.0, mmY: 26.0, mmW: 0.4, mmH: 3.2, inset: 0.05)
+        let ink = PDFRasterizer.inkRatio(of: image, in: strip)
+        print("[diag] 超长制作人 右黑条左缘空白带：ink = \(ink)")
+        XCTAssertLessThan(ink, 0.02,
+                          "超长制作人名字压到了右黑条左边（ink=\(ink)）")
     }
 
     func testRenderHandlesEmptyMaker() {

@@ -110,8 +110,13 @@ enum LabelRenderer {
         }
         let textRight = cx + maxTextW
         let qs = mm(LabelSpec.qrSize)
-        let freeW = barRight - textRight
-        let qrLeft = textRight + (freeW - qs) / 2
+        // ★ 夹在 [textRight, barRight − qs] 之间。
+        //   原来的写法是纯居中 `textRight + (freeW - qs)/2`，没做保护 ——
+        //   行值字号从 2.3 放大到 2.7 之后，文字宽度涨到 23mm，
+        //   自由宽度只剩 15.14mm，一旦 qrSize 超过它，居中公式会把二维码
+        //   **推到文字上面压着**（本地预览实测：14mm 的码和日期叠在一起）。
+        let qrLeft = min(max(textRight + (barRight - textRight - qs) / 2, textRight),
+                         max(barRight - qs, textRight))
 
         // ---- 标题：顶部与黑条顶端齐平，超宽自动缩小 ----
         c.setFillColor(UIColor.black.cgColor)
@@ -132,9 +137,26 @@ enum LabelRenderer {
             y += mm(LabelSpec.rowStep)
         }
 
-        // ---- 制作人：距底 5.0mm，与二维码左缘对齐 ----
-        let mSize = mm(LabelSpec.makerSz)
-        drawText(c, bold, d.maker, mSize, qrLeft, mm(LabelSpec.makerBottom) - ascender(bold, mSize))
+        // ---- 制作人：贴底一条页脚，与二维码左缘对齐 ----
+        // ★ 字号放大到 1.8mm 后，名字长一点就会横着顶到右黑条上
+        //   （「制作人：」+ 20 字姓名 = 24 个汉字 ≈ 43mm，可用只有十几毫米）。
+        //   所以跟标题一样做一次「超宽自动缩字号」，宁可小一点也不要压坏版式。
+        //
+        // ★ 两个细节，都是「不这么写就会画到黑条上」：
+        //   ① `makerMaxW` 要和标题一样**再让出一个 `titleGapRight`**。
+        //      否则缩字号是「缩到刚好等于可用宽度」，长名字会精确地贴在
+        //      `barRight` 上 —— 黑字压在黑条边缘，既是毛边又难看。
+        //   ② 下限 0.8mm 太高：最坏情况是 24 个汉字（「制作人：」+ 20 字上限），
+        //      0.8mm 时总宽 19.2mm > 14.0mm 可用宽 → **照样戳进右黑条 4mm**。
+        //      压到 0.5mm 后 24 × 0.5 = 12.0mm，才真正保证任何输入都不会越界。
+        var makerSize = mm(LabelSpec.makerSz)
+        let makerMaxW = barRight - qrLeft - mm(LabelSpec.titleGapRight)
+        let naturalMakerW = textWidth(d.maker, font: bold, size: makerSize)
+        if naturalMakerW > makerMaxW && naturalMakerW > 0 {
+            makerSize = max(makerSize * makerMaxW / naturalMakerW, mm(0.5))
+        }
+        drawText(c, bold, d.maker, makerSize, qrLeft,
+                 mm(LabelSpec.makerBottom) - ascender(bold, makerSize))
 
         // ---- 二维码 ----
         drawQR(c, d.qrText, qrLeft, mm(LabelSpec.qrTop), qs)
