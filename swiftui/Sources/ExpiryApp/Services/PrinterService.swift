@@ -172,7 +172,6 @@ final class PrinterService: NSObject, ObservableObject {
     private var pendingRecord: LabelRecord?
     private var lifecycleTimer: Timer?
     private var connectWatchdog: Timer?
-    private var connectPollTimer: Timer?
 
     private static let savedKey = "saved_printers"
     private static let kindKey = "printer_kind"
@@ -272,10 +271,14 @@ final class PrinterService: NSObject, ObservableObject {
 
     private func beginConnect(uuid: String, name: String, kind: String, fromSaved: Bool) {
         guard bluetooth.isReady else {
+            SFPrinterLog("beginConnect 被拦截：蓝牙不可用（\(bluetooth)）")
             toast = bluetooth.message
             return
         }
-        guard !isConnecting else { return }
+        guard !isConnecting else {
+            SFPrinterLog("beginConnect 被拦截：已有连接在进行中")
+            return
+        }
 
         // ★★ 这里**故意不停扫描**。
         //   真机验证过能连上的 Flutter 版（`SFPrinterBridge.m` 的 `connect`）
@@ -288,27 +291,30 @@ final class PrinterService: NSObject, ObservableObject {
         //   至于「扫描表一关就 onDisappear -> stopScan 把连接掐掉」，
         //   由本类的 `stopScan()` 在 `isConnecting` 时直接返回来兜住。
         intent = ConnectIntent(uuid: uuid, name: name, kind: kind, fromSaved: fromSaved)
+        let previous = connectedDisplayName
         isConnecting = true
         connectedUUID = nil
         connectedName = nil
+        SFPrinterLog("beginConnect name=\(name) uuid=\(uuid) fromSaved=\(fromSaved) " +
+                     "蓝牙=\(bluetooth) 上一台=\(previous)")
 
         connectWatchdog?.invalidate()
         connectWatchdog = Timer.scheduledTimer(withTimeInterval: 20, repeats: false) { [weak self] _ in
             self?.failConnect(message: "连接超时，请确认打印机已开机并在附近")
         }
 
-        // ★ 兜底：硕方的 connectSuccessBlock 偶发不回调（真机反馈过），
-        //   而 SDK 自己的 getDeviceStatus 是可靠的。连上就主动落状态。
-        connectPollTimer?.invalidate()
-        connectPollTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            // ★ ObjC 的 `- (BOOL)isConnected` 被 Swift 导入成**方法**（不是属性），
-            //   必须带括号调用；写成 `sdk.isConnected` 会编译不过。
-            guard let self, self.isConnecting, self.sdk.isConnected() else { return }
-            self.markConnected(uuid: self.sdk.connectedUUID ?? self.intent?.uuid ?? "",
-                               name: self.intent?.name ?? self.connectedDisplayName)
-        }
-
+        // ★★★ 这里**故意没有**连接状态轮询（勿加回）。
+        //
+        //   v1.6.8~v1.6.10 我在这里加过一个 0.6 秒的轮询，用 SDK 的
+        //   `getDeviceStatus` 当兜底。结果真机翻车：`getDeviceStatus` 是
+        //   **全局**状态（"当前有没有连上任何一台"），不是"这次连的是不是它"。
+        //   于是第一台连上之后它就一直返回 YES —— 用户再点**任何**其他设备，
+        //   0.6 秒内都被判成"连接成功"，并写进「已添加」。
+        //
+        //   真机验证过的 Flutter 版（`SFPrinterBridge.m`）也**只认
+        //   `connectSuccessBlock`**，不轮询。这里跟它保持一致。
         sdk.connectDeviceUUID(uuid, name: name)
+        SFPrinterLog("connect 发起 uuid=\(uuid) name=\(name)")
     }
 
     func disconnect() {
@@ -319,8 +325,6 @@ final class PrinterService: NSObject, ObservableObject {
         intent = nil
         connectWatchdog?.invalidate()
         connectWatchdog = nil
-        connectPollTimer?.invalidate()
-        connectPollTimer = nil
     }
 
     var isConnected: Bool { connectedUUID != nil }
@@ -332,18 +336,38 @@ final class PrinterService: NSObject, ObservableObject {
 
     // MARK: - 连接结果
 
+    /// 原生层算不出名字时给的占位名（见 `friendlyNameFor:`）。
+    private static let unnamedPlaceholder = "未知设备"
+
     private func markConnected(uuid: String, name: String) {
         connectWatchdog?.invalidate()
         connectWatchdog = nil
-        connectPollTimer?.invalidate()
-        connectPollTimer = nil
 
         let pending = intent
         intent = nil
         isConnecting = false
 
         let finalUUID = uuid.isEmpty ? (pending?.uuid ?? "") : uuid
-        let finalName = name.isEmpty ? (pending?.name ?? kind.label) : name
+
+        // ★★ 显示名**以用户在扫描列表里看到的那个为准**，不要用 SDK 连上后回报的名字。
+        //
+        //   原因：BLE 设备常常在广播里不带名字，扫描阶段 `peripheral.name` 是 nil，
+        //   列表里显示的是 SDK 的友好名；而**连上之后** iOS 会从 GATT 读到真实的
+        //   Device Name，`peripheral.name` 就变成另一个值了。于是同一台设备
+        //   「列表里叫 A、连上后卡片上叫 B」—— 看着像连错了设备（用户实测反馈）。
+        //   对用户来说，他点的是哪个名字，连上的就该是哪个名字。
+        let tapped = (pending?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let reported = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName: String
+        if !tapped.isEmpty && tapped != Self.unnamedPlaceholder {
+            finalName = tapped
+        } else if !reported.isEmpty && reported != Self.unnamedPlaceholder {
+            finalName = reported
+        } else {
+            finalName = kind.label
+        }
+
+        SFPrinterLog("markConnected uuid=\(finalUUID) 显示名=\(finalName) SDK回报名=\(reported)")
         connectedUUID = finalUUID
         connectedName = finalName
 
@@ -358,14 +382,14 @@ final class PrinterService: NSObject, ObservableObject {
     private func failConnect(message: String) {
         connectWatchdog?.invalidate()
         connectWatchdog = nil
-        connectPollTimer?.invalidate()
-        connectPollTimer = nil
 
         let pending = intent
         intent = nil
         isConnecting = false
         connectedUUID = nil
         connectedName = nil
+
+        SFPrinterLog("连接失败 fromSaved=\(pending?.fromSaved == true) 原因=\(message)")
 
         // 从「已添加」进来的失败，多半是重装 App 后旧标识失效 —— 直接给出可操作的建议。
         if pending?.fromSaved == true {
@@ -510,23 +534,25 @@ extension PrinterService: ExpiryPrinterSDKDelegate {
         guard !uuid.isEmpty else { return }
         guard !devices.contains(where: { $0.uuid == uuid }) else { return }
         devices.append(PrinterDevice(uuid: uuid, name: name))
+        SFPrinterLog("列表新增 \(name) [\(uuid)]，当前 \(devices.count) 台")
     }
 
     func printerDidConnectUUID(_ uuid: String, name: String) {
+        SFPrinterLog("SDK 回调 connectSuccess uuid=\(uuid) name=\(name)")
         markConnected(uuid: uuid, name: name)
     }
 
     func printerDidFailToConnect() {
+        SFPrinterLog("SDK 回调 connectFail")
         failConnect(message: "连接失败，请确认打印机已开机并在附近")
     }
 
     func printerDidDisconnect() {
+        SFPrinterLog("SDK 回调 disconnected（原 connectedUUID=\(connectedUUID ?? "nil")）")
         connectedUUID = nil
         connectedName = nil
         isConnecting = false
         intent = nil
-        connectPollTimer?.invalidate()
-        connectPollTimer = nil
         toast = "打印机已断开"
     }
 

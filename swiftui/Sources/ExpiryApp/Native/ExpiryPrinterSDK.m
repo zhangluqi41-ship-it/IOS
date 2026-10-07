@@ -8,6 +8,11 @@
 //
 
 #import "ExpiryPrinterSDK.h"
+#import "PrinterLog.h"
+
+// 诊断日志：既进系统日志，也落沙盒文件（真机上没有 Mac，只能事后拉文件看）。
+// 用宏包一层是为了让调用点保持 NSLog 的写法，参数直接透传。
+#define SFPLog(fmt, ...) SFPrinterLog([NSString stringWithFormat:(fmt), ##__VA_ARGS__])
 
 #import <CoreBluetooth/CoreBluetooth.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -340,13 +345,13 @@ static UIImage *SFBuildTestPage(int widthMm,
 
 - (void)startScan {
   if (self.scanning) {
-    NSLog(@"[Printer] startScan 被忽略：已在扫描中");
+    SFPLog(@"[Printer] startScan 被忽略：已在扫描中");
     return;
   }
   self.scanning = YES;
   [self clearFound];
   [[SFPrintSDKUtils shareInstance] startScan];
-  NSLog(@"[Printer] startScan 已发起（30 秒后自动收尾）");
+  SFPLog(@"[Printer] startScan 已发起（30 秒后自动收尾）");
 
   [self.scanStopTimer invalidate];
   __weak typeof(self) weakSelf = self;
@@ -369,7 +374,7 @@ static UIImage *SFBuildTestPage(int widthMm,
   //    连接一旦有结果（成功/失败都会调 finishConnectWithPeripheral:）就放行，
   //    不会让扫描无限期跑下去。
   if (self.connecting) {
-    NSLog(@"[Printer] stopScan 推迟执行：正在连接中");
+    SFPLog(@"[Printer] stopScan 推迟执行：正在连接中");
     [self.scanStopTimer invalidate];
     __weak typeof(self) weakSelf = self;
     self.scanStopTimer =
@@ -390,7 +395,7 @@ static UIImage *SFBuildTestPage(int widthMm,
   [self.scanStopTimer invalidate];
   self.scanStopTimer = nil;
   [[SFPrintSDKUtils shareInstance] stopScan];
-  NSLog(@"[Printer] stopScan 已调用");
+  SFPLog(@"[Printer] stopScan 已调用");
 
   NSObject<ExpiryPrinterSDKDelegate> *d = self.delegate;
   if ([d respondsToSelector:@selector(printerDidStopScan)]) {
@@ -403,12 +408,28 @@ static UIImage *SFBuildTestPage(int widthMm,
   [self.foundOrder removeAllObjects];
 }
 
+/// 给设备算一个可以展示的名字。
+///
+/// ★ 注意这里**不是稳定值**：BLE 设备常常在广播里不带名字，扫描阶段
+///   `peripheral.name` 是 nil，只能退到 SDK 的友好名；而**连上之后**
+///   iOS 会从 GATT 读到真实的 Device Name，`peripheral.name` 就变成另一个值了。
+///   所以同一台设备「扫描列表里叫 A、连上后叫 B」是正常现象 —— 展示层要
+///   以用户点过的那个名字为准（见 PrinterService.markConnected）。
 - (NSString *)friendlyNameFor:(CBPeripheral *)peripheral {
   NSString *name = peripheral.name;
   if (name.length > 0) return name;
   NSString *friendly =
       [[SFPrintSDKUtils shareInstance] getDeviceNameWithperipheralName:peripheral.name];
   return (friendly.length > 0) ? friendly : @"未知设备";
+}
+
++ (NSString *)nameStageOf:(CBPeripheral *)peripheral {
+  // 便于日志里一眼看出名字是从哪一级来的
+  if (peripheral == nil) return @"nil";
+  if (peripheral.name.length > 0) return @"advertised";
+  NSString *friendly =
+      [[SFPrintSDKUtils shareInstance] getDeviceNameWithperipheralName:peripheral.name];
+  return (friendly.length > 0) ? @"sdkFriendly" : @"unknown";
 }
 
 - (void)handleFoundPeripheral:(CBPeripheral *)peripheral {
@@ -420,7 +441,8 @@ static UIImage *SFBuildTestPage(int widthMm,
   if (isNew) {
     self.found[uuid] = peripheral;
     [self.foundOrder addObject:peripheral];
-    NSLog(@"[Printer] 发现设备 %@ (%@)", peripheral.name, uuid);
+    SFPLog(@"[Printer] 发现设备 rawName=%@ stage=%@ uuid=%@",
+           peripheral.name, [ExpiryPrinterSDK nameStageOf:peripheral], uuid);
   }
   if (!self.scanning) return;
 
@@ -440,7 +462,9 @@ static UIImage *SFBuildTestPage(int widthMm,
 
   NSString *uuid = peripheral.identifier.UUIDString ?: @"";
   NSString *name = peripheral ? [self friendlyNameFor:peripheral] : @"硕方 T50 Pro";
-  NSLog(@"[Printer] 连接回调 ok=%d uuid=%@ name=%@", (int)ok, uuid, name);
+  SFPLog(@"[Printer] 连接回调 ok=%d uuid=%@ friendlyName=%@ rawName=%@ stage=%@",
+         (int)ok, uuid, name, peripheral.name,
+         [ExpiryPrinterSDK nameStageOf:peripheral]);
   NSObject<ExpiryPrinterSDKDelegate> *d = self.delegate;
 
   if (ok) {
@@ -468,7 +492,7 @@ static UIImage *SFBuildTestPage(int widthMm,
   self.target = peripheral;
   self.connecting = YES;
   [self.connectTimer invalidate];
-  NSLog(@"[Printer] 开始连接 %@ (%@)",
+  SFPLog(@"[Printer] 开始连接 %@ (%@)",
         peripheral.name, peripheral.identifier.UUIDString);
 
   __weak typeof(self) weakSelf = self;
@@ -484,7 +508,7 @@ static UIImage *SFBuildTestPage(int widthMm,
 - (void)connectDeviceUUID:(NSString *)uuid name:(nullable NSString *)name {
   if (uuid.length == 0 && name.length == 0) return;
 
-  NSLog(@"[Printer] connect 请求 uuid=%@ name=%@", uuid, name);
+  SFPLog(@"[Printer] connect 请求 uuid=%@ name=%@", uuid, name);
 
   // ① 本轮扫描结果里直接有 —— 最常见的情况。
   CBPeripheral *known = self.found[uuid];
@@ -492,7 +516,7 @@ static UIImage *SFBuildTestPage(int widthMm,
     // ② UUID 失效（重装 App 后 identifier 会变）时按名字回退。
     known = [self peripheralMatchingName:name];
     if (known != nil) {
-      NSLog(@"[Printer] UUID 已失效，按名字匹配到 %@ -> %@",
+      SFPLog(@"[Printer] UUID 已失效，按名字匹配到 %@ -> %@",
             name, known.identifier.UUIDString);
     }
   }
@@ -502,7 +526,7 @@ static UIImage *SFBuildTestPage(int widthMm,
   }
 
   // ③ 还没扫到：先扫一轮再连。
-  NSLog(@"[Printer] 未在本轮扫描结果中，重新扫描后再连");
+  SFPLog(@"[Printer] 未在本轮扫描结果中，重新扫描后再连");
   [self startScan];
 
   __block NSInteger ticks = 0;
@@ -527,7 +551,7 @@ static UIImage *SFBuildTestPage(int widthMm,
                                                          return;
                                                        }
                                                        if (ticks >= kScanUntilFoundTicks) {
-                                                         NSLog(@"[Printer] 扫描 %ld 秒仍未发现目标设备",
+                                                         SFPLog(@"[Printer] 扫描 %ld 秒仍未发现目标设备",
                                                                (long)ticks);
                                                          [inner invalidate];
                                                          [strongSelf stopScan];
@@ -625,7 +649,7 @@ static UIImage *SFBuildTestPage(int widthMm,
   [[SFPrintSDKUtils shareInstance]
       doPrintWithPrintModel:model
                    complete:^(BOOL isSuccess, NSString *error, int printNum, int allLength) {
-                     NSLog(@"[ExpiryPrinterSDK] print done ok=%d err=%@ %d/%d",
+                     SFPLog(@"[ExpiryPrinterSDK] print done ok=%d err=%@ %d/%d",
                            isSuccess,
                            error,
                            printNum,
