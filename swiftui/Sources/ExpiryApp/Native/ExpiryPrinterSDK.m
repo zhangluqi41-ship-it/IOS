@@ -35,8 +35,15 @@ static const int kMonoThreshold = 150;
 /// 扫描自动收尾时长（秒）
 static const NSTimeInterval kAutoStopScanSeconds = 30.0;
 
-/// 连接超时（秒）
-static const NSTimeInterval kConnectTimeoutSeconds = 15.0;
+/// 连接超时（秒）。
+///
+/// ★ 为什么从 15 秒放宽到 20 秒：真机日志显示每一次 `connectedBlueteeth:`
+///   之后都是**整整 15.000 秒**才收到结果，而且收到的正好是本文件里这个定时器的
+///   超时 —— 也就是说这 15 秒里 SDK **一个回调都没给**，我们无从知道它当时还在
+///   努力连接、还是早就放弃了。多给 5 秒是为了让探针（每秒一次）能观测到
+///   `CBPeripheral.state` 有没有从 disconnected → connecting 过。
+///   这是**为了取证**，不是为了碰运气。
+static const NSTimeInterval kConnectTimeoutSeconds = 20.0;
 
 /// 找设备时的最长等待（秒），1 秒一次
 static const NSInteger kScanUntilFoundTicks = 8;
@@ -60,6 +67,33 @@ static void SFOnMain(dispatch_block_t block) {
     block();
   } else {
     dispatch_async(dispatch_get_main_queue(), block);
+  }
+}
+
+#pragma mark - 状态名（诊断日志用）
+
+/// 把 CBManagerState / CBPeripheralState 转成人能看的名字。
+/// ⚠️ 必须定义在**所有调用点之前** —— C 里静态函数没有前向声明就直接报
+///    "call to undeclared function"。
+static NSString *SFCentralStateName(CBManagerState s) {
+  switch (s) {
+    case CBManagerStatePoweredOff: return @"poweredOff";
+    case CBManagerStatePoweredOn: return @"poweredOn";
+    case CBManagerStateUnauthorized: return @"unauthorized";
+    case CBManagerStateUnsupported: return @"unsupported";
+    case CBManagerStateResetting: return @"resetting";
+    case CBManagerStateUnknown: return @"unknown";
+    default: return [NSString stringWithFormat:@"?%ld", (long)s];
+  }
+}
+
+static NSString *SFPeripheralStateName(CBPeripheralState s) {
+  switch (s) {
+    case CBPeripheralStateDisconnected: return @"disconnected";
+    case CBPeripheralStateConnecting: return @"connecting";
+    case CBPeripheralStateConnected: return @"connected";
+    case CBPeripheralStateDisconnecting: return @"disconnecting";
+    default: return [NSString stringWithFormat:@"?%ld", (long)s];
   }
 }
 
@@ -502,7 +536,22 @@ static UIImage *SFBuildTestPage(int widthMm,
                                                           [weakSelf finishConnectWithPeripheral:weakSelf.target
                                                                                              ok:NO];
                                                         }];
+
+  // ★★ 取证关键点：调用前后各读一次 `peripheral.state`。
+  //    CoreBluetooth 的语义是「一调 connectPeripheral:，state 立刻变
+  //    CBPeripheralStateConnecting」。
+  //    所以：
+  //      · 调用后 state 已是 connecting/connected
+  //          → SDK 确实发起过连接，卡在链路层（射频/距离/打印机忙）→ 偏环境；
+  //      · 调用后 state 仍是 disconnected
+  //          → SDK 压根没把它交给 CoreBluetooth（内部提前 return 了）→ 偏代码。
+  //    这一行就能把「代码问题」和「环境问题」劈开，别再靠猜。
+  SFPLog(@"[Printer] 调 connectedBlueteeth: 之前 state=%@ 我方扫描中=%d 目标=%@",
+         SFPeripheralStateName(peripheral.state), self.scanning ? 1 : 0,
+         peripheral.identifier.UUIDString);
   [[SFPrintSDKUtils shareInstance] connectedBlueteeth:peripheral];
+  SFPLog(@"[Printer] connectedBlueteeth: 返回后 state=%@",
+         SFPeripheralStateName(peripheral.state));
 }
 
 - (void)connectDeviceUUID:(NSString *)uuid name:(nullable NSString *)name {
@@ -588,6 +637,68 @@ static UIImage *SFBuildTestPage(int widthMm,
 
 - (BOOL)isConnected {
   return [[SFPrintSDKUtils shareInstance] getDeviceStatus];
+}
+
+- (NSString *)debugInternalState {
+  NSMutableString *out = [NSMutableString string];
+
+  // 我们自己的 central（只用于读蓝牙开关状态）。
+  // ★ 直接读 ivar，不走 lazy getter —— 探针必须是**纯只读**的，
+  //   不能因为「打一行日志」就把 CBCentralManager 建出来（那会弹权限框）。
+  CBCentralManager *own = _centralManager;
+  [out appendFormat:@"selfCentral=%@ ", own ? SFCentralStateName(own.state) : @"未创建"];
+
+  // ★ 最有价值的一项：目标外设此刻的 CoreBluetooth 状态。
+  //   connecting 卡住 = 链路层在努力；disconnected 不动 = SDK 没交出去。
+  if (self.target != nil) {
+    [out appendFormat:@"target=%@ state=%@ ",
+                      self.target.identifier.UUIDString,
+                      SFPeripheralStateName(self.target.state)];
+  } else {
+    [out appendString:@"target=nil "];
+  }
+  [out appendFormat:@"connecting=%d scanning=%d ", self.connecting ? 1 : 0,
+                    self.scanning ? 1 : 0];
+
+  @try {
+    SFPrintSDKUtils *utils = [SFPrintSDKUtils shareInstance];
+    [out appendFormat:@"| getDeviceStatus=%d ", [utils getDeviceStatus] ? 1 : 0];
+
+    // 私有属性 utils -> SFBLEManager
+    id ble = [utils valueForKey:@"utils"];
+    if (ble == nil) {
+      [out appendString:@"| SDK内部utils=nil"];
+    } else {
+      [out appendFormat:@"| SDK utils=%@ ", NSStringFromClass([ble class])];
+      @try {
+        id cm = [ble valueForKey:@"cbCM"];
+        if ([cm isKindOfClass:[CBCentralManager class]]) {
+          [out appendFormat:@"cbCM=%@ ", SFCentralStateName(((CBCentralManager *)cm).state)];
+        } else {
+          [out appendFormat:@"cbCM=%@ ", cm ? NSStringFromClass([cm class]) : @"nil"];
+        }
+      } @catch (NSException *e) {
+        [out appendFormat:@"cbCM读取失败(%@) ", e.reason];
+      }
+      @try {
+        id cp = [ble valueForKey:@"connectPeripheral"];
+        if (cp == nil) {
+          [out appendString:@"connectPeripheral=nil"];
+        } else if ([cp isKindOfClass:[CBPeripheral class]]) {
+          CBPeripheral *p = (CBPeripheral *)cp;
+          [out appendFormat:@"connectPeripheral=%@ state=%@ name=%@",
+                            p.identifier.UUIDString, SFPeripheralStateName(p.state), p.name];
+        } else {
+          [out appendFormat:@"connectPeripheral=%@", NSStringFromClass([cp class])];
+        }
+      } @catch (NSException *e) {
+        [out appendFormat:@"connectPeripheral读取失败(%@)", e.reason];
+      }
+    }
+  } @catch (NSException *e) {
+    [out appendFormat:@"| KVC 失败: %@", e.reason];
+  }
+  return out;
 }
 
 - (NSString *)connectedUUID {

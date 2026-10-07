@@ -75,6 +75,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// 硕方 SDK 只暴露「已连接 / 未连接」，没有更细的状态码。
 - (BOOL)isConnected;
 
+/// ★ 纯诊断用：把 SDK **内部**的真实状态抓成一行字。
+///
+/// 为什么需要：真机日志显示 `connectedBlueteeth:` 之后 15 秒内 SDK
+/// **一个回调都不给**（`connectSuccessBlock` / `connectFailBlock` 都没触发），
+/// 而 `getDeviceStatus` 却立刻变 YES —— 两者矛盾，必须看清它内部到底连没连上。
+///
+/// 手段：KVC 探进 `SFPrintSDKUtils` 私有属性 `utils`（`SFBLEManager`），
+/// 再读它的 `connectPeripheral` 及其 `state`。**全部包在 @try 里**，
+/// 私有结构变了也只是这行日志少点信息，绝不影响功能。
+- (NSString *)debugInternalState;
+
 #pragma mark - 打印
 
 /// 打印一张标签 PDF（首页按 203dpi 栅格化后二值化）。

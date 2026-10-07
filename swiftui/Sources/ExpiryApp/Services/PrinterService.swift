@@ -172,6 +172,12 @@ final class PrinterService: NSObject, ObservableObject {
     private var pendingRecord: LabelRecord?
     private var lifecycleTimer: Timer?
     private var connectWatchdog: Timer?
+    /// 只读诊断探针：连接等待期间定期把 SDK 内部状态打进日志。
+    /// ★ 它**绝不参与成功判定**（不 set connectedUUID），只是把真相记下来。
+    private var connectProbe: Timer?
+    /// 当前是第几次尝试。
+    private var attempt = 0
+    private static let maxAttempts = 3
 
     private static let savedKey = "saved_printers"
     private static let kindKey = "printer_kind"
@@ -260,11 +266,13 @@ final class PrinterService: NSObject, ObservableObject {
     // MARK: - 连接
 
     func connect(_ uuid: String, name: String, kind: String? = nil) {
+        attempt = 0
         beginConnect(uuid: uuid, name: name,
                      kind: kind ?? self.kind.rawValue, fromSaved: false)
     }
 
     func connect(_ printer: SavedPrinter) {
+        attempt = 0
         beginConnect(uuid: printer.address, name: printer.name,
                      kind: printer.kind, fromSaved: true)
     }
@@ -295,12 +303,26 @@ final class PrinterService: NSObject, ObservableObject {
         isConnecting = true
         connectedUUID = nil
         connectedName = nil
-        SFPrinterLog("beginConnect name=\(name) uuid=\(uuid) fromSaved=\(fromSaved) " +
-                     "蓝牙=\(bluetooth) 上一台=\(previous)")
+        SFPrinterLog("beginConnect 第\(attempt + 1)次 name=\(name) uuid=\(uuid) " +
+                     "fromSaved=\(fromSaved) 蓝牙=\(bluetooth) 上一台=\(previous)")
 
+        // ★ 只读探针：每秒把 SDK 内部 + CoreBluetooth 的真实状态打进日志。
+        //   它**只写日志**，不碰 connectedUUID、不参与成功判定。
+        //   上一版日志里「15 秒内一个回调都没有」把人都看傻了 —— 有了探针，
+        //   下一次就能直接看到 `target=… state=connecting` 还是 `state=disconnected`，
+        //   从而判定「SDK 到底有没有真的发起 BLE 连接」。
+        connectProbe?.invalidate()
+        connectProbe = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            SFPrinterLog("  探针[第\(self.attempt + 1)次] \(self.sdk.debugInternalState())")
+        }
+
+        // 原生层的 connectTimer（20 秒）一定会给出结果；这里只留一道更长的兜底，
+        // 它一旦触发就说明原生层该回调却没回调 —— 本身就是个 bug 信号。
         connectWatchdog?.invalidate()
-        connectWatchdog = Timer.scheduledTimer(withTimeInterval: 20, repeats: false) { [weak self] _ in
-            self?.failConnect(message: "连接超时，请确认打印机已开机并在附近")
+        connectWatchdog = Timer.scheduledTimer(withTimeInterval: 40, repeats: false) { [weak self] _ in
+            SFPrinterLog("⚠️ Swift 40 秒兜底被触发：原生层始终没有回报结果")
+            self?.handleConnectFailure(message: "连接超时，请确认打印机已开机并在附近")
         }
 
         // ★★★ 这里**故意没有**连接状态轮询（勿加回）。
@@ -323,6 +345,9 @@ final class PrinterService: NSObject, ObservableObject {
         connectedName = nil
         isConnecting = false
         intent = nil
+        attempt = 0
+        connectProbe?.invalidate()
+        connectProbe = nil
         connectWatchdog?.invalidate()
         connectWatchdog = nil
     }
@@ -340,12 +365,15 @@ final class PrinterService: NSObject, ObservableObject {
     private static let unnamedPlaceholder = "未知设备"
 
     private func markConnected(uuid: String, name: String) {
+        connectProbe?.invalidate()
+        connectProbe = nil
         connectWatchdog?.invalidate()
         connectWatchdog = nil
 
         let pending = intent
         intent = nil
         isConnecting = false
+        attempt = 0
 
         let finalUUID = uuid.isEmpty ? (pending?.uuid ?? "") : uuid
 
@@ -379,17 +407,61 @@ final class PrinterService: NSObject, ObservableObject {
         toast = "已连接 \(finalName)"
     }
 
+    /// 一次尝试失败后的统一入口：**先重试，重试次数用尽才报失败**。
+    ///
+    /// 用户实测反馈「刚才还能连上，现在又连不上了」—— 这种时好时坏最典型的原因
+    /// 就是 BLE 链路层一次握不上（射频环境、打印机正在被别的中心占用、
+    /// 广播间隔太长错过了连接窗口）。而每一次失败的代价只是十几秒，
+    /// 自动重来一次却往往就成了。所以不再「一次失败就判死刑」。
+    private func handleConnectFailure(message: String) {
+        // ★ 只处理「确实有一次连接在等结果」的情况。
+        //   没有 intent 说明要么本来就没在连，要么**已经连上了**——
+        //   此时若被一个迟到的 connectFail 把 connectedUUID 抹掉，
+        //   用户看到的就是「刚连上就断开」。这正是之前那个坑的一半。
+        guard intent != nil else {
+            SFPrinterLog("忽略一次迟到的 connectFail（当前没有进行中的连接）")
+            return
+        }
+
+        connectProbe?.invalidate()
+        connectProbe = nil
+        connectWatchdog?.invalidate()
+        connectWatchdog = nil
+        isConnecting = false
+        connectedUUID = nil
+        connectedName = nil
+
+        // attempt 从 0 开始计数，含义是「当前正在做第 attempt+1 次」。
+        // 所以还能不能再开一次新尝试，取决于 attempt + 1 是否已经用满了 maxAttempts。
+        guard let pending = intent, attempt + 1 < Self.maxAttempts else {
+            attempt = 0
+            failConnect(message: message)
+            return
+        }
+        attempt += 1
+        intent = nil
+        SFPrinterLog("连接失败，1.5 秒后开始第 \(attempt + 1)/\(Self.maxAttempts) 次尝试")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            self.beginConnect(uuid: pending.uuid, name: pending.name,
+                              kind: pending.kind, fromSaved: pending.fromSaved)
+        }
+    }
+
     private func failConnect(message: String) {
+        connectProbe?.invalidate()
+        connectProbe = nil
         connectWatchdog?.invalidate()
         connectWatchdog = nil
 
         let pending = intent
         intent = nil
         isConnecting = false
+        attempt = 0
         connectedUUID = nil
         connectedName = nil
 
-        SFPrinterLog("连接失败 fromSaved=\(pending?.fromSaved == true) 原因=\(message)")
+        SFPrinterLog("连接最终失败 fromSaved=\(pending?.fromSaved == true) 原因=\(message)")
 
         // 从「已添加」进来的失败，多半是重装 App 后旧标识失效 —— 直接给出可操作的建议。
         if pending?.fromSaved == true {
@@ -544,15 +616,20 @@ extension PrinterService: ExpiryPrinterSDKDelegate {
 
     func printerDidFailToConnect() {
         SFPrinterLog("SDK 回调 connectFail")
-        failConnect(message: "连接失败，请确认打印机已开机并在附近")
+        handleConnectFailure(message: "连接失败，请确认打印机已开机并在附近")
     }
 
     func printerDidDisconnect() {
         SFPrinterLog("SDK 回调 disconnected（原 connectedUUID=\(connectedUUID ?? "nil")）")
+        connectProbe?.invalidate()
+        connectProbe = nil
+        connectWatchdog?.invalidate()
+        connectWatchdog = nil
         connectedUUID = nil
         connectedName = nil
         isConnecting = false
         intent = nil
+        attempt = 0
         toast = "打印机已断开"
     }
 
