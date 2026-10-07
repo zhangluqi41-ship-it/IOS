@@ -2,6 +2,13 @@
 //  PreviewView.swift
 //  标签预览 —— 位图自绘预览 + 保存到手机 + 分享 + 直接打印。
 //
+//  ⚠️⚠️ 2026-10-07：**当前没有任何入口**。
+//     用户要求「取消预览标签功能，直接只需要打印」，所以
+//     `LabelActionBar` 上的「预览标签」按钮和 `LabelActions` 里的
+//     `.fullScreenCover` 都已移除（连带「保存到手机」「分享」一起下线）。
+//     本文件保留在仓库里只是为了可快速恢复 —— 它记录了两个很贵的坑（见下），
+//     恢复方式：在 `LabelActionBar` 加回按钮 + `LabelActions` 加回 fullScreenCover。
+//
 //  ★ 为什么不用 PDFKit 的 PDFView（曾经就是这样，结果是全白）：
 //    `PDFView.autoScales` 要靠自身的 bounds 算 scaleFactor。放进 SwiftUI 的
 //    UIViewRepresentable 时，`makeUIView` 那一刻视图尺寸还是 0，

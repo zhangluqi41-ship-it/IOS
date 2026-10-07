@@ -9,7 +9,6 @@ struct KombuchaTemplateView: View {
     @State private var variety = ""
     @State private var maker = Prefs.lastMaker
     @State private var showVarietyAlert = false
-    @State private var preview: PreviewPayload?
 
     var body: some View {
         List {
@@ -50,7 +49,7 @@ struct KombuchaTemplateView: View {
         }
         .navigationTitle("康普茶 · 一发")
         .navigationBarTitleDisplayMode(.inline)
-        .modifier(LabelActions(preview: $preview, build: buildDraft))
+        .modifier(LabelActions(build: buildDraft))
         .alert("请先填写茶叶品种", isPresented: $showVarietyAlert) {
             Button("好", role: .cancel) {}
         }

@@ -72,11 +72,15 @@ final class ExpiryRulesTests: XCTestCase {
         let parsed = LabelTemplate.parseKombuchaQr(data.qrText)
         XCTAssertNotNil(parsed, "自己生成的二维码内容应该能解析回来")
         XCTAssertEqual(parsed?.title, "康普茶-红茶")
-        XCTAssertEqual(parsed?.maker, "四野")
-        XCTAssertEqual(parsed?.prepared, now)
+        // 新格式二维码里已经没有制作人 → 扫回来是空串
+        XCTAssertEqual(parsed?.maker, "")
         XCTAssertEqual(parsed?.finished,
                        AppCalendar.shared.date(byAdding: .day,
                                                 value: LabelTemplate.kombuchaDoneDays,
+                                                to: now))
+        XCTAssertEqual(parsed?.bestBefore,
+                       AppCalendar.shared.date(byAdding: .day,
+                                                value: LabelTemplate.kombuchaBestDays,
                                                 to: now))
     }
 

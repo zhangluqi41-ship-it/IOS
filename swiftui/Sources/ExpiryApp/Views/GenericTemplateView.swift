@@ -2,7 +2,7 @@
 //  GenericTemplateView.swift
 //  通用效期 —— 标题手填 + 两个日期（统一「日期」组）+ 快捷档位。
 //
-//  输出动作（预览标签 / 打印）由 `LabelActions` 修饰器统一挂底部工具栏，
+//  输出动作（打印）由 `LabelActions` 修饰器统一挂底部工具栏，
 //  这里只负责「校验 + 装配 draft」。
 //
 
@@ -14,7 +14,6 @@ struct GenericTemplateView: View {
     @State private var expireDate = Date()
     @State private var bestDate = Date()
     @State private var showTitleAlert = false
-    @State private var preview: PreviewPayload?
 
     var body: some View {
         List {
@@ -39,7 +38,7 @@ struct GenericTemplateView: View {
         }
         .navigationTitle("通用效期")
         .navigationBarTitleDisplayMode(.inline)
-        .modifier(LabelActions(preview: $preview, build: buildDraft))
+        .modifier(LabelActions(build: buildDraft))
         .alert("请先填写物料名称", isPresented: $showTitleAlert) {
             Button("好", role: .cancel) {}
         }

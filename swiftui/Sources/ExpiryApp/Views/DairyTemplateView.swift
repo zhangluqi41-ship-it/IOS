@@ -11,7 +11,6 @@ struct DairyTemplateView: View {
     @State private var expireDate = Date()
     @State private var bestDate = Date()
     @State private var showKindAlert = false
-    @State private var preview: PreviewPayload?
 
     var body: some View {
         List {
@@ -67,7 +66,7 @@ struct DairyTemplateView: View {
         }
         .navigationTitle("奶制品")
         .navigationBarTitleDisplayMode(.inline)
-        .modifier(LabelActions(preview: $preview, build: buildDraft))
+        .modifier(LabelActions(build: buildDraft))
         .alert("请先选择奶制品类型", isPresented: $showKindAlert) {
             Button("好", role: .cancel) {}
         }

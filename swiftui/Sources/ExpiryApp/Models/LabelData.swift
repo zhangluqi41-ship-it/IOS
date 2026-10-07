@@ -23,15 +23,24 @@ struct LabelData {
     let rightText: String
     let maker: String
 
-    /// 二维码内容 = 页面全部文字顺序拼接，无分隔符
-    /// （标题 + 各组「标签+值」 + 制作人）。
+    /// 二维码内容 = **名称 + 后两组时间**（无分隔符）。
+    ///
+    /// ★ 2026-10-07 用户要求收紧（原来还带第一组时间和制作人）：
+    ///   - 去掉三组时间里的**第一组**（通用/奶制品是「开封时间」，
+    ///     康普茶是「制备时间」）；
+    ///   - 制作人也一并去掉。
+    ///   目的就是让二维码内容变短 —— 内容越短模块越少、每个模块占的点数越多，
+    ///   203dpi 热敏头上打出来才不糊（`kDotsPerMM = 8` 是硬上限）。
+    ///
+    /// ⚠️ 改这里必须同步改 `LabelTemplate.parseKombuchaQr` ——
+    ///   康普茶二发就是靠扫描一发标签的这段文本续做的。
+    ///   （解析器同时保留了对旧格式的兼容，见那里的注释。）
     var qrText: String {
         var b = title
-        for r in rows {
+        for r in rows.dropFirst() {
             b += r.label
             b += r.value
         }
-        b += maker
         return b
     }
 }

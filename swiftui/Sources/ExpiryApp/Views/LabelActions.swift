@@ -1,14 +1,21 @@
 //
 //  LabelActions.swift
 //  标签动作的公共装配 —— 四个模板页（通用 / 康普茶一发 / 康普茶二发 / 奶制品）
-//  共用同一套「预览标签 / 打印」动作与提示，避免四处复制。
+//  共用同一套「打印」动作与提示，避免四处复制。
 //
 //  ★ 为什么不用 `.toolbar(placement: .bottomBar)`：
 //    试过了 —— 在 TabView 里的二级页上，bottom bar 会和底部的 Tab 栏抢位置，
-//    结果两个按钮被 Tab 栏盖住、直接看不见（用户实测反馈）。
+//    结果按钮被 Tab 栏盖住、直接看不见（用户实测反馈）。
 //    改成 `safeAreaInset(edge: .bottom)` 自绘一条操作条：
 //    它加在「内容 + 底部安全区」之间，而 Tab 栏占的正是底部安全区，
 //    所以这条 bar 会稳稳落在 Tab 栏**上方**，就是想要的二级 bar 效果。
+//
+//  ★ 2026-10-07：用户要求**取消「预览标签」功能**，二级条只留「打印」。
+//    随之一起去掉的还有预览页上的「保存到手机」「分享」。
+//    `PreviewView` / `PreviewPayload` / `PDFRasterizer` 的源码保留在仓库里
+//    （没有入口，不再被引用），万一要恢复，加回下面那个按钮 +
+//    `.fullScreenCover(item:)` 即可 —— 那里面记录的 PDFKit/ScrollView 缩放坑
+//    别再踩第二遍。
 //
 
 import SwiftUI
@@ -51,41 +58,28 @@ struct PreviewPayload: Identifiable {
 
 // MARK: - 二级操作条
 
-/// 二级操作条：左边「预览标签」，右边「打印」，固定落在 Tab 栏上方。
+/// 二级操作条：只剩一个「打印」，固定落在 Tab 栏上方。
 struct LabelActionBar: View {
     let isBusy: Bool
-    let onPreview: () -> Void
     let onPrint: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onPreview) {
-                Label("预览标签", systemImage: "doc.text.magnifyingglass")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-            }
-            .liquidGlassButton()
-            .disabled(isBusy)
-
-            Button(action: onPrint) {
-                HStack(spacing: 7) {
-                    if isBusy {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                    Label("打印", systemImage: "printer.fill")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
+        Button(action: onPrint) {
+            HStack(spacing: 7) {
+                if isBusy {
+                    ProgressView()
+                        .controlSize(.small)
                 }
-                .padding(.vertical, 11)
+                Label("打印", systemImage: "printer.fill")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
             }
-            .liquidGlassProminentButton()
-            .tint(Theme.brand)
-            .disabled(isBusy)
+            .padding(.vertical, 11)
         }
+        .liquidGlassProminentButton()
+        .tint(Theme.brand)
+        .disabled(isBusy)
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 6)
@@ -94,12 +88,11 @@ struct LabelActionBar: View {
 
 // MARK: - 动作修饰器
 
-/// 给模板页挂上：底部二级操作条 + 预览全屏页 + 提示弹窗。
+/// 给模板页挂上：底部二级操作条 + 提示弹窗。
 ///
 /// - Parameter build: 由各页自己实现——校验通过返回 `LabelDraft`，
 ///   校验不过时页面内部弹自己的提示并返回 `nil`。
 struct LabelActions: ViewModifier {
-    @Binding var preview: PreviewPayload?
     let build: () -> LabelDraft?
 
     @ObservedObject private var printer = PrinterService.shared
@@ -113,12 +106,7 @@ struct LabelActions: ViewModifier {
     func body(content: Content) -> some View {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                LabelActionBar(isBusy: printer.isPrinting,
-                               onPreview: openPreview,
-                               onPrint: printNow)
-            }
-            .fullScreenCover(item: $preview) { payload in
-                PreviewView(payload: payload)
+                LabelActionBar(isBusy: printer.isPrinting, onPrint: printNow)
             }
             .alert(notice?.title ?? "",
                    isPresented: Binding(get: { notice != nil },
@@ -130,13 +118,6 @@ struct LabelActions: ViewModifier {
     }
 
     // MARK: 动作
-
-    private func openPreview() {
-        guard let draft = build() else { return }
-        preview = PreviewPayload(pdfData: draft.pdf(),
-                                 fileName: draft.fileName,
-                                 draft: draft)
-    }
 
     private func printNow() {
         guard printer.isConnected else {

@@ -57,10 +57,15 @@ enum DairyKind: String, CaseIterable, Identifiable {
 }
 
 // MARK: - 康普茶一发解析结果
+//
+// ★ 2026-10-07：`prepared` 字段被删掉了。
+//   原因：二维码内容收紧后（见 `LabelData.qrText`）不再包含「制备时间」，
+//   世上没有任何地方还在用这个字段。
+//   注意 `maker` 同理 —— 新格式的二维码里也没有制作人了，所以扫回来的
+//   一发标签 `maker` 会是空串（页面会自动隐藏「操作人」那一行）。
 
 struct KombuchaFirstLabel: Hashable {
     let title: String
-    let prepared: Date
     let finished: Date
     let bestBefore: Date
     let maker: String
@@ -223,11 +228,29 @@ enum LabelTemplate {
         )
     }
 
+    /// 康普茶二发的完成时间 = **二发自己的制备时间 + 3 天**。
+    ///
+    /// ★★ 2026-10-07 修 bug（用户反馈「完成时间应该是 +3 天，而现在是 +10 天」）：
+    ///   原来是 `一发完成时间 + 3 天`。而一发完成本身 = 一发制备 + 7 天，
+    ///   所以从**二发标签上印着的制备时间**看过去，完成时间变成了 +10 天，
+    ///   和旁边那行「制备时间」根本对不上（间隔多久全看你是第几天扫的码）。
+    ///
+    ///   正确语义：二发的「制备」就是加水果那一刻（= 扫码那一刻），
+    ///   完成 = 那一刻 + 3 天，和标签上第一行严格相差 3 天。
+    ///   ⚠️ 安卓 / Flutter 版是同一处错误，不要以那边为准。
+    ///
+    /// 抽成独立函数是为了让「标签上的完成时间」和「入库记录的 expireAt」
+    /// 走同一个来源 —— 之前两处各算一遍，改一处漏一处。
+    static func kombuchaSecondDone(after now: Date) -> Date {
+        AppCalendar.shared.date(byAdding: .day,
+                               value: kombuchaSecondDoneDays,
+                               to: now) ?? now
+    }
+
     static func buildKombuchaSecond(firstTitle: String, fruit: String, now: Date,
-                                    firstFinished: Date, firstBestBefore: Date,
+                                    firstBestBefore: Date,
                                     maker: String) -> LabelData {
-        let done = AppCalendar.shared.date(byAdding: .day, value: kombuchaSecondDoneDays,
-                                         to: firstFinished) ?? firstFinished
+        let done = kombuchaSecondDone(after: now)
         // 标题里的 firstTitle 来自扫到的二维码（外部输入），同样要收紧
         let combined = clamp("\(clamp(firstTitle, maxTitleLength))-\(clamp(fruit, maxNameLength))",
                              maxTitleLength)
@@ -271,10 +294,27 @@ enum LabelTemplate {
 
     // MARK: 二维码解析
 
+    /// 一个日期时间的正则片段：`2026/10/05 15:30`。
+    private static let dateTimePat = "\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2}"
+
+    /// **新格式**：`{标题}完成时间：{完成}最佳使用时间：{最佳}`
+    /// （第一组时间和制作人都被收紧掉了，见 `LabelData.qrText`）。
     private static let kombuchaQrRe = try! NSRegularExpression(
-        pattern: "^(?<title>.+?)制备时间：(?<prep>\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2})"
-            + "完成时间：(?<done>\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2})"
-            + "最佳使用时间：(?<best>\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2})"
+        pattern: "^(?<title>.+?)完成时间：(?<done>\(dateTimePat))"
+            + "最佳使用时间：(?<best>\(dateTimePat))$"
+    )
+
+    /// **旧格式**（v1.6.14 之前打印出去的标签）：
+    /// `{标题}制备时间：{制备}完成时间：{完成}最佳使用时间：{最佳}制作人：{人}`
+    ///
+    /// ★ 必须保留：用户手里可能已经有打好的实物标签，
+    ///   网上改一个格式就让存量标签扫不出来是不可接受的。
+    ///   新格式因为有 `$` 锚定，不会误吃到这种串（它结尾多一段「制作人：x」），
+    ///   所以先试新、再试旧，顺序安全。
+    private static let kombuchaQrLegacyRe = try! NSRegularExpression(
+        pattern: "^(?<title>.+?)制备时间：(?<prep>\(dateTimePat))"
+            + "完成时间：(?<done>\(dateTimePat))"
+            + "最佳使用时间：(?<best>\(dateTimePat))"
             + "制作人：(?<maker>.*)$"
     )
 
@@ -312,33 +352,43 @@ enum LabelTemplate {
     }
 
     /// 解析康普茶（一发）标签二维码；不是康普茶标签返回 nil。
+    ///
+    /// 先按**新格式**（名称 + 后两组时间）解析，失败再按**旧格式**兜底，
+    /// 保证存量实物标签照样能扫（见 `kombuchaQrLegacyRe`）。
     static func parseKombuchaQr(_ raw: String) -> KombuchaFirstLabel? {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         // ★ 二维码内容来自外部（别人贴的一张码就能扫），先卡长度再做正则，
         //   避免超大字符串把正则/后续逻辑拖住。
         guard !text.isEmpty, text.utf8.count <= maxQrBytes else { return nil }
         let ns = text as NSString
-        guard let m = kombuchaQrRe.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else {
-            return nil
+
+        func matched(_ re: NSRegularExpression) -> NSTextCheckingResult? {
+            re.firstMatch(in: text, range: NSRange(location: 0, length: ns.length))
         }
-        func group(_ name: String) -> String? {
+        func group(_ m: NSTextCheckingResult, _ name: String) -> String? {
             let r = m.range(withName: name)
             guard r.location != NSNotFound else { return nil }
             return ns.substring(with: r)
         }
-        guard let title = group("title")?.trimmingCharacters(in: .whitespacesAndNewlines),
-              title.hasPrefix(kombuchaPrefix),
-              let prep = group("prep").flatMap(parseDate),
-              let done = group("done").flatMap(parseDate),
-              let best = group("best").flatMap(parseDate) else {
-            return nil
+
+        for re in [kombuchaQrRe, kombuchaQrLegacyRe] {
+            guard let m = matched(re) else { continue }
+            guard let title = group(m, "title")?
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                  title.hasPrefix(kombuchaPrefix),
+                  let done = group(m, "done").flatMap(parseDate),
+                  let best = group(m, "best").flatMap(parseDate) else {
+                continue
+            }
+            return KombuchaFirstLabel(
+                title: title,
+                finished: done,
+                bestBefore: best,
+                // 新格式里没有制作人 → 空串，页面会隐藏「操作人」那一行。
+                maker: group(m, "maker")?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            )
         }
-        return KombuchaFirstLabel(
-            title: title,
-            prepared: prep,
-            finished: done,
-            bestBefore: best,
-            maker: group("maker")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        )
+        return nil
     }
 }
