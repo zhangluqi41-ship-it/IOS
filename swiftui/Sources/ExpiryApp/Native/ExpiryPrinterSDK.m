@@ -303,6 +303,32 @@ static UIImage *SFBuildTestPage(int widthMm,
 /// 所以这一层也要挡。
 @property (nonatomic, assign) BOOL connecting;
 
+/// ★★★ 连接判定轮询（0.5 秒一次）—— 这是目前**唯一可靠**的连接成功判据。
+///
+/// 真机日志（v1.6.13 / iOS 27.0.1，`Documents/printer_log.txt`）把这件事
+/// 连钉了三次，每次都一样：
+/// ```
+/// [Printer] 调 connectedBlueteeth: 之前 state=disconnected 我方扫描中=1
+/// [Printer] connectedBlueteeth: 返回后   state=connecting
+///   探针[第1次]（1 秒后）target=… state=connected | getDeviceStatus=1
+/// ```
+/// 也就是说 —— **打印机每次都真的连上了**，但 SDK 的 `connectSuccessBlock`
+/// 从头到尾一次都没触发（整份日志里 `connectSuccess` 出现 **0 次**），
+/// `connectFailBlock` 同样一次都没有；20 秒后收到的那个「失败」其实是
+/// **我方自己的定时器超时**。用户看到的现象就正好对上了：
+/// 「打印机屏幕显示已连接，App 却一直转圈」。
+///
+/// 为什么不能只靠 `getDeviceStatus`（v1.6.8~v1.6.10 真机翻过车）：
+/// 它是**全局**状态（「当前有没有连上任何一台」），第一台连上之后恒为 YES，
+/// 于是点**任何**设备都会在 0.6 秒内被误判成成功。
+///
+/// 所以判据取两者的**与**：
+///   · `self.target.state == CBPeripheralStateConnected`
+///     —— per-device，天然回答「**这一台**连上没有」，不会因为别的设备连上而误报；
+///   · `[SFPrintSDKUtils getDeviceStatus]`
+///     —— SDK 自己认不认这条链路（把「链上了但 SDK 没完成握手」排除掉）。
+@property (nonatomic, strong, nullable) NSTimer *connectWatchTimer;
+
 @end
 
 @implementation ExpiryPrinterSDK
@@ -346,6 +372,15 @@ static UIImage *SFBuildTestPage(int widthMm,
   sdk.disconnectBlock = ^{
     [weakSelf handleDisconnected];
   };
+
+  // ★ 装完立刻自证一次：这四块是不是真的挂上去了。
+  //   （`connectSuccessBlock` 全程不回调时，第一个要排除的就是
+  //    「块被 SDK 清掉了 / 我们压根没装上」。日志里直接能看到。）
+  SFPLog(@"[Printer] SDK 回调已挂载 find=%@ success=%@ fail=%@ disconnect=%@",
+         sdk.findDeviceBlock ? @"Y" : @"nil",
+         sdk.connectSuccessBlock ? @"Y" : @"nil",
+         sdk.connectFailBlock ? @"Y" : @"nil",
+         sdk.disconnectBlock ? @"Y" : @"nil");
 }
 
 #pragma mark - 蓝牙状态
@@ -492,13 +527,16 @@ static UIImage *SFBuildTestPage(int widthMm,
 - (void)finishConnectWithPeripheral:(CBPeripheral *)peripheral ok:(BOOL)ok {
   [self.connectTimer invalidate];
   self.connectTimer = nil;
+  [self.connectWatchTimer invalidate];
+  self.connectWatchTimer = nil;
   self.connecting = NO;
 
   NSString *uuid = peripheral.identifier.UUIDString ?: @"";
   NSString *name = peripheral ? [self friendlyNameFor:peripheral] : @"硕方 T50 Pro";
-  SFPLog(@"[Printer] 连接回调 ok=%d uuid=%@ friendlyName=%@ rawName=%@ stage=%@",
+  SFPLog(@"[Printer] 连接回调 ok=%d uuid=%@ friendlyName=%@ rawName=%@ stage=%@ state=%@",
          (int)ok, uuid, name, peripheral.name,
-         [ExpiryPrinterSDK nameStageOf:peripheral]);
+         [ExpiryPrinterSDK nameStageOf:peripheral],
+         peripheral ? SFPeripheralStateName(peripheral.state) : @"nil");
   NSObject<ExpiryPrinterSDKDelegate> *d = self.delegate;
 
   if (ok) {
@@ -512,6 +550,36 @@ static UIImage *SFBuildTestPage(int widthMm,
       SFOnMain(^{ [d printerDidFailToConnect]; });
     }
   }
+}
+
+/// 连接判定轮询体：见 `connectWatchTimer` 的注释。
+///
+/// 只做一件判断，命中就把这次连接判成功 —— 因为 SDK 不会告诉我们。
+- (void)pollConnectState {
+  if (!self.connecting) {
+    [self.connectWatchTimer invalidate];
+    self.connectWatchTimer = nil;
+    return;
+  }
+  CBPeripheral *target = self.target;
+  if (target == nil) return;
+
+  // ① 本机这次要连的那台外设，链路真的起来了没有。
+  if (target.state != CBPeripheralStateConnected) return;
+
+  // ② SDK 认不认。抛异常（私有结构变了）时保守地当作「还没好」，继续等超时。
+  BOOL sdkSaysConnected = NO;
+  @try {
+    sdkSaysConnected = [[SFPrintSDKUtils shareInstance] getDeviceStatus];
+  } @catch (NSException *e) {
+    SFPLog(@"[Printer] getDeviceStatus 抛异常：%@", e.reason);
+  }
+  if (!sdkSaysConnected) return;
+
+  SFPLog(@"[Printer] ✅ 轮询判定连接成功 uuid=%@ "
+         @"（SDK 的 connectSuccessBlock 全程没有回调，以本机外设状态为准）",
+         target.identifier.UUIDString);
+  [self finishConnectWithPeripheral:target ok:YES];
 }
 
 - (void)handleDisconnected {
@@ -537,6 +605,23 @@ static UIImage *SFBuildTestPage(int widthMm,
                                                                                              ok:NO];
                                                         }];
 
+  // ★★★ 0.5 秒一次的连接判定 —— 本文件最重要的一处修复，缘由见
+  //     `connectWatchTimer` 属性的注释（SDK 的 connectSuccessBlock 全程不回调）。
+  //     用 0.5 秒而不是 1 秒：真机日志里链路在 `connectedBlueteeth:` 之后
+  //     **1 秒内**就已 connected，0.5 秒能让用户几乎感觉不到等待。
+  [self.connectWatchTimer invalidate];
+  __weak typeof(self) weakPoll = self;
+  self.connectWatchTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
+                                                            repeats:YES
+                                                              block:^(NSTimer *timer) {
+    __strong typeof(weakPoll) strongSelf = weakPoll;
+    if (strongSelf == nil) {
+      [timer invalidate];
+      return;
+    }
+    [strongSelf pollConnectState];
+  }];
+
   // ★★ 取证关键点：调用前后各读一次 `peripheral.state`。
   //    CoreBluetooth 的语义是「一调 connectPeripheral:，state 立刻变
   //    CBPeripheralStateConnecting」。
@@ -550,7 +635,7 @@ static UIImage *SFBuildTestPage(int widthMm,
          SFPeripheralStateName(peripheral.state), self.scanning ? 1 : 0,
          peripheral.identifier.UUIDString);
   [[SFPrintSDKUtils shareInstance] connectedBlueteeth:peripheral];
-  SFPLog(@"[Printer] connectedBlueteeth: 返回后 state=%@",
+  SFPLog(@"[Printer] connectedBlueteeth: 返回后 state=%@（此后每 0.5 秒轮询判定）",
          SFPeripheralStateName(peripheral.state));
 }
 
@@ -633,6 +718,8 @@ static UIImage *SFBuildTestPage(int widthMm,
   self.connecting = NO;
   [self.connectTimer invalidate];
   self.connectTimer = nil;
+  [self.connectWatchTimer invalidate];
+  self.connectWatchTimer = nil;
 }
 
 - (BOOL)isConnected {
@@ -649,7 +736,7 @@ static UIImage *SFBuildTestPage(int widthMm,
   [out appendFormat:@"selfCentral=%@ ", own ? SFCentralStateName(own.state) : @"未创建"];
 
   // ★ 最有价值的一项：目标外设此刻的 CoreBluetooth 状态。
-  //   connecting 卡住 = 链路层在努力；disconnected 不动 = SDK 没交出去。
+  //   connected 不动 = 链路其实已经起来了（就是连接成功的判据）。
   if (self.target != nil) {
     [out appendFormat:@"target=%@ state=%@ ",
                       self.target.identifier.UUIDString,
@@ -664,37 +751,19 @@ static UIImage *SFBuildTestPage(int widthMm,
     SFPrintSDKUtils *utils = [SFPrintSDKUtils shareInstance];
     [out appendFormat:@"| getDeviceStatus=%d ", [utils getDeviceStatus] ? 1 : 0];
 
-    // 私有属性 utils -> SFBLEManager
-    id ble = [utils valueForKey:@"utils"];
-    if (ble == nil) {
-      [out appendString:@"| SDK内部utils=nil"];
-    } else {
-      [out appendFormat:@"| SDK utils=%@ ", NSStringFromClass([ble class])];
-      @try {
-        id cm = [ble valueForKey:@"cbCM"];
-        if ([cm isKindOfClass:[CBCentralManager class]]) {
-          [out appendFormat:@"cbCM=%@ ", SFCentralStateName(((CBCentralManager *)cm).state)];
-        } else {
-          [out appendFormat:@"cbCM=%@ ", cm ? NSStringFromClass([cm class]) : @"nil"];
-        }
-      } @catch (NSException *e) {
-        [out appendFormat:@"cbCM读取失败(%@) ", e.reason];
-      }
-      @try {
-        id cp = [ble valueForKey:@"connectPeripheral"];
-        if (cp == nil) {
-          [out appendString:@"connectPeripheral=nil"];
-        } else if ([cp isKindOfClass:[CBPeripheral class]]) {
-          CBPeripheral *p = (CBPeripheral *)cp;
-          [out appendFormat:@"connectPeripheral=%@ state=%@ name=%@",
-                            p.identifier.UUIDString, SFPeripheralStateName(p.state), p.name];
-        } else {
-          [out appendFormat:@"connectPeripheral=%@", NSStringFromClass([cp class])];
-        }
-      } @catch (NSException *e) {
-        [out appendFormat:@"connectPeripheral读取失败(%@)", e.reason];
-      }
-    }
+    // ★ 四个回调块还在不在。
+    //   之前 SDK 内部的 KVC 探法（`utils` → `cbCM` / `connectPeripheral`）
+    //   实测不可用：`SFPrintSDKUtils.utils` 返回的是 `SFPrintUtils` 实例，
+    //   那个类对这两个 key 都不 KVC-compliant，每次都只会在日志里刷两行
+    //   失败信息（还把日志文件撑到 4.8 万字节）。这块信息量更大：
+    //   只要 success=nil 就说明是「回调被清了」，不用再猜。
+    id find = [utils valueForKey:@"findDeviceBlock"];
+    id success = [utils valueForKey:@"connectSuccessBlock"];
+    id fail = [utils valueForKey:@"connectFailBlock"];
+    id disc = [utils valueForKey:@"disconnectBlock"];
+    [out appendFormat:@"| blocks find=%@ success=%@ fail=%@ disc=%@",
+                      find ? @"Y" : @"nil", success ? @"Y" : @"nil",
+                      fail ? @"Y" : @"nil", disc ? @"Y" : @"nil"];
   } @catch (NSException *e) {
     [out appendFormat:@"| KVC 失败: %@", e.reason];
   }

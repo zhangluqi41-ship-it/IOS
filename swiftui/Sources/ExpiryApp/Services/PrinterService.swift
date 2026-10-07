@@ -175,6 +175,8 @@ final class PrinterService: NSObject, ObservableObject {
     /// 只读诊断探针：连接等待期间定期把 SDK 内部状态打进日志。
     /// ★ 它**绝不参与成功判定**（不 set connectedUUID），只是把真相记下来。
     private var connectProbe: Timer?
+    /// 探针上一行内容 —— 只在变化时写日志，避免把文件刷爆。
+    private var lastProbeLine = ""
     /// 当前是第几次尝试。
     private var attempt = 0
     private static let maxAttempts = 3
@@ -236,6 +238,12 @@ final class PrinterService: NSObject, ObservableObject {
             toast = bluetooth.message
             return
         }
+        // ★ 已经在扫的时候**不要清空列表**。
+        //   原生的 `startScan` 有「已在扫描就忽略」的保护，所以清空之后
+        //   不会再来一轮 `deviceFound` 回调 —— 列表会永远空着。
+        //   用户点「＋」看到一片空白，只能再点一次刷新才好（很迷惑）。
+        //   保持原列表反而更合理：里面的设备本来就是刚扫到的。
+        guard !isScanning else { return }
         devices = []
         sdk.startScan()
     }
@@ -306,15 +314,19 @@ final class PrinterService: NSObject, ObservableObject {
         SFPrinterLog("beginConnect 第\(attempt + 1)次 name=\(name) uuid=\(uuid) " +
                      "fromSaved=\(fromSaved) 蓝牙=\(bluetooth) 上一台=\(previous)")
 
-        // ★ 只读探针：每秒把 SDK 内部 + CoreBluetooth 的真实状态打进日志。
+        // ★ 只读探针：把 SDK 内部 + CoreBluetooth 的真实状态打进日志。
         //   它**只写日志**，不碰 connectedUUID、不参与成功判定。
-        //   上一版日志里「15 秒内一个回调都没有」把人都看傻了 —— 有了探针，
-        //   下一次就能直接看到 `target=… state=connecting` 还是 `state=disconnected`，
-        //   从而判定「SDK 到底有没有真的发起 BLE 连接」。
+        //
+        //   ⚠️ 只在**内容变化时**才写一行。上一版每秒无条件写，一次连接
+        //   就刷了几十行（日志文件被撑到 4.8 万字节），真正有用的行全被埋了。
         connectProbe?.invalidate()
+        lastProbeLine = ""
         connectProbe = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            SFPrinterLog("  探针[第\(self.attempt + 1)次] \(self.sdk.debugInternalState())")
+            let line = self.sdk.debugInternalState()
+            guard line != self.lastProbeLine else { return }
+            self.lastProbeLine = line
+            SFPrinterLog("  探针[第\(self.attempt + 1)次] \(line)")
         }
 
         // 原生层的 connectTimer（20 秒）一定会给出结果；这里只留一道更长的兜底，
@@ -325,16 +337,24 @@ final class PrinterService: NSObject, ObservableObject {
             self?.handleConnectFailure(message: "连接超时，请确认打印机已开机并在附近")
         }
 
-        // ★★★ 这里**故意没有**连接状态轮询（勿加回）。
+        // ★★★ 连接结果的判定规则（勿改回「只认 connectSuccessBlock」）
         //
-        //   v1.6.8~v1.6.10 我在这里加过一个 0.6 秒的轮询，用 SDK 的
-        //   `getDeviceStatus` 当兜底。结果真机翻车：`getDeviceStatus` 是
-        //   **全局**状态（"当前有没有连上任何一台"），不是"这次连的是不是它"。
-        //   于是第一台连上之后它就一直返回 YES —— 用户再点**任何**其他设备，
-        //   0.6 秒内都被判成"连接成功"，并写进「已添加」。
+        //   真机日志（v1.6.13 / iOS 27.0.1）证明：`connectedBlueteeth:` 之后
+        //   **1 秒内** `peripheral.state` 就变成 `connected`、`getDeviceStatus`
+        //   就变 1，而 SDK 的 `connectSuccessBlock` **整份日志里一次都没触发**
+        //   （`connectSuccess` 出现 0 次），`connectFailBlock` 同样一次都没有。
+        //   只认成功回调 ⇒ 打印机明明连上了，App 却一直转圈。
         //
-        //   真机验证过的 Flutter 版（`SFPrinterBridge.m`）也**只认
-        //   `connectSuccessBlock`**，不轮询。这里跟它保持一致。
+        //   现在的最终判定在**原生层**（`ExpiryPrinterSDK.pollConnectState`，
+        //   0.5 秒一次），判据是「**本机这次要连的那台外设** state == connected」
+        //   且「getDeviceStatus == 1」——见 `connectWatchTimer` 的注释。
+        //
+        //   这里**故意没有**任何 Swift 侧轮询（勿加回）：
+        //   v1.6.8~v1.6.10 我在这个位置放过一个 0.6 秒轮询、拿
+        //   `getDeviceStatus` 当兜底，而它是**全局**状态
+        //   （"当前有没有连上任何一台"），第一台连上之后恒为 YES ——
+        //   用户再点**任何**其他设备，0.6 秒内都被判成"连接成功"并写进「已添加」。
+        //   **per-device 的 `peripheral.state` 才是不会误报的那个判据。**
         sdk.connectDeviceUUID(uuid, name: name)
         SFPrinterLog("connect 发起 uuid=\(uuid) name=\(name)")
     }
@@ -348,6 +368,7 @@ final class PrinterService: NSObject, ObservableObject {
         attempt = 0
         connectProbe?.invalidate()
         connectProbe = nil
+        lastProbeLine = ""
         connectWatchdog?.invalidate()
         connectWatchdog = nil
     }
@@ -367,6 +388,7 @@ final class PrinterService: NSObject, ObservableObject {
     private func markConnected(uuid: String, name: String) {
         connectProbe?.invalidate()
         connectProbe = nil
+        lastProbeLine = ""
         connectWatchdog?.invalidate()
         connectWatchdog = nil
 
@@ -425,6 +447,7 @@ final class PrinterService: NSObject, ObservableObject {
 
         connectProbe?.invalidate()
         connectProbe = nil
+        lastProbeLine = ""
         connectWatchdog?.invalidate()
         connectWatchdog = nil
         isConnecting = false
@@ -451,6 +474,7 @@ final class PrinterService: NSObject, ObservableObject {
     private func failConnect(message: String) {
         connectProbe?.invalidate()
         connectProbe = nil
+        lastProbeLine = ""
         connectWatchdog?.invalidate()
         connectWatchdog = nil
 
@@ -623,6 +647,7 @@ extension PrinterService: ExpiryPrinterSDKDelegate {
         SFPrinterLog("SDK 回调 disconnected（原 connectedUUID=\(connectedUUID ?? "nil")）")
         connectProbe?.invalidate()
         connectProbe = nil
+        lastProbeLine = ""
         connectWatchdog?.invalidate()
         connectWatchdog = nil
         connectedUUID = nil

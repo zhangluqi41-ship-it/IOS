@@ -41,6 +41,14 @@ final class QRScannerModel: NSObject, ObservableObject {
 
     let session = AVCaptureSession()
 
+    /// 后置摄像头默认变焦倍数。
+    ///
+    /// ★ 用户反馈「经常无法对焦，比如使用 2 倍变焦镜头，对焦更快」。
+    ///   2 倍有两个好处：
+    ///     ① 二维码在画面里更大 → 每个模块占更多像素 → 解码更快更稳；
+    ///     ② 走的是长焦/裁切，景深与反差更好，对焦判定更干脆。
+    static let preferredZoom: CGFloat = 2.0
+
     private let sessionQueue = DispatchQueue(label: "com.xiaoqi.expiry.scanner")
     private var isConfigured = false
     private var isHandling = false
@@ -92,14 +100,85 @@ final class QRScannerModel: NSObject, ObservableObject {
             if !self.isConfigured { self.configure() }
             guard self.isConfigured else { return }
             if !self.session.isRunning { self.session.startRunning() }
+            // ★ 变焦必须在会话**跑起来之后**才真正生效（之前设的会被首帧重置），
+            //   所以这里再套一次参数。
+            if let camera = self.device {
+                Self.applyTuning(camera,
+                                 zoom: camera.position == .back ? Self.preferredZoom : 1.0,
+                                 preferNearFocus: camera.position == .back)
+            }
             DispatchQueue.main.async {
                 if self.state != .running { self.state = .running }
             }
         }
     }
 
+    /// 给摄像头套上「扫码友好」的参数。
+    ///
+    /// 三件事，都是针对「经常无法对焦」：
+    ///   ① **变焦** —— 二维码在画面里更大，模块更粗，解码更快；
+    ///   ② **连续自动对焦** —— 不再对一次就停在糊的位置；
+    ///   ③ **近景优先** —— 扫标签时手机离码 10~25cm，
+    ///      把对焦范围限制到近景能明显减少「拉风箱」。
+    ///
+    /// ⚠️ 必须整段包在 `lockForConfiguration` 里，且每项都先用
+    ///   `isXxxSupported` 问过 —— 虚拟多摄设备上设不支持的项会抛异常。
+    static func applyTuning(_ device: AVCaptureDevice,
+                            zoom: CGFloat,
+                            preferNearFocus: Bool) {
+        do {
+            try device.lockForConfiguration()
+        } catch {
+            return   // 拿不到锁就跳过，不影响扫码本身
+        }
+        defer { device.unlockForConfiguration() }
+
+        // ① 变焦：夹在 [1, min(格式上限, 10)] 之间。
+        //    ★ 越界设 `videoZoomFactor` 会抛 ObjC 异常（Swift 捕不到，直接崩），
+        //      所以这里的夹取是**必须**的，不是保险起见。
+        let maxZoom = min(device.activeFormat.videoMaxZoomFactor, 10)
+        let target = min(max(zoom, 1.0), max(1.0, maxZoom))
+        if abs(device.videoZoomFactor - target) > 0.01 {
+            device.videoZoomFactor = target
+        }
+
+        // ② 连续自动对焦
+        if device.isFocusModeSupported(.continuousAutoFocus) {
+            device.focusMode = .continuousAutoFocus
+        }
+        // ③ 近景优先（前置不设 —— 自拍场景距离不定）
+        if preferNearFocus, device.isAutoFocusRangeRestrictionSupported {
+            device.autoFocusRangeRestriction = .near
+        }
+        // ④ 平滑对焦：虚拟多摄切换镜头时不要出现呼吸感
+        if device.isSmoothAutoFocusSupported {
+            device.isSmoothAutoFocusEnabled = true
+        }
+    }
+
     private func configure() {
-        let back = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+        // ★★ 优先用**虚拟多摄**设备，而不是写死 `builtInWideAngleCamera`。
+        //
+        //   用户反馈「扫码是不是只调用了一个摄像头？经常无法对焦」—— 是的，
+        //   原来就写死了单颗广角。虚拟多摄（triple / dualWide / dual）会把
+        //   底下几颗镜头合成一个逻辑设备，设 `videoZoomFactor = 2` 时由系统
+        //   直接切到长焦（或 48MP 主摄的 2 倍裁切），比在主摄上做数字放大
+        //   清晰得多，对焦也更快。
+        //
+        //   优先级：三摄（有真长焦）→ 双摄广角（超广+广角）→ 双摄 → 单广角。
+        let virtualTypes: [AVCaptureDevice.DeviceType] = [
+            .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera,
+        ]
+        var back: AVCaptureDevice?
+        for type in virtualTypes {
+            if let candidate = AVCaptureDevice.default(type, for: .video, position: .back) {
+                back = candidate
+                break
+            }
+        }
+        if back == nil {
+            back = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+        }
         let front = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
         guard let camera = back ?? front ?? AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: camera),
@@ -150,9 +229,7 @@ final class QRScannerModel: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self, let existing = self.currentInput else { return }
             let target: AVCaptureDevice.Position = existing.device.position == .back ? .front : .back
-            guard let next = AVCaptureDevice.default(.builtInWideAngleCamera,
-                                                     for: .video,
-                                                     position: target),
+            guard let next = Self.camera(for: target),
                   let input = try? AVCaptureDeviceInput(device: next) else { return }
 
             self.session.beginConfiguration()
@@ -160,6 +237,10 @@ final class QRScannerModel: NSObject, ObservableObject {
             if self.session.canAddInput(input) {
                 self.session.addInput(input)
                 self.session.commitConfiguration()
+                // 换完立刻套一遍参数：后置要 2 倍 + 近景对焦，前置只要 1 倍
+                Self.applyTuning(next,
+                                 zoom: target == .back ? Self.preferredZoom : 1.0,
+                                 preferNearFocus: target == .back)
                 DispatchQueue.main.async {
                     self.currentInput = input
                     self.device = next
@@ -173,6 +254,19 @@ final class QRScannerModel: NSObject, ObservableObject {
                 self.session.commitConfiguration()
             }
         }
+    }
+
+    /// 按位置取摄像头，后置优先虚拟多摄（与 `configure` 保持同一套优先级）。
+    static func camera(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        if position == .back {
+            for type in [AVCaptureDevice.DeviceType.builtInTripleCamera,
+                         .builtInDualWideCamera, .builtInDualCamera] {
+                if let candidate = AVCaptureDevice.default(type, for: .video, position: .back) {
+                    return candidate
+                }
+            }
+        }
+        return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
     }
 
     // MARK: 手电筒
@@ -315,6 +409,12 @@ struct ScanView: View {
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.9))
                 .padding(.top, 18)
+
+            // 让「用了 2 倍镜头」这件事对用户可见（本轮按反馈改的）
+            Text("后置 2× 变焦 · 近距自动对焦")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.55))
+                .padding(.top, 4)
 
             Spacer()
 

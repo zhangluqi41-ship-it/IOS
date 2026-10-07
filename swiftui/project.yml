@@ -36,8 +36,8 @@ targets:
         PRODUCT_NAME: ExpiryManager
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 22
-        MARKETING_VERSION: 1.6.13
+        CURRENT_PROJECT_VERSION: 23
+        MARKETING_VERSION: 1.6.14
         # 硕方 SDK 是 ObjC 且没有 modulemap，Swift 只能通过桥接头访问
         SWIFT_OBJC_BRIDGING_HEADER: Sources/ExpiryApp/Native/ExpiryApp-Bridging-Header.h
         # ★ 必须 -ObjC：静态库里只被 ObjC 类/分类引用的符号否则会被链接器剥掉，
