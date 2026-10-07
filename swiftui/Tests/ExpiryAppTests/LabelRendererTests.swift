@@ -84,9 +84,9 @@ final class LabelRendererTests: XCTestCase {
     }
 
     /// 内容列几何 —— 与 `LabelRenderer.paint` 里那几行**保持一致**。
-    /// （`cx` 内容起点 / `barRight` 右黑条左缘 / `qrLeft` 二维码左缘）
+    /// （`cx` 内容起点 / `barRight` 右黑条左缘 / `maxTextW` 最长一行宽度）
     private func contentGeometry(_ data: LabelData, regular: UIFont, bold: UIFont)
-        -> (cx: CGFloat, barRight: CGFloat, maxTextW: CGFloat, qrLeft: CGFloat, qs: CGFloat) {
+        -> (cx: CGFloat, barRight: CGFloat, maxTextW: CGFloat) {
         let mm = LabelSpec.kMm
         let cx = (LabelSpec.padH + LabelSpec.barWL + LabelSpec.gapBar) * mm
         let barRight = (LabelSpec.pageW - LabelSpec.padHR - LabelSpec.barWR) * mm
@@ -97,11 +97,54 @@ final class LabelRendererTests: XCTestCase {
             maxTextW = max(maxTextW, LabelRenderer.textWidth(r.value, font: bold,
                                                              size: LabelSpec.rowSz * mm))
         }
-        let textRight = cx + maxTextW
-        let qs = LabelSpec.qrSize * mm
-        let qrLeft = min(max(textRight + (barRight - textRight - qs) / 2, textRight),
-                         max(barRight - qs, textRight))
-        return (cx, barRight, maxTextW, qrLeft, qs)
+        return (cx, barRight, maxTextW)
+    }
+
+    /// 三个模板各来一张，避免只测「通用效期」漏掉别的行文案。
+    private func allSamples() -> [(String, LabelData)] {
+        [
+            ("通用效期", makeGeneric()),
+            ("奶制品", LabelTemplate.buildDairy(
+                kindLabel: DairyKind.oatMilk.label, now: Date(),
+                expireDate: Date().addingTimeInterval(45 * 86400),
+                bestBefore: Date().addingTimeInterval(5 * 86400), maker: "四野")),
+            ("康普茶", LabelTemplate.buildKombuchaFirst(variety: "红茶", now: Date(), maker: "四野")),
+        ]
+    }
+
+    // MARK: - 字体（版式数值的前提）
+
+    /// ★★ 这条是「版式断言的前提」：**必须真的用上包内的 Noto Sans SC**。
+    ///
+    /// 依赖 Info.plist 的 `UIAppFonts` 时，测试宿主进程可能还没走完字体注册，
+    /// `UIFont(name:)` 静默返回 nil → 回落到系统字体。同一串
+    /// `"2026/10/07 18:40"` @2.7mm：真字体 22.696mm，回落字体 25.210mm。
+    /// 差 2.5mm 足以把「放得下」翻转成「放不下」。
+    /// 所以先把字体身份钉死，后面所有宽度/余量断言才有意义。
+    func testBundledFontsAreActuallyUsed() {
+        let b = FontProvider.bold(12)
+        let r = FontProvider.regular(12)
+        print("[diag] bold.fontName = \(b.fontName)   regular.fontName = \(r.fontName)")
+        XCTAssertEqual(b.fontName, "NotoSansSC-Bold",
+                       "粗体回落到了系统字体（\(b.fontName)），版式宽度会整体算错")
+        XCTAssertEqual(r.fontName, "NotoSansSC-Regular",
+                       "常规体回落到了系统字体（\(r.fontName)）")
+    }
+
+    /// 最长一行的宽度必须等于字体自己的 advance 之和 —— 钉死「量出来的宽度」。
+    ///
+    /// Noto Sans SC 的数字是**等宽**的（0.59 em），斜杠 0.387 / 空格 0.227 /
+    /// 冒号 0.325 → 「yyyy/MM/dd HH:mm」恒为 **8.406 em**，与具体日期无关。
+    /// 所以这条断言对任何日期都成立，不用挑样本。
+    func testLongestRowWidthMatchesFontMetrics() {
+        let mm = LabelSpec.kMm
+        let size = LabelSpec.rowSz * mm
+        for s in ["2026/10/07 18:40", "2026/10/22 23:59", "2026/11/21 23:59"] {
+            let w = LabelRenderer.textWidth(s, font: FontProvider.bold(12), size: size) / mm
+            print("[diag] \"\(s)\" @ \(LabelSpec.rowSz)mm = \(w)mm")
+            XCTAssertEqual(w, 8.406 * LabelSpec.rowSz, accuracy: 0.05,
+                           "「\(s)」实测 \(w)mm，与字体 advance（\(8.406 * LabelSpec.rowSz)mm）不符")
+        }
     }
 
     // MARK: - 基本合法性
@@ -145,37 +188,71 @@ final class LabelRendererTests: XCTestCase {
     ///   「最长的一行文字」+「二维码」必须能**同时**塞进内容区。
     ///    可用内容宽度 = 50 − padH(0.7) − barWL(6.2) − gapBar(0.45)
     ///                    − barWR(3.8) − padHR(0.7) = 38.15mm
-    ///    最长行「2026/10/14 18:40」@ rowSz ≈ 23mm，二维码 = qrSize。
-    ///   一旦有人把 rowSz / qrSize / barWL 往大改到越界，`paint` 里的
-    ///   `qrLeft` 夹取保护就会把二维码顶到文字上（本地预览实测过一次），
-    ///   这条断言会先红 —— 而不是等用户拿到一张糊成一团的标签。
+    ///    最长行「yyyy/MM/dd HH:mm」@ rowSz = 8.406em × 2.7 = 22.696mm
+    ///    二维码 = qrSize = 14.0mm → 余 1.45mm（两侧各 0.73）
+    ///
+    /// ★ 断言直接调 `LabelRenderer.qrBox`（渲染层实际用的那个纯函数），
+    ///   而不是在测试里再手写一遍居中公式 —— 否则测试和实现会各错各的。
+    ///   两条不变量（不压文字 / 不进黑条）是结构性的，任何参数下都必须成立；
+    ///   第三条（尺寸未被收小）才是「版式还放得下」的真正判据。
     func testContentColumnPlusQRCodeFitsBetweenBars() {
         let regular = FontProvider.regular(12)
         let bold = FontProvider.bold(12)
-        let samples: [(String, LabelData)] = [
-            ("通用效期", makeGeneric()),
-            ("奶制品", LabelTemplate.buildDairy(
-                kindLabel: DairyKind.oatMilk.label, now: Date(),
-                expireDate: Date().addingTimeInterval(45 * 86400),
-                bestBefore: Date().addingTimeInterval(5 * 86400), maker: "四野")),
-            ("康普茶", LabelTemplate.buildKombuchaFirst(variety: "红茶", now: Date(), maker: "四野")),
-        ]
         let mm = LabelSpec.kMm
-        for (name, data) in samples {
+
+        for (name, data) in allSamples() {
             let g = contentGeometry(data, regular: regular, bold: bold)
-            let textRightMm = (g.cx + g.maxTextW) / mm
-            let slack = (g.barRight - g.cx - g.maxTextW - g.qs) / mm
-            print("[diag] \(name)：文字右端 \(textRightMm)mm，二维码 \(LabelSpec.qrSize)mm，"
-                  + "剩余 \(slack)mm（右黑条左缘 \((g.barRight) / mm)mm）")
-            XCTAssertGreaterThanOrEqual(
-                slack, 0.2,
-                "\(name) 的内容列 + 二维码挤爆内容区：文字 \(textRightMm)mm + 码 "
-                + "\(LabelSpec.qrSize)mm，只剩 \(slack)mm —— 二维码会被顶到文字上")
+            let textRight = g.cx + g.maxTextW
+            let box = LabelRenderer.qrBox(textRight: textRight, barRight: g.barRight,
+                                          desired: LabelSpec.qrSize * mm,
+                                          gap: LabelSpec.qrGap * mm)
+            let slack = (g.barRight - textRight - box.size) / mm
+            print("[diag] \(name)：最长行 \(g.maxTextW / mm)mm，文字右端 \(textRight / mm)mm，"
+                  + "二维码 \(box.size / mm)mm @ \((box.left) / mm)mm，剩余 \(slack)mm")
+
+            // 不变量 1/2：不压文字、不进右黑条（恒成立，与参数无关）
+            XCTAssertGreaterThanOrEqual(box.left, textRight - 0.01,
+                                        "\(name) 的二维码压到了文字上")
+            XCTAssertLessThanOrEqual(box.left + box.size, g.barRight + 0.01,
+                                     "\(name) 的二维码越过了右黑条左缘")
+
+            // 判据：二维码**没有被收小**，说明版式真的放得下
+            XCTAssertEqual(box.size, LabelSpec.qrSize * mm, accuracy: 0.01,
+                           "\(name) 放不下 \(LabelSpec.qrSize)mm 的二维码，被自动收小到 "
+                           + "\(box.size / mm)mm（最长行 \(g.maxTextW / mm)mm）"
+                           + " —— rowSz/qrSize/barWL 该往回退一点了")
+            XCTAssertGreaterThanOrEqual(slack, 0.4,
+                                        "\(name) 文字与二维码之间只剩 \(slack)mm，太挤")
         }
     }
 
+    /// `qrBox` 的两条不变量必须在**任何**输入下成立 —— 包括文字宽到二维码放不下。
+    ///
+    /// 这是对「旧写法在放不下时把二维码推到黑条上」那个真 bug 的直接回归：
+    /// 旧实现在 textRight > barRight − qs 时，上界 `max(barRight − qs, textRight)`
+    /// 退化成 textRight，等于放弃了「不进黑条」这条约束。
+    func testQRBoxNeverOverlapsEvenWhenTextIsTooWide() {
+        let mm = LabelSpec.kMm
+        let barRight = 45.5 * mm
+        var shrunk = 0
+        for w in stride(from: 0.0, through: 36.0, by: 2.0) {
+            let textRight = (7.35 + w) * mm
+            let box = LabelRenderer.qrBox(textRight: textRight, barRight: barRight,
+                                          desired: LabelSpec.qrSize * mm,
+                                          gap: LabelSpec.qrGap * mm)
+            XCTAssertGreaterThanOrEqual(box.left, textRight - 0.01,
+                                        "文字宽 \(w)mm：二维码压到文字上（left=\(box.left / mm)）")
+            XCTAssertLessThanOrEqual(box.left + box.size, barRight + 0.01,
+                                     "文字宽 \(w)mm：二维码越过右黑条（右缘=\((box.left + box.size) / mm)）")
+            XCTAssertGreaterThanOrEqual(box.size, 0, "文字宽 \(w)mm：二维码边长为负")
+            if box.size < LabelSpec.qrSize * mm - 0.01 { shrunk += 1 }
+        }
+        XCTAssertGreaterThan(shrunk, 0,
+                             "探针没覆盖到「放不下」的分支，这条测试等于没测")
+    }
+
     /// ★ 纵向硬约束（纯几何）：制作人页脚必须和第三行数值**拉开距离**。
-    ///   字号从 2.3 放大到 2.7 之后三行一路排到 26.3mm，
+    ///   字号从 2.3 放大到 2.7 之后三行一路排到 25.7mm，
     ///   而当时制作人「距底 5.0mm」（= 字形顶 25.0mm）—— 正好落在第三行的
     ///   行盒里，预览里看着像是第三行数值的尾巴。现在靠 `makerBottom 3.7`
     ///   把它压到 26.3mm 以下。
@@ -345,14 +422,7 @@ final class LabelRendererTests: XCTestCase {
     /// 排障用：把三个模板的版式打成 ASCII 图并打印到 CI 日志里，
     /// 方便不进 Xcode 也能肉眼确认「标题在顶部、三行内容在中部、二维码在右中」。
     func testDumpAsciiLayout() {
-        let samples: [(String, LabelData)] = [
-            ("通用效期", makeGeneric()),
-            ("康普茶", LabelTemplate.buildKombuchaFirst(variety: "红茶", now: Date(), maker: "四野")),
-            ("奶制品", LabelTemplate.buildDairy(kindLabel: DairyKind.oatMilk.label, now: Date(),
-                                              expireDate: Date().addingTimeInterval(7 * 86400),
-                                              bestBefore: Date().addingTimeInterval(15 * 86400),
-                                              maker: "四野")),
-        ]
+        let samples = allSamples()
 
         for (name, data) in samples {
             let image = raster(render(data))

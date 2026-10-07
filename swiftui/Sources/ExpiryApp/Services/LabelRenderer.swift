@@ -109,14 +109,12 @@ enum LabelRenderer {
             maxTextW = max(maxTextW, textWidth(r.value, font: bold, size: rowSize))
         }
         let textRight = cx + maxTextW
-        let qs = mm(LabelSpec.qrSize)
-        // ★ 夹在 [textRight, barRight − qs] 之间。
-        //   原来的写法是纯居中 `textRight + (freeW - qs)/2`，没做保护 ——
-        //   行值字号从 2.3 放大到 2.7 之后，文字宽度涨到 23mm，
-        //   自由宽度只剩 15.14mm，一旦 qrSize 超过它，居中公式会把二维码
-        //   **推到文字上面压着**（本地预览实测：14mm 的码和日期叠在一起）。
-        let qrLeft = min(max(textRight + (barRight - textRight - qs) / 2, textRight),
-                         max(barRight - qs, textRight))
+        // 二维码：在「文字右端 → 右黑条左缘」之间居中；放不下会自动收小。
+        // 见 `qrBox` 的说明 —— 这里是**结构性**保证不压文字、不进黑条。
+        let qr = qrBox(textRight: textRight, barRight: barRight,
+                       desired: mm(LabelSpec.qrSize), gap: mm(LabelSpec.qrGap))
+        let qrLeft = qr.left
+        let qs = qr.size
 
         // ---- 标题：顶部与黑条顶端齐平，超宽自动缩小 ----
         c.setFillColor(UIColor.black.cgColor)
@@ -163,6 +161,34 @@ enum LabelRenderer {
     }
 
     // MARK: - 文字测量与绘制
+
+    /// 二维码在「文字右端 `textRight` → 右黑条左缘 `barRight`」之间居中，
+    /// 两侧各留至少 `gap`；**放不下就等比收小**。
+    ///
+    /// 返回 `(左缘, 边长)`，并且**恒定满足**：
+    ///   · `left ≥ textRight`        —— 绝不压到文字上
+    ///   · `left + size ≤ barRight`  —— 绝不进右黑条
+    ///   · 左右两侧留白相等           —— 视觉居中
+    /// （`free ≤ 0` 时 `size` 会退化成 0，`drawQR` 有不变量保护直接不画；
+    ///   实际上内容列最多 23mm、可用 38mm，走不到那个分支。）
+    ///
+    /// ★★ 为什么不再用「居中 + 夹取」：
+    ///   旧写法 `qrLeft = min(max(居中值, textRight), max(barRight − qs, textRight))`
+    ///   在「压根放不下」时**两个约束互相矛盾** —— 上界退化成 `textRight`，
+    ///   于是二维码右缘 = `textRight + 14mm`，**直接越过右黑条**画到黑条上。
+    ///   CI 上实测炸的就是这个：`testLongMakerNameDoesNotReachRightBar`
+    ///   在右黑条左侧那条空白带里量到 45% 墨迹 —— 那就是溢出去的二维码。
+    ///   把「放得下多大」先算出来再摆位，不变量才是结构性的、不靠参数凑巧。
+    static func qrBox(textRight: CGFloat, barRight: CGFloat,
+                      desired: CGFloat, gap: CGFloat) -> (left: CGFloat, size: CGFloat) {
+        let free = barRight - textRight
+        var size = desired
+        if free < size + gap * 2 {
+            size = max(free - gap * 2, 0)
+        }
+        let left = textRight + max((free - size) / 2, 0)
+        return (left, size)
+    }
 
     /// 测量文字在给定字号下的宽度（pt）。
     static func textWidth(_ text: String, font: UIFont, size: CGFloat) -> CGFloat {
