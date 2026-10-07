@@ -3,10 +3,12 @@
 //  标签动作的公共装配 —— 四个模板页（通用 / 康普茶一发 / 康普茶二发 / 奶制品）
 //  共用同一套「预览标签 / 打印」动作与提示，避免四处复制。
 //
-//  ★ 为什么用 `.toolbar(placement: .bottomBar)` 而不是大按钮：
-//    用户要求把原来的「生成标签」大按钮改成二级工具栏，分成「预览标签」和「打印」
-//    两个动作。bottom bar 是 iOS 的原生工具栏语义，在 iOS 26 上自动获得液态玻璃
-//    材质，且不会和列表行叠出双层背景。
+//  ★ 为什么不用 `.toolbar(placement: .bottomBar)`：
+//    试过了 —— 在 TabView 里的二级页上，bottom bar 会和底部的 Tab 栏抢位置，
+//    结果两个按钮被 Tab 栏盖住、直接看不见（用户实测反馈）。
+//    改成 `safeAreaInset(edge: .bottom)` 自绘一条操作条：
+//    它加在「内容 + 底部安全区」之间，而 Tab 栏占的正是底部安全区，
+//    所以这条 bar 会稳稳落在 Tab 栏**上方**，就是想要的二级 bar 效果。
 //
 
 import SwiftUI
@@ -47,40 +49,52 @@ struct PreviewPayload: Identifiable {
     let draft: LabelDraft
 }
 
-// MARK: - 底部工具栏
+// MARK: - 二级操作条
 
-/// 二级工具栏：左边「预览标签」，右边「打印」。
-struct LabelActionToolbar: ToolbarContent {
+/// 二级操作条：左边「预览标签」，右边「打印」，固定落在 Tab 栏上方。
+struct LabelActionBar: View {
     let isBusy: Bool
     let onPreview: () -> Void
     let onPrint: () -> Void
 
-    var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .bottomBar) {
+    var body: some View {
+        HStack(spacing: 10) {
             Button(action: onPreview) {
                 Label("预览标签", systemImage: "doc.text.magnifyingglass")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
             }
+            .liquidGlassButton()
             .disabled(isBusy)
 
-            Spacer()
-
-            if isBusy {
-                ProgressView()
-            }
-
             Button(action: onPrint) {
-                Label("打印", systemImage: "printer.fill")
-                    .fontWeight(.semibold)
+                HStack(spacing: 7) {
+                    if isBusy {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Label("打印", systemImage: "printer.fill")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(.vertical, 11)
             }
+            .liquidGlassProminentButton()
             .tint(Theme.brand)
             .disabled(isBusy)
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
     }
 }
 
 // MARK: - 动作修饰器
 
-/// 给模板页挂上：底部工具栏 + 预览全屏页 + 忙碌指示 + 提示弹窗。
+/// 给模板页挂上：底部二级操作条 + 预览全屏页 + 提示弹窗。
 ///
 /// - Parameter build: 由各页自己实现——校验通过返回 `LabelDraft`，
 ///   校验不过时页面内部弹自己的提示并返回 `nil`。
@@ -98,10 +112,10 @@ struct LabelActions: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .toolbar {
-                LabelActionToolbar(isBusy: printer.isPrinting,
-                                   onPreview: openPreview,
-                                   onPrint: printNow)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                LabelActionBar(isBusy: printer.isPrinting,
+                               onPreview: openPreview,
+                               onPrint: printNow)
             }
             .fullScreenCover(item: $preview) { payload in
                 PreviewView(payload: payload)
