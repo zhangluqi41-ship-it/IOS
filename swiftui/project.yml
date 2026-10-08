@@ -27,8 +27,10 @@ targets:
     dependencies:
       # 硕方 SFPrintSDK.xcframework 是**静态** framework（二进制是 ar 归档），
       # 只能链接、不能嵌入（嵌入静态库会在真机启动时出问题）。
-      # 复用 Flutter 版已放进仓库的那一份，避免重复 14MB。
-      - framework: ../plugins/expiry_native_ios/ios/SFPrintSDK.xcframework
+      # ★ 2026-10-08：从 Flutter 插件的 `plugins/expiry_native_ios/ios/` 移到了
+      #   `swiftui/Vendor/` —— 工程已全面转 iOS 原生，不再保留 Flutter 那棵树，
+      #   硕方 SDK 直接由 swiftui 工程自带，换台电脑 clone 下来就能编。
+      - framework: Vendor/SFPrintSDK.xcframework
         embed: false
     settings:
       base:
@@ -36,8 +38,12 @@ targets:
         PRODUCT_NAME: ExpiryManager
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 25
-        MARKETING_VERSION: 1.6.15
+        # ★ 2026-10-08：优化清单做完，正式投入使用，版本号从 1.6.15 重置为 1.0.0。
+        #   ⚠️ `CURRENT_PROJECT_VERSION`（build）**必须只增不减** ——
+        #      iOS 就地升级时如果 build 比在装的低，installd 会拒绝安装。
+        #      上一版是 25，所以这里从 26 继续走。
+        CURRENT_PROJECT_VERSION: 26
+        MARKETING_VERSION: 1.0.0
         # 硕方 SDK 是 ObjC 且没有 modulemap，Swift 只能通过桥接头访问
         SWIFT_OBJC_BRIDGING_HEADER: Sources/ExpiryApp/Native/ExpiryApp-Bridging-Header.h
         # ★ 必须 -ObjC：静态库里只被 ObjC 类/分类引用的符号否则会被链接器剥掉，

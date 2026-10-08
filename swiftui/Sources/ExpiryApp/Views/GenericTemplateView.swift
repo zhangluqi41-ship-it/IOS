@@ -38,6 +38,7 @@ struct GenericTemplateView: View {
         }
         .navigationTitle("通用效期")
         .navigationBarTitleDisplayMode(.inline)
+        .keyboardDismissible()
         .modifier(LabelActions(build: buildDraft))
         .alert("请先填写物料名称", isPresented: $showTitleAlert) {
             Button("好", role: .cancel) {}

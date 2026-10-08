@@ -86,6 +86,49 @@ struct LabelActionBar: View {
     }
 }
 
+// MARK: - 重新打印
+
+/// 「效期管理」里对一条已有记录重新出标签。
+///
+/// 和模板页「打印」走的是**同一条入库路径**（`PrinterService.printLabel` 的
+/// `record:` 参数），所以重打之后记录不会翻倍 ——
+/// `LabelRecord.qrText` 与原来完全相同，`ExpiryStore.add` 会按它去重合并。
+enum LabelReprint {
+
+    /// 一条记录能不能重打（不是所有记录都来自我们自己的模板）。
+    static func canReprint(_ record: LabelRecord) -> Bool {
+        !record.title.isEmpty
+    }
+
+    /// 重打。连接状态由调用方先行判断并给出提示。
+    static func print(_ record: LabelRecord,
+                      completion: ((Bool, String?) -> Void)? = nil) {
+        let printer = PrinterService.shared
+        guard printer.isConnected else {
+            completion?(false, "请先连接打印机")
+            return
+        }
+
+        let data = LabelTemplate.rebuild(from: record)
+        let pdf = LabelRenderer.renderPDF(data,
+                                          regular: FontProvider.regular(12),
+                                          bold: FontProvider.bold(12))
+
+        // ★ 传一份 `printedAt = nil` 的副本：打印成功回调里会把它写成「这次」的时间，
+        //   否则 `printedAt ?? Date()` 会保留旧值，详情页的「打印时间」永远不变。
+        var fresh = record
+        fresh.printedAt = nil
+
+        printer.printLabel(pdf: pdf,
+                           fileName: LabelTemplate.labelFileName(record.title, record.createdAt),
+                           copies: Prefs.printCopies,
+                           density: Prefs.printDensity,
+                           paperType: Prefs.paperType,
+                           record: fresh,
+                           completion: completion)
+    }
+}
+
 // MARK: - 动作修饰器
 
 /// 给模板页挂上：底部二级操作条 + 提示弹窗。

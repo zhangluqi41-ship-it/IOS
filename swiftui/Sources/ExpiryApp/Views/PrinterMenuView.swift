@@ -21,6 +21,7 @@ struct PrinterMenuView: View {
     @AppStorage("printDensity") private var density: Int = 0
     @AppStorage("printCopies") private var copies: Int = 1
     @AppStorage("paperType") private var paperType: Int = 1
+    @AppStorage("autoConnectPrinter") private var autoConnect: Bool = true
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -45,7 +46,9 @@ struct PrinterMenuView: View {
                 ScanDevicesSheet()
             }
             .onAppear { printer.startMonitoring() }
-            .onDisappear { printer.stopMonitoring() }
+            // ★ 这里**故意不 stopMonitoring** —— 轮询现在由 `RootView` 在 App 启动时
+            //   拉起、整场常驻（自动连接要靠它等蓝牙就绪）。在这里停掉会让
+            //   离开本页后就再也不自动连接了。
             .alert("提示", isPresented: toastBinding) {
                 Button("好", role: .cancel) {}
             } message: {
@@ -192,7 +195,7 @@ struct PrinterMenuView: View {
             if printer.isConnected {
                 Text("测试页用于确认走纸、边距与浓度是否合适。")
             } else if !printer.isConnecting {
-                Text("点右上角 ＋ 扫描并连接打印机。")
+                Text("点右上角 ＋ 扫描并连接打印机；打开 App 时会自动连接上次用过的那台。")
             }
         }
     }
@@ -236,6 +239,8 @@ struct PrinterMenuView: View {
                     }
                 }
 
+                Toggle("打开 App 自动连接上次那台", isOn: $autoConnect)
+
                 Button("清除全部") {
                     showClearSaved = true
                 }
@@ -244,7 +249,8 @@ struct PrinterMenuView: View {
         } header: {
             Text("已添加")
         } footer: {
-            Text("左滑可删除，点一下即连接。只有**连接成功**的设备才会出现在这里。")
+            Text("左滑可删除，点一下即连接。只有**连接成功**的设备才会出现在这里；"
+                 + "App 启动后蓝牙就绪时会自动连上次用过的那台，失败不打扰你。")
         }
     }
 

@@ -29,6 +29,15 @@ enum Prefs {
         d.set(json, forKey: "savedPrinters")
     }
 
+    // MARK: - 连接
+
+    /// 打开 App 后是否自动连接上次连过的那台打印机。
+    /// ★ 默认开；键名与界面上的 `@AppStorage("autoConnectPrinter")` 必须一致。
+    static var autoConnectPrinter: Bool {
+        get { d.object(forKey: "autoConnectPrinter") as? Bool ?? true }
+        set { d.set(newValue, forKey: "autoConnectPrinter") }
+    }
+
     // MARK: - 打印参数
 
     /// 打印浓度 1~9；0 表示「自动」（交给打印机自己判断）。

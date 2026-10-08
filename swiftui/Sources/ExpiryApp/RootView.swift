@@ -129,6 +129,11 @@ struct RootView: View {
         .onAppear {
             // 冷启动时四个栈本来就是空的；这一句是防状态恢复后残留二级页。
             resetInactiveTabs(current: nav.selection)
+            // ★ 蓝牙随 App 启动：预启 CoreBluetooth + 起常驻轮询 +
+            //   蓝牙就绪后自动连上次那台打印机。
+            //   放在 RootView（而不是「打印机」页）是因为自动连接要在
+            //   用户还没进过打印机页时就生效。
+            PrinterService.shared.startAppSession()
         }
     }
 

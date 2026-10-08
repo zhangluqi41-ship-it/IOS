@@ -1,48 +1,31 @@
-# Miscellaneous
-*.class
-*.log
+# ---------------------------------------------------------------------------
+# 效期管理系统（iOS 原生版）—— 仓库忽略规则
+#
+# ★ 2026-10-08：全面转 iOS 原生（SwiftUI）之后，Flutter / Dart / Android
+#   相关条目已全部移除；这里只留 Xcode / macOS / 生成物。
+# ---------------------------------------------------------------------------
+
+# ---------- 构建产物 ----------
+swiftui/build/
+swiftui/DerivedData/
+swiftui/*.ipa
+swiftui/Payload/
+*.xcarchive/
+
+# ---------- XcodeGen 生成物（project.yml 才是源） ----------
+swiftui/*.xcodeproj/
+swiftui/*.xcworkspace/
+
+# ---------- 本地预览 / 自测脚本的输出 ----------
+swiftui/Tools/label_preview/
+swiftui/Tools/theme_preview/
+__pycache__/
 *.pyc
-*.swp
+
+# ---------- 系统 / 编辑器 ----------
 .DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
-
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
+Thumbs.db
+*.swp
 .idea/
-
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-/coverage/
-
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
-
-# Widget Preview related
-.widget_preview/
+*.iml
+.vscode/

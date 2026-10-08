@@ -6,7 +6,8 @@
 //      · 通用效期 / 奶制品：最佳使用时间早于原始保质期，是最该先留意的时刻
 //      · 康普茶：`expireAt` 是「完成时间」（能开始用的时刻，不是过期），
 //        真正会过期的只有「最佳使用时间」
-//    所以三个模板里，拿 bestBefore 当「到期日」都是对的。
+//    所以三个模板里，拿 bestBefore 当「到期日」都是对的
+//    （康普茶二发的极端情况见 `dueDate` 的注释）。
 //
 
 import Foundation
@@ -73,8 +74,23 @@ struct LabelRecord: Identifiable, Codable, Hashable {
     var qrText: String
     var source: RecordSource
 
-    /// 「到期日」= 最佳使用时间。
-    var dueDate: Date { bestBefore }
+    /// 「到期日」= 最佳使用时间 —— 列表分组 / 剩余天数 / 通知全部以它为准。
+    ///
+    /// ★ 康普茶是唯一例外：它的 `expireAt` 是「完成时间」（可以开始喝的时刻，
+    ///   不是过期）。一发时 完成(+7d) 永远早于 最佳(+30d)，取谁都对；
+    ///   但**二发**的「最佳使用时间」是沿用一发的，如果一扫完就快到期了，
+    ///   会出现「最佳使用时间」**早于**「完成时间」的情况 ——
+    ///   那时还没发酵好就被判成「已过期」显然不对。
+    ///   所以康普茶取两者中**较晚**的那个当到期日。
+    var dueDate: Date {
+        kind == .kombucha ? max(bestBefore, expireAt) : bestBefore
+    }
+
+    /// 到期日的**名字** —— 列表与详情都把它写在日期前面，
+    /// 免得用户看不出倒计时是数到「最佳使用时间」还是「原始保质期」（用户反馈）。
+    var dueLabel: String {
+        dueDate == bestBefore ? "最佳使用" : "完成"
+    }
 }
 
 // MARK: - 状态

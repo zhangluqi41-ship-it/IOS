@@ -292,6 +292,51 @@ enum LabelTemplate {
                     source: source)
     }
 
+    // MARK: 重新打印
+
+    /// 由一条「效期管理」记录**确定性还原**出它当初打印的那张标签。
+    ///
+    /// ★ 为什么不是「再调一次 buildXxx」：
+    ///   那几个 builder 里的「完成 / 最佳」是**照 now 现算**的（now + 7 / now + 30）。
+    ///   重打时如果重新算，只要记录里的日期不是当初那套推算规则算出来的
+    ///   （康普茶二发的「最佳使用时间」是**沿用一发**的，就不是 now + 30），
+    ///   印出来的标签就跟实物对不上了 —— 而重打的意义恰恰是「跟原来一模一样」。
+    ///
+    ///   所以这里**只按记录里存着的三个时间原样排版**：
+    ///     `createdAt` → 第一行（通用/奶制品=开封时间，康普茶=制备时间）
+    ///     `expireAt`  → 第二行（原始保质期 / 完成时间）
+    ///     `bestBefore`→ 第三行（最佳使用时间）
+    ///   这正是 `makeRecord` 当初存进去的东西，逐字一致。
+    ///
+    /// ★ 「原始保质期」那两行当初用的是 `fmtDateByThreshold(now, date)`，
+    ///   依赖 `now` 只是为了判「是否 ≤7 天」，所以这里传 `createdAt` 复现结果完全相同。
+    static func rebuild(from record: LabelRecord) -> LabelData {
+        let now = record.createdAt
+        let rows: [LabelRow]
+        switch record.kind {
+        case .generic, .dairy:
+            rows = [
+                LabelRow(label: "开封时间：", value: fmtDateTime(now)),
+                LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, record.expireAt)),
+                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
+            ]
+        case .kombucha:
+            rows = [
+                LabelRow(label: "制备时间：", value: fmtDateTime(now)),
+                LabelRow(label: "完成时间：", value: fmtDateTime(record.expireAt)),
+                LabelRow(label: "最佳使用时间：", value: fmtDateTime(record.bestBefore)),
+            ]
+        }
+        return LabelData(
+            title: clamp(record.title),
+            rows: rows,
+            weekdayCn: weekdayCn(now),
+            weekdayEn: weekdayEn(now),
+            rightText: fmtTime(now),
+            maker: "制作人：\(clamp(record.maker, maxNameLength))"
+        )
+    }
+
     // MARK: 二维码解析
 
     /// 一个日期时间的正则片段：`2026/10/05 15:30`。

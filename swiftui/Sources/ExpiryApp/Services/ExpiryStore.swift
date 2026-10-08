@@ -13,8 +13,10 @@
 //    · 解码失败不让 App 崩，退回空表并保留坏文件（改名 `.corrupt`）便于排查；
 //    · 写盘放到 utility 队列，不占主线程。
 //
-//  通知策略：每个记录排两条本地通知（到期前一天 09:00 / 到期当天 09:00），
-//  只对最近 60 天内的记录排，最多 20 条记录，避免撞上系统 64 条待发通知上限。
+//  通知策略：每条记录排 **4 条**本地通知 ——
+//    两个里程碑（最佳使用时间 / 原始保质期，康普茶是完成时间）× 前一天 09:00、当天 09:00。
+//  只对最近 60 天内还有里程碑的记录排，最多 12 条记录 ——
+//  iOS 的待发通知上限是 64 条，12 × 4 = 48，留出余量。
 //
 
 import Combine
@@ -35,12 +37,17 @@ final class ExpiryStore: ObservableObject {
     /// 记录条数上限。
     static let maxRecords = 500
     /// 排通知时最多考虑多少条记录。
-    private static let reminderRecordLimit = 20
-    /// 只给多少天内到期的记录排通知。
+    ///
+    /// ★ 每条记录现在要排 **4 条**通知（两个里程碑 × 前一天 / 当天），
+    ///   而 iOS 的待发通知上限是 64 条 —— 12 × 4 = 48，留出余量。
+    private static let reminderRecordLimit = 12
+    /// 只给多少天内还有里程碑的记录排通知。
     private static let reminderHorizonDays = 60
 
     private static let reminderKey = "expiryReminderEnabled"
-    private static let idPrefix = "expiry.reminder."
+    private static let idPrefix = "expiry.milestone."
+    /// 每条记录排几条通知（两个里程碑 × 2）。
+    private static let notificationsPerRecord = 4
 
     private let io = DispatchQueue(label: "com.xiaoqi.expiry.store", qos: .utility)
     private let fileURL: URL
@@ -178,43 +185,102 @@ final class ExpiryStore: ObservableObject {
     }
 
     /// 重排所有到期提醒；记录变化后调用。
+    ///
+    /// ★ 两个里程碑都要提醒（用户要求）：
+    ///     · 最佳使用时间 —— 所有模板都有
+    ///     · 原始保质期 —— 通用/奶制品有；康普茶没有，它的第二组时间是
+    ///       「完成时间」（可以喝 / 可以做二发的时刻），提醒文案按这个语义出。
     func rescheduleReminders() {
         let center = UNUserNotificationCenter.current()
-        let all = records
-        center.removePendingNotificationRequests(withIdentifiers: all.flatMap(Self.ids(for:)))
+        // 本 App 是这些通知的唯一来源，整批清掉最干净 ——
+        // ★ 也顺手清掉旧版本用别的 identifier 排下的残留通知（否则它们还会照常弹）。
+        center.removeAllPendingNotificationRequests()
 
         setBadge(alertingCount)
 
         guard reminderEnabled else { return }
         let now = Date()
-        let horizon = AppCalendar.shared.date(byAdding: .day, value: Self.reminderHorizonDays, to: now) ?? now
+        let horizon = AppCalendar.shared.date(byAdding: .day,
+                                              value: Self.reminderHorizonDays, to: now) ?? now
 
-        let upcoming = all
-            .filter { $0.usedAt == nil && $0.dueDate > now && $0.dueDate <= horizon }
-            .sorted { $0.dueDate < $1.dueDate }
+        let upcoming = records
+            .filter { $0.usedAt == nil }
+            .filter { record in
+                Self.milestones(of: record).contains { $0.date > now && $0.date <= horizon }
+            }
             .prefix(Self.reminderRecordLimit)
 
         for record in upcoming {
-            let day = AppCalendar.shared.startOfDay(for: record.dueDate)
             let kindLabel = record.kind.label
-            if let pre = AppCalendar.shared.date(byAdding: .day, value: -1, to: day) {
-                schedule(id: Self.ids(for: record)[0],
-                         at: pre,
-                         title: "明天到最佳使用时间",
-                         body: "\(record.title)（\(kindLabel)）明天到最佳使用时间，记得处理。")
+            for (slot, milestone) in Self.milestones(of: record).enumerated() {
+                guard milestone.date > now, milestone.date <= horizon else { continue }
+                let day = AppCalendar.shared.startOfDay(for: milestone.date)
+                let ids = Self.ids(for: record)
+                if let pre = AppCalendar.shared.date(byAdding: .day, value: -1, to: day) {
+                    schedule(id: ids[slot * 2],
+                             at: pre,
+                             title: milestone.tomorrowTitle,
+                             body: "\(record.title)（\(kindLabel)）\(milestone.tomorrowBody)")
+                }
+                schedule(id: ids[slot * 2 + 1],
+                         at: day,
+                         title: milestone.todayTitle,
+                         body: "\(record.title)（\(kindLabel)）\(milestone.todayBody)")
             }
-            schedule(id: Self.ids(for: record)[1],
-                     at: day,
-                     title: "今天到最佳使用时间",
-                     body: "\(record.title)（\(kindLabel)）今天到最佳使用时间。")
+        }
+    }
+
+    // MARK: - 里程碑
+
+    /// 一条记录上的一个「值得提醒的时刻」。
+    struct ExpiryMilestone {
+        let date: Date
+        let tomorrowTitle: String
+        let tomorrowBody: String
+        let todayTitle: String
+        let todayBody: String
+    }
+
+    /// 一条记录要提醒的两个时刻（顺序固定：先 `expireAt` 再 `bestBefore`，
+    /// 因为通知 identifier 的下标是按这个顺序算出来的，**不要改动顺序**）。
+    static func milestones(of record: LabelRecord) -> [ExpiryMilestone] {
+        switch record.kind {
+        case .generic, .dairy:
+            return [
+                ExpiryMilestone(date: record.expireAt,
+                                tomorrowTitle: "明天到原始保质期",
+                                tomorrowBody: "明天到原始保质期，之后就别再用了。",
+                                todayTitle: "今天到原始保质期",
+                                todayBody: "今天到原始保质期。"),
+                ExpiryMilestone(date: record.bestBefore,
+                                tomorrowTitle: "明天到最佳使用时间",
+                                tomorrowBody: "明天到最佳使用时间，记得处理。",
+                                todayTitle: "今天到最佳使用时间",
+                                todayBody: "今天到最佳使用时间。"),
+            ]
+        case .kombucha:
+            return [
+                // 康普茶的第二组数据是「完成时间」= 可以喝 / 可以做二发的时刻。
+                ExpiryMilestone(date: record.expireAt,
+                                tomorrowTitle: "康普茶明天完成",
+                                tomorrowBody: "明天到完成时间，可以饮用或做二发了。",
+                                todayTitle: "康普茶已完成",
+                                todayBody: "今天到完成时间，可以饮用或做二发了。"),
+                ExpiryMilestone(date: record.bestBefore,
+                                tomorrowTitle: "明天到最佳使用时间",
+                                tomorrowBody: "明天到最佳使用时间，记得处理。",
+                                todayTitle: "今天到最佳使用时间",
+                                todayBody: "今天到最佳使用时间。"),
+            ]
         }
     }
 
     // MARK: - 私有
 
     private static func ids(for record: LabelRecord) -> [String] {
-        ["\(idPrefix)pre.\(record.id.uuidString)",
-         "\(idPrefix)due.\(record.id.uuidString)"]
+        (0..<notificationsPerRecord).map {
+            "\(idPrefix)\($0).\(record.id.uuidString)"
+        }
     }
 
     private func cancelNotifications(for record: LabelRecord) {

@@ -165,6 +165,8 @@ final class PrinterService: NSObject, ObservableObject {
         let kind: String
         /// 是不是从「已添加」里点进来的（失败时给更准确的提示）。
         let fromSaved: Bool
+        /// 静默连接（App 启动时的自动连接）：失败不弹提示，只写日志。
+        var silent: Bool = false
     }
 
     private var intent: ConnectIntent?
@@ -180,9 +182,14 @@ final class PrinterService: NSObject, ObservableObject {
     /// 当前是第几次尝试。
     private var attempt = 0
     private static let maxAttempts = 3
+    /// 本次 App 生命周期内是否已经试过「自动连接上次那台」。
+    /// 只在第一次蓝牙就绪时试一次，避免手动断开后被反复拽回去连。
+    private var didAttemptAutoConnect = false
 
     private static let savedKey = "saved_printers"
     private static let kindKey = "printer_kind"
+    /// 最后一次**连接成功**的打印机 —— 下次启动自动连它。
+    private static let lastConnectedKey = "last_connected_printer"
 
     override private init() {
         // 与 Flutter 版原生桥共用同一 suite，升级后可沿用已添加的打印机
@@ -212,11 +219,18 @@ final class PrinterService: NSObject, ObservableObject {
     }
 
     /// 页面出现时开始轻量轮询（SDK 不提供蓝牙开关回调）。
+    ///
+    /// ★ 这个轮询现在由 `RootView` 在 App 启动时就拉起来，**整场 App 常驻**：
+    ///   一是让「蓝牙随 App 打开」立即生效（`prewarm()` 把 CoreBluetooth 唤醒，
+    ///   这里持续刷新开关状态）；二是等蓝牙真的就绪后再触发一次自动连接。
     func startMonitoring() {
         refreshBluetooth()
+        autoConnectIfNeeded()
         guard lifecycleTimer == nil else { return }
         lifecycleTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.refreshBluetooth()
+            guard let self else { return }
+            self.refreshBluetooth()
+            self.autoConnectIfNeeded()
         }
     }
 
@@ -229,6 +243,63 @@ final class PrinterService: NSObject, ObservableObject {
     func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
+    // MARK: - App 启动：开蓝牙 + 自动连上次那台
+
+    /// App 启动时调一次：把蓝牙先「唤醒」。
+    ///
+    /// ★ iOS **不允许** App 直接打开蓝牙开关，能做的就是提前把 CoreBluetooth 的
+    ///   `CBCentralManager` 建出来 —— 系统会因此弹一次「允许使用蓝牙」并在用户
+    ///   同意后立即接通射频。以前这个中央管理器是在**进「打印机」页**时才建的，
+    ///   所以用户感觉「只有点打印机才开蓝牙」（用户反馈）。
+    func prewarm() {
+        // 读一下 `bluetoothSupported` 就会触发 SDK 内部惰性创建 CBCentralManager。
+        _ = sdk.bluetoothSupported
+        refreshBluetooth()
+    }
+
+    /// App 启动后的完整会话初始化：唤醒蓝牙 → 起轮询 → 自动连上次那台。
+    func startAppSession() {
+        prewarm()
+        startMonitoring()
+    }
+
+    /// 只在「本次 App 生命周期内第一次蓝牙就绪」时自动连接一次。
+    ///
+    /// ★ 为什么用一次性标记而不是每次蓝牙就绪都连：
+    ///   用户手动断开之后不该被立刻拽回去连上；
+    ///   打印机暂时关机时也不该在后台无限重连。
+    private func autoConnectIfNeeded() {
+        guard !didAttemptAutoConnect else { return }
+        guard Prefs.autoConnectPrinter else { return }
+        guard bluetooth.isReady else { return }
+        guard !isConnected, !isConnecting else { return }
+        guard let last = lastConnectedPrinter() else { return }
+
+        didAttemptAutoConnect = true
+        SFPrinterLog("App 启动自动连接上次的打印机：\(last.name)")
+        beginConnect(uuid: last.address, name: last.name,
+                     kind: last.kind, fromSaved: true, silent: true)
+    }
+
+    /// 上次连接成功的打印机（没连过 / 已被删则返回 nil）。
+    private func lastConnectedPrinter() -> SavedPrinter? {
+        guard let raw = defaults.string(forKey: Self.lastConnectedKey),
+              let data = raw.data(using: .utf8),
+              let saved = try? JSONDecoder().decode(SavedPrinter.self, from: data) else {
+            return nil
+        }
+        // 「已添加」里被删掉了就别再自动连（否则用户删了也白删）。
+        guard self.saved.contains(where: { $0.address == saved.address || $0.name == saved.name })
+        else { return nil }
+        return saved
+    }
+
+    private func rememberLastConnected(_ printer: SavedPrinter) {
+        guard let data = try? JSONEncoder().encode(printer),
+              let raw = String(data: data, encoding: .utf8) else { return }
+        defaults.set(raw, forKey: Self.lastConnectedKey)
     }
 
     // MARK: - 扫描
@@ -275,20 +346,25 @@ final class PrinterService: NSObject, ObservableObject {
 
     func connect(_ uuid: String, name: String, kind: String? = nil) {
         attempt = 0
+        // ★ 用户主动连接 = 本次不再自动连（避免手动选了一台之后，
+        //   自动连接又把上次那台接回来）。
+        didAttemptAutoConnect = true
         beginConnect(uuid: uuid, name: name,
                      kind: kind ?? self.kind.rawValue, fromSaved: false)
     }
 
     func connect(_ printer: SavedPrinter) {
         attempt = 0
+        didAttemptAutoConnect = true
         beginConnect(uuid: printer.address, name: printer.name,
                      kind: printer.kind, fromSaved: true)
     }
 
-    private func beginConnect(uuid: String, name: String, kind: String, fromSaved: Bool) {
+    private func beginConnect(uuid: String, name: String, kind: String,
+                              fromSaved: Bool, silent: Bool = false) {
         guard bluetooth.isReady else {
             SFPrinterLog("beginConnect 被拦截：蓝牙不可用（\(bluetooth)）")
-            toast = bluetooth.message
+            if !silent { toast = bluetooth.message }
             return
         }
         guard !isConnecting else {
@@ -306,13 +382,14 @@ final class PrinterService: NSObject, ObservableObject {
         //
         //   至于「扫描表一关就 onDisappear -> stopScan 把连接掐掉」，
         //   由本类的 `stopScan()` 在 `isConnecting` 时直接返回来兜住。
-        intent = ConnectIntent(uuid: uuid, name: name, kind: kind, fromSaved: fromSaved)
+        intent = ConnectIntent(uuid: uuid, name: name, kind: kind,
+                               fromSaved: fromSaved, silent: silent)
         let previous = connectedDisplayName
         isConnecting = true
         connectedUUID = nil
         connectedName = nil
         SFPrinterLog("beginConnect 第\(attempt + 1)次 name=\(name) uuid=\(uuid) " +
-                     "fromSaved=\(fromSaved) 蓝牙=\(bluetooth) 上一台=\(previous)")
+                     "fromSaved=\(fromSaved) silent=\(silent) 蓝牙=\(bluetooth) 上一台=\(previous)")
 
         // ★ 只读探针：把 SDK 内部 + CoreBluetooth 的真实状态打进日志。
         //   它**只写日志**，不碰 connectedUUID、不参与成功判定。
@@ -423,10 +500,22 @@ final class PrinterService: NSObject, ObservableObject {
 
         // ★ 连上了才写进「已添加」。以前是「点一下设备就加」，无论成败都加，
         //   结果列表里堆一堆连不上的僵尸条目（用户实测反馈）。
+        //
+        // ★★ 顺便判定「是不是初次连接这台」—— 连接成功的提示**只在第一次**出现
+        //    （用户要求）。之后每次连上，状态卡「当前打印机」里本来就会显示已连接，
+        //    再弹一次提示纯属噪音。
+        let isFirstTime = !saved.contains {
+            $0.address == finalUUID || $0.name == finalName
+        }
         if let pending, !finalUUID.isEmpty {
             addSaved(uuid: finalUUID, name: finalName, kind: pending.kind)
+            rememberLastConnected(SavedPrinter(address: finalUUID,
+                                               name: finalName,
+                                               kind: pending.kind))
         }
-        toast = "已连接 \(finalName)"
+        if isFirstTime {
+            toast = "已连接 \(finalName)"
+        }
     }
 
     /// 一次尝试失败后的统一入口：**先重试，重试次数用尽才报失败**。
@@ -467,7 +556,8 @@ final class PrinterService: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self else { return }
             self.beginConnect(uuid: pending.uuid, name: pending.name,
-                              kind: pending.kind, fromSaved: pending.fromSaved)
+                              kind: pending.kind, fromSaved: pending.fromSaved,
+                              silent: pending.silent)
         }
     }
 
@@ -485,7 +575,11 @@ final class PrinterService: NSObject, ObservableObject {
         connectedUUID = nil
         connectedName = nil
 
-        SFPrinterLog("连接最终失败 fromSaved=\(pending?.fromSaved == true) 原因=\(message)")
+        SFPrinterLog("连接最终失败 fromSaved=\(pending?.fromSaved == true) silent=\(pending?.silent == true) 原因=\(message)")
+
+        // ★ 启动时的自动连接失败**不打扰用户**：打印机没开机是常态，
+        //   用户想连的时候自己会去点。只留日志。
+        guard pending?.silent != true else { return }
 
         // 从「已添加」进来的失败，多半是重装 App 后旧标识失效 —— 直接给出可操作的建议。
         if pending?.fromSaved == true {
@@ -645,6 +739,9 @@ extension PrinterService: ExpiryPrinterSDKDelegate {
 
     func printerDidDisconnect() {
         SFPrinterLog("SDK 回调 disconnected（原 connectedUUID=\(connectedUUID ?? "nil")）")
+        // ★ 只有「真的连上过」才提示断开。自动连接失败时的资源释放也会走到这里，
+        //   那时弹一句「打印机已断开」会让人莫名其妙。
+        let wasConnected = connectedUUID != nil
         connectProbe?.invalidate()
         connectProbe = nil
         lastProbeLine = ""
@@ -655,7 +752,7 @@ extension PrinterService: ExpiryPrinterSDKDelegate {
         isConnecting = false
         intent = nil
         attempt = 0
-        toast = "打印机已断开"
+        if wasConnected { toast = "打印机已断开" }
     }
 
     func printerDidFinishPrint(_ success: Bool, message: String?) {

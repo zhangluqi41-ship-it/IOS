@@ -66,6 +66,7 @@ struct DairyTemplateView: View {
         }
         .navigationTitle("奶制品")
         .navigationBarTitleDisplayMode(.inline)
+        .keyboardDismissible()
         .modifier(LabelActions(build: buildDraft))
         .alert("请先选择奶制品类型", isPresented: $showKindAlert) {
             Button("好", role: .cancel) {}

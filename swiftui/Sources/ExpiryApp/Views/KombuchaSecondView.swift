@@ -76,6 +76,7 @@ struct KombuchaSecondView: View {
         }
         .navigationTitle("康普茶 · 二发")
         .navigationBarTitleDisplayMode(.inline)
+        .keyboardDismissible()
         .modifier(LabelActions(build: buildDraft))
         .alert("请先填写水果名称", isPresented: $showFruitAlert) {
             Button("好", role: .cancel) {}

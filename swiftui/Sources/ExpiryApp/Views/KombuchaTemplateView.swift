@@ -49,6 +49,7 @@ struct KombuchaTemplateView: View {
         }
         .navigationTitle("康普茶 · 一发")
         .navigationBarTitleDisplayMode(.inline)
+        .keyboardDismissible()
         .modifier(LabelActions(build: buildDraft))
         .alert("请先填写茶叶品种", isPresented: $showVarietyAlert) {
             Button("好", role: .cancel) {}
