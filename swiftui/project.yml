@@ -53,8 +53,10 @@ targets:
         # ★ 2026-10-09 第一轮：肉类模板 + 键盘/日期交互 + 提醒分级 + 灵动岛 → 1.0.1 / 27。
         # ★ 2026-10-09 第二轮（灵动岛排版 / 按钮按阶段 / 到点自动展开 / 稍后提醒
         #   重启 5 分钟倒计时）→ 1.0.2 / build 28。
-        CURRENT_PROJECT_VERSION: 28
-        MARKETING_VERSION: 1.0.2
+        # ★ 2026-10-09 第三轮（日期统一 xxxx/xx/xx + 修「滚轮选完年月面板消失」
+        #   + 日期单位改英文缩写）→ 1.0.3 / build 29。
+        CURRENT_PROJECT_VERSION: 29
+        MARKETING_VERSION: 1.0.3
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -94,14 +96,21 @@ targets:
       # 只借用品牌色常量（Theme.swift 没有任何主 App 依赖）。
       # ⚠️ 往 Theme.swift 里加东西前先看它会不会引进 App 专属类型，
       #    否则会连带把这个扩展编崩。
-      - Sources/ExpiryApp/Theme.swift
+      # ★ 2026-10-09：`DatePickerDismissal.swift` import UIKit 且用
+      #   `UIApplication.shared`，是主 App 专属代码。虽然它在
+      #   `Sources/ExpiryApp/Views/` 下（扩展本来就不会整目录扫），
+      #   但显式排除一次，防止将来有人把 View 目录也加进来时踩坑 ——
+      #   扩展里调 UIApplication.shared 会直接编译不过。
+      - path: Sources/ExpiryApp/Views
+        excludes:
+          - "DatePickerDismissal.swift"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.0.2
-        CURRENT_PROJECT_VERSION: 28
+        MARKETING_VERSION: 1.0.3
+        CURRENT_PROJECT_VERSION: 29
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
