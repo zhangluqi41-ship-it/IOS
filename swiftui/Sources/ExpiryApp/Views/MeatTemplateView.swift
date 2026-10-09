@@ -26,7 +26,7 @@ struct MeatTemplateView: View {
         List {
             Section {
                 Picker("保存类型", selection: $storage) {
-                    Text("请选择").tag(nil as MeatStorage?)
+                    // ★ 2026-10-09：去掉「请选择」占位项，理由同奶制品模板。
                     ForEach(MeatStorage.allCases) { s in
                         Text(s.label).tag(Optional(s))
                     }
@@ -34,7 +34,7 @@ struct MeatTemplateView: View {
                 .pickerStyle(.menu)
 
                 Picker("肉类", selection: $animal) {
-                    Text("请选择").tag(nil as MeatAnimal?)
+                    // ★ 同上：不塞占位项。
                     ForEach(MeatAnimal.allCases) { a in
                         Text(a.label).tag(Optional(a))
                     }
@@ -43,7 +43,7 @@ struct MeatTemplateView: View {
                 .disabled(storage == nil)
 
                 Picker("部位", selection: $cut) {
-                    Text("请选择").tag(nil as String?)
+                    // ★ 同上：不塞占位项。
                     ForEach(animal?.cuts ?? [], id: \.self) { c in
                         Text(c).tag(Optional(c))
                     }

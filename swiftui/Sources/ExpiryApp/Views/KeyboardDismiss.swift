@@ -87,7 +87,63 @@ final class KeyboardWatcher: ObservableObject {
     }
 }
 
-// MARK: - 点空白收起键盘
+// MARK: - 滑动收起键盘
+
+/// 「往下拖列表收起键盘」的兜底手势。
+///
+/// ★★ 2026-10-09（第三轮）为什么必须自己做一个 —— 用户反馈：
+///    「之前有确认，在输入名称等呼出系统键盘后，在屏幕其他位置点击或滑动，
+///      收回键盘。目前只保留点击收回，没有滑动收回功能」
+///
+///    根因：`LabelActions` 在**同一个 List** 上挂了
+///    `.toolbar { ToolbarItemGroup(placement: .keyboard) }`（键盘上方那条
+///    「完成 / 打印」accessory bar）。这条 accessory bar 会接管/打断
+///    `.scrollDismissesKeyboard(.interactively)` 依赖的那套拖拽识别链路 ——
+///    1.0.1 之前没有这条 toolbar 时滑动是好的，加了之后滑动就失效了。
+///
+///    SwiftUI 没有提供「在同一视图上同时保留 keyboard accessory 与
+///    scroll-dismiss」的开关，所以这里直接用 UIKit 补一个**独立的**
+///    `UIPanGestureRecognizer`：它只观察、不拦截（`cancelsTouchesInView = false`），
+///    一旦识别到「手指主要向下拖动」，就收起键盘。
+///    ➜ 与 `.scrollDismissesKeyboard` 是「叠加」而非「二选一」，
+///      两者谁生效都能达到目的，也不影响列表本身的滚动。
+final class SwipeDownKeyboardDismisser: NSObject, UIGestureRecognizerDelegate {
+
+    static let shared = SwipeDownKeyboardDismisser()
+
+    private let patched = NSHashTable<UIWindow>.weakObjects()
+
+    func install(on window: UIWindow) {
+        guard !patched.contains(window) else { return }
+        patched.add(window)
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        // ★ 关键：不吃掉这次手势，列表照常滚动、输入框照常拖动光标。
+        pan.cancelsTouchesInView = false
+        // 键盘收起由 `.interactively` 或这里任一触发即可，不必抢优先级。
+        pan.delegate = self
+        window.addGestureRecognizer(pan)
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard gesture.state == .ended || gesture.state == .changed else { return }
+        let translation = gesture.translation(in: gesture.view)
+        let velocity = gesture.velocity(in: gesture.view)
+        // 判据：「向下」的位移或速度占绝对主导，才认为是「往下拖收键盘」。
+        // 横向滑动（比如滑动删行）、轻微斜拖不触发，避免误伤。
+        let downward = translation.y > 40 || velocity.y > 600
+        let dominant = abs(translation.y) > abs(translation.x)
+        guard downward, dominant else { return }
+        SoftKeyboard.hide()
+    }
+
+    // MARK: - 不干预交互
+
+    /// ★ 允许与其它手势（列表滚动、行内按钮）同时识别。
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
+    }
+}
 
 /// 「点空白收起键盘」的安装器。
 ///
@@ -145,6 +201,8 @@ struct DismissKeyboardOnTap: UIViewRepresentable {
         view.isUserInteractionEnabled = false
         view.onWindow = { window in
             TapOutsideKeyboardDismisser.shared.install(on: window)
+            // ★ 2026-10-09 第三轮：滑动收键盘的兜底手势。
+            SwipeDownKeyboardDismisser.shared.install(on: window)
         }
         return view
     }
@@ -174,6 +232,12 @@ struct KeyboardDismissModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             // ★ 跟着手指走，而不是整块闪走 —— 见文件头 2026-10-09 说明。
+            //
+            // ⚠️ 2026-10-09 第三轮：单靠这一句在**挂了 keyboard toolbar 的页面**
+            //    上会失效（见 `SwipeDownKeyboardDismisser` 的说明）。
+            //    所以保留它作为「正常情况下的第一选择」，同时由
+            //    `DismissKeyboardOnTap` 装的那个 pan 手势兜底 ——
+            //    两者叠加，任一可用即可，不冲突。
             .scrollDismissesKeyboard(.interactively)
             .background(DismissKeyboardOnTap())
     }

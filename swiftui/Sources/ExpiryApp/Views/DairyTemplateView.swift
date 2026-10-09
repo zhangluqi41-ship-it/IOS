@@ -16,7 +16,10 @@ struct DairyTemplateView: View {
         List {
             Section {
                 Picker("奶制品类型", selection: $kind) {
-                    Text("请选择").tag(nil as DairyKind?)
+                    // ★ 2026-10-09：去掉「请选择」占位项（用户反馈「点开后不应该
+                    //   有『请选择』这个选项」）。未选时 selection 是 nil，
+                    //   系统会自动把 label 显示成空白 —— 视觉上已经能看出「没选」，
+                    //   再塞一条「请选择」只是多一个要划过去的废选项。
                     ForEach(DairyKind.allCases) { k in
                         Text(k.label).tag(Optional(k))
                     }

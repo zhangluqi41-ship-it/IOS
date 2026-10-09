@@ -2,42 +2,56 @@
 //  ExpiryLiveActivity.swift
 //  灵动岛 / 锁屏的 Live Activity 界面。
 //
-//  ★ 用户要求（清单「三、效期管理」第 2/3 条）：
-//     「提前 10 分钟和到时间这两个通知可以增加灵动岛交互，像快递软件一样
-//       在岛上显示倒计时，长按打开岛的提醒大界面后增加已完成使用和稍后提醒
-//       两个按钮」
-//     「通知时，目前是小灵动岛加一个横幅，但是逻辑应该是小灵动岛放大灵动岛，
-//       然后让我选择已完成或者其他」
+//  ─────────────── 2026-10-09 第三轮（用户反馈，本文件主要改动） ───────────────
 //
-//  ★★ 2026-10-09 第二轮修正（用户反馈）：
-//     ① 「未点开时左侧沙漏离摄像头位置缝隙过大，右侧时间的右侧有多余的黑色，
-//        大概占了一个图标的位置」——
-//        → 紧凑态**不要再给固定宽度**（原来 `compactTrailing` 写了
-//          `.frame(maxWidth: 54)`，等于强行留出一个图标的空位）。
-//          改成由内容自然决定大小，两边都用 `.fixedSize()` 贴边，
-//          并关掉 `.contentMarginsDisabled()` 之外的多余内边距。
-//     ② 「前 10 分钟提醒，按钮只保留已完成使用，删除到时间后的稍后提醒」
-//        → 按钮**按阶段显示**：`.soon` 只给「已完成使用」，
-//          `.due` 才给「已完成使用 + 稍后提醒」。见 `ActionButtons`。
+//  用户原话：
+//    「灵动岛通知界面排版有问题：排版彻底有问题：
+//      小图标时：左侧沙漏图标距离中间出现超大缝隙，已超出排版页面，
+//                右侧与中间距离同样超长，已完全看不到数字（间距过大，
+//                占用大量上方面积）
+//      大图标时：左侧文字展示不全，可：摄像头行显示你的小logo，
+//                下方增加文字（整个灵动岛大通知变宽），右侧可参考苹果健身时
+//                的小数字变大的特效来制作。
+//      同时：小图标时右侧数字加粗，变大图标后右侧的时间上方不要最佳使用时间」
+//    「功能逻辑不对：距离倒计时结束计时后：无灵动岛主动变大图标进行提醒」
 //
-//  ★ 倒计时为什么用 `Text(timerInterval:countsDown:)`：
-//    它是**系统自己每秒钟刷的**，不需要 App 在后台推状态 ——
-//    而免费开发者账号根本没有 APNs 推送能力，这是唯一可行的做法。
+//  ★★ 先说最重要的一件事（决定了第 2 条到底能不能做）：
+//     **灵动岛不可能由 App 主动「变大」。**
+//     苹果没有开放任何 API 让第三方 App 撑开灵动岛 —— 展开只由两种方式触发：
+//       ① 用户**长按**紧凑态；
+//       ② 系统级事件（来电、Face ID、计时器归零…）。
+//     第三方 Live Activity 拿不到第 ② 条，所以「倒计时结束自动变大」在
+//     iOS 上**做不到**（不是我们没写对，是平台没这个口子）。
 //
-//  ★★ 到时间那一刻怎么自动变成展开态：
-//    见 `ExpiryActivityAttributes.ContentState.phase(at:)` ——
-//    `phase` 不是存下来的死值，而是**按当前时刻现算**的派生属性。
-//    系统在 `dueAt` 那一刻会重绘，`phase` 就自动从 `.soon` 翻成 `.due`，
-//    于是「紧凑态」自动渲染成展开内容、按钮也跟着多出「稍后提醒」，
-//    全程不需要 App 在后台做任何事。
+//     旧的注释里写着「phase 变 .due 后紧凑态会自动渲染展开内容」——
+//     那是**错的**：紧凑态（compactLeading/compactTrailing）是系统给的
+//     固定小区域，只能塞下图标和几个字，物理上渲染不了展开布局。
+//     `phase` 确实会随系统时钟翻成 `.due`，但它只能改变**紧凑态自己**的
+//     呈现（比如把数字换成「到点」），**不会**让岛变大。
 //
-//  ★ 颜色：锁屏那一栏用语义色（跟随系统深浅色 / iOS 26 玻璃材质），
-//    灵动岛内部**恒定是黑底**，所以那里的文字一律用白色系。
+//     ✅ 所以在做不到「自动变大」的前提下，本文件的替代方案是：
+//        到点那一刻，**紧凑态自己变成最醒目的样子** ——
+//        右边用红色「到点」字样 + 沙漏图标，用户一眼就知道该长按进来看。
+//        这是免费账号 + 无推送能力下能做到的极限，也是唯一诚实的做法。
 //
-//  ⚠️ 这个文件属于 `ExpiryWidget` 目标，**看不到** `LabelTemplate` /
-//     `ExpiryStore` 等主 App 的类型。所以：
-//       · 时间格式化 → `ExpiryDateFormat`（Sources/Shared）
-//       · 品牌色 → `Theme`（把 Theme.swift 也编进了本目标，见 project.yml）
+//  ★★ 排版修复（用户说「间距超大、看不到数字」的真正原因）：
+//     上一版为了消掉两侧的默认边距，写了两句
+//        `.contentMargins(.horizontal, 0, for: .compactLeading/.compactTrailing)`
+//     ——**这种做法把两侧内边距压成 0 之后，系统反而把内容往两端推得更开**
+//     （紧凑态的两个区域本身有最小布局宽度），结果就是用户看到的
+//     「沙漏离摄像头一大段、数字被挤出屏幕」。
+//     ➜ 本版**删掉那两句 contentMargins**，回到系统默认边距 ——
+//       默认值本来就是苹果调过的，两侧距离正确、数字完整可见。
+//
+//  ★ 大图标（展开态）改动：
+//     · 左侧：上一版只堆了「图标 + 标题」，标题一长就被截断。
+//       现在改成**两行**：上排 logo + 类别，下排标题（`lineLimit(2)`），
+//       整个展开卡也因此更宽、能容下长标题。
+//     · 右侧：按用户要求参考「健身 App 数字变大」的做法 ——
+//       用一个**大号粗体等宽**的时间数字，让右侧有「数字放大」的视觉重点。
+//     · 去掉时间上方的「最佳使用时间」里程碑文案（用户明确要求）。
+//
+//  ★ 紧凑态：右侧数字**加粗放大**（用户要求「小图标时右侧数字加粗」）。
 //
 
 import ActivityKit
@@ -54,30 +68,40 @@ struct ExpiryLiveActivityWidget: Widget {
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
+                // ── 左上：logo + 类别（第一行），标题（第二行，允许折行）──
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "tag.fill")
-                            .font(.caption2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "hourglass")
+                                .font(.caption2)
+                            Text(context.attributes.kindLabel)
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.white.opacity(0.8))
+
                         Text(context.attributes.title)
-                            .font(.caption2)
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.leading, 4)
-                }
-                DynamicIslandExpandedRegion(.trailing) {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text(context.attributes.milestoneLabel)
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.75))
-                        Text(ExpiryDateFormat.time(context.state.dueAt))
-                            .font(.caption2)
+                            .font(.subheadline)
                             .fontWeight(.semibold)
-                            .monospacedDigit()
+                            .lineLimit(2)
                             .foregroundStyle(.white)
                     }
-                    .padding(.trailing, 4)
+                    // ★ 不再写 `.padding(.leading, 4)` —— 交给系统的展开态默认边距，
+                    //   之前那点手工 padding 在真机上反而让内容贴边不齐。
                 }
+
+                // ── 右上：只有「大号时间」，**不再有里程碑文案** ──
+                //   ★ 用户明确要求：「变大图标后右侧的时间上方不要最佳使用时间」。
+                //   ★ 「参考苹果健身的小数字变大」→ 用大号、粗体、等宽数字，
+                //     让它是整张卡的视觉重点。
+                DynamicIslandExpandedRegion(.trailing) {
+                    Text(ExpiryDateFormat.time(context.state.dueAt))
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .foregroundStyle(.white)
+                }
+
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -96,15 +120,12 @@ struct ExpiryLiveActivityWidget: Widget {
                     .padding(.bottom, 2)
                 }
             } compactLeading: {
-                // ★ 只放沙漏，且**不加任何 frame** —— 加了固定宽度
-                //   就会在摄像头左侧撑出一段空白（用户说的「缝隙过大」）。
+                // ★ 只放沙漏，不加任何 frame —— 让它自然贴边。
                 Image(systemName: "hourglass")
                     .font(.caption2)
                     .foregroundStyle(.white)
             } compactTrailing: {
-                // ★ 这里原来有 `.frame(maxWidth: 54)`，会在时间右侧留出
-                //   一个图标宽的黑块（用户说的「多余黑色」）。去掉固定宽度，
-                //   换成 `fixedSize()` 让文字自己贴边。
+                // ★ 用户要求「小图标时右侧数字加粗」→ 加粗 + 略放大。
                 CompactCountdownText(state: context.state)
             } minimal: {
                 // minimal 只留给「沙漏」一个图标，别放文字。
@@ -113,16 +134,10 @@ struct ExpiryLiveActivityWidget: Widget {
                     .foregroundStyle(.white)
             }
             .keylineTint(Theme.brand)
-            // ★★ 紧凑态两侧留白的正解：
-            //    用户反馈「左侧沙漏离摄像头缝隙过大、右侧时间右边有多余黑色，
-            //    左右两侧留出的好像是相同的空格一样的占位」—— 这正是系统给
-            //    紧凑态默认加的**对称内容边距**。
-            //    官方 API 是 `DynamicIsland.contentMargins(_:_:for:)`，
-            //    这里把 `.compactLeading` / `.compactTrailing` 两侧都压到 0，
-            //    内容就真正贴到摄像头两侧，不再有那圈「空图标位」。
-            //    （`.expanded` 保持默认，展开态本来就该有呼吸感。）
-            .contentMargins(.horizontal, 0, for: .compactLeading)
-            .contentMargins(.horizontal, 0, for: .compactTrailing)
+            // ⚠️⚠️ **千万不要再加 `.contentMargins(.horizontal, 0, for: .compact*)`**
+            //    上一版就是这么写的，结果把紧凑态内容推到两端、
+            //    数字被挤出屏幕（用户反馈「已完全看不到数字」）。
+            //    系统的默认边距就是正确的，保持不放任何 contentMargins。
         }
     }
 }
@@ -176,9 +191,9 @@ private struct LockScreenView: View {
 ///    → 所以**提前阶段（`.soon`）只显示「已完成使用」**；
 ///      「稍后提醒」只在**已经到时间（`.due`）**之后才出现。
 ///
-///    判据直接用 `ContentState.phase`，它是**按当前时刻现算**的派生属性
-///    （见 `ExpiryActivityAttributes.ContentState.phase(at:)`），
-///    系统在 `dueAt` 那一刻重绘 → 按钮自动切换，不需要 App 干预。
+///    判据用 `ContentState.phase`，它是**按当前时刻现算**的派生属性
+///    （见 `ExpiryActivityAttributes.ContentState.phase`），
+///    系统每秒刷倒计时时会一起重绘 → 到点自动切换，不需要 App 干预。
 private struct ActionButtons: View {
     let attributes: ExpiryActivityAttributes
     let state: ExpiryActivityAttributes.ContentState
@@ -230,13 +245,13 @@ private struct CountdownText: View {
 
 /// 紧凑态（灵动岛最小宽度）专用的倒计时。
 ///
-/// ★★ 为什么单独一个 View 而不是复用 `CountdownText`：
-///    紧凑态空间极窄，用户明确反馈「右侧有多余的黑色」。
-///    这里做三件事把宽度压到最小：
-///      ① 不加任何固定 `frame`，只用 `fixedSize()` 让内容自己贴边；
-///      ② `monospacedDigit()` 保证每秒刷新时**宽度不跳**（不抖）；
-///      ③ `.minimumScaleFactor(0.7)` 让长时长（如 `1:23:45`）自动缩，
-///         而不是撑宽容器。
+/// ★★ 用户要求「小图标时右侧数字加粗」→ 加粗 + 略放大（`.caption` 而非
+///    `.caption2`），让它在摄像头右侧更醒目。
+///
+/// ★★ 到点之后不再是「0:00」也不是小小的「到点」，而是**红色「到点」** ——
+///    因为平台不允许 App 主动撑开灵动岛（见文件头），
+///    我们能做的就是让紧凑态在到点那一刻本身变得最醒目，
+///    提示用户「长按进来看 / 去处理」。
 private struct CompactCountdownText: View {
     let state: ExpiryActivityAttributes.ContentState
 
@@ -244,16 +259,16 @@ private struct CompactCountdownText: View {
         Group {
             if let interval = state.countdownInterval {
                 Text(timerInterval: interval, countsDown: true, showsHours: true)
+                    .monospacedDigit()
             } else {
                 Text("到点")
             }
         }
-        .font(.caption2)
-        .fontWeight(.semibold)
-        .monospacedDigit()
+        .font(.caption)
+        .fontWeight(.bold)
         .lineLimit(1)
-        .minimumScaleFactor(0.7)
-        .fixedSize(horizontal: true, vertical: false)
-        .foregroundStyle(.white)
+        // ★ 长时长（如 `1:23:45`）自动缩，而不是把容器撑宽把数字挤出屏幕。
+        .minimumScaleFactor(0.8)
+        .foregroundStyle(state.phase == .due ? Color.red : Color.white)
     }
 }

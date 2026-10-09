@@ -521,7 +521,31 @@ struct ScanView: View {
             return
         }
 
-        // ③ 都不是 —— 不是本 App 印出来的标签
+        // ③ 通用 / 奶制品标签 —— 没有后续流程，但**必须入库**
+        //    （清单「二、扫码」第 1 条：所有物料扫码后若无后续操作，
+        //      都要重新加入效期管理系统）。
+        if let generic = LabelTemplate.parseGenericQr(code) {
+            ExpiryStore.shared.add(
+                LabelRecord(title: generic.title,
+                            kind: .generic,
+                            // 二维码里没有制作人，扫回来留空 —— 列表会显示占位。
+                            maker: "",
+                            createdAt: Date(),
+                            printedAt: nil,
+                            expireAt: generic.expireAt,
+                            bestBefore: generic.bestBefore,
+                            usedAt: nil,
+                            qrText: code,
+                            source: .scanned)
+            )
+            // ★ 不跳转任何页面（这就是「无后续操作」），
+            //   只提示已入库，然后继续扫描。
+            showAlert(title: "已加入效期管理",
+                      message: "「\(generic.title)」已重新加入效期管理列表。")
+            return
+        }
+
+        // ④ 都不是 —— 不是本 App 印出来的标签
         showAlert(title: "无法识别的标签",
                   message: "识别到的内容：\n\(code.prefix(160))\n\n请扫描本 App 生成的标签二维码。")
     }

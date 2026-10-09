@@ -431,6 +431,65 @@ enum LabelTemplate {
         ))
     }
 
+    // MARK: 通用标签解析（通用效期 / 奶制品）
+
+    /// 通用标签（通用效期、奶制品）二维码：
+    /// `{标题}原始保质期：{保质期}最佳使用时间：{最佳}`。
+    ///
+    /// ★ 2026-10-09（清单「二、扫码」第 1 条）：
+    ///    用户要求「所有物料扫码后若无后续操作，均将该物料信息重新加入
+    ///    效期管理系统里」。此前只有**康普茶**和**肉类**有解析器能认出标签，
+    ///    通用 / 奶制品标签扫了会落进「无法识别的标签」分支 ——
+    ///    于是这类物料永远进不了列表。
+    ///    ➜ 补一个通用解析器，让它们也能**只入库、不跳转**。
+    ///
+    /// ⚠️ 必须放在康普茶 / 肉类**之后**判定：那两种的正则更具体，
+    ///   先被它们认出才不会被这里「兜底」吃掉。
+    ///   这里刻意**不做标题前缀限制** —— 通用标签的标题是用户手填的
+    ///   （任何文字都可能），只能靠「原始保质期：… 最佳使用时间：…」
+    ///   这套固定字段锚点来识别。
+    private static let genericQrRe = try! NSRegularExpression(
+        pattern: "^(?<title>.+?)原始保质期：(?<exp>\(dateTimePat))"
+            + "最佳使用时间：(?<best>\(dateTimePat))$"
+    )
+
+    /// 一份「足够入库」的通用标签信息。`title` 已去掉可能的「开封时间：…」前缀。
+    struct GenericLabelInfo {
+        let title: String
+        let expireAt: Date
+        let bestBefore: Date
+    }
+
+    /// 解析通用 / 奶制品标签二维码；不是这类标签返回 nil。
+    static func parseGenericQr(_ raw: String) -> GenericLabelInfo? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.utf8.count <= maxQrBytes else { return nil }
+        let ns = text as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        guard let m = genericQrRe.firstMatch(in: text, range: full) else { return nil }
+
+        func group(_ name: String) -> String? {
+            let r = m.range(withName: name)
+            guard r.location != NSNotFound else { return nil }
+            return ns.substring(with: r)
+        }
+
+        guard var title = group("title")?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let expireAt = group("exp").flatMap(parseDate),
+              let bestBefore = group("best").flatMap(parseDate) else { return nil }
+
+        // ★ 二维码里没有「开封时间」这一行（`LabelData.qrText` 只取后两行），
+        //   所以标题就是纯标题。但**旧格式**的码里第一行可能是
+        //   「开封时间：…」，兜一刀把残留前缀切掉，免得标题变成一长串时间。
+        if let cut = title.range(of: "原始保质期：") {
+            title = String(title[..<cut.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !title.isEmpty else { return nil }
+
+        return GenericLabelInfo(title: title, expireAt: expireAt, bestBefore: bestBefore)
+    }
+
     /// 生成 PDF 文件名：`标题_yyyyMMdd_HHmm.pdf`（非法字符替换、超长截断）。
     static func labelFileName(_ title: String, _ now: Date) -> String {
         // ★ 字符类里带上 `.`：否则标题写成 `..` 时文件名就是 `..`，
