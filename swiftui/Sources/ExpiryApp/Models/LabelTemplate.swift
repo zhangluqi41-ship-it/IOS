@@ -204,6 +204,50 @@ enum LabelTemplate {
         )
     }
 
+    // MARK: 肉类
+
+    /// 肉类标签。版式与奶制品**完全一致**（开封时间 / 原始保质期 / 最佳使用时间），
+    /// 只有标题里多带了保存类型 —— 见 `Meat.swift` 顶部说明。
+    static func buildMeat(animal: MeatAnimal, cut: String, storage: MeatStorage,
+                          now: Date, expireDate: Date, bestBefore: Date,
+                          maker: String) -> LabelData {
+        LabelData(
+            title: clamp(MeatRule.title(storage: storage, animal: animal, cut: cut)),
+            rows: [
+                LabelRow(label: "开封时间：", value: fmtDateTime(now)),
+                LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, expireDate)),
+                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, bestBefore)),
+            ],
+            weekdayCn: weekdayCn(now),
+            weekdayEn: weekdayEn(now),
+            rightText: fmtTime(now),
+            maker: "制作人：\(clamp(maker, maxNameLength))"
+        )
+    }
+
+    /// 解冻标签（扫冷冻标签的二维码后生成）。
+    ///
+    /// 三处改动，逐条对应用户要求：
+    ///   ① 第一行「开封时间」→「解冻时间」，值 = 扫码那一刻；
+    ///   ② 「原始保质期」**原样照搬**二维码里的原文（`expireRaw`），不重新格式化；
+    ///   ③ 「最佳使用时间」= 扫码那一刻 + `MeatRule.thawedBestDays`（3）天。
+    static func buildMeatThaw(baseName: String, now: Date,
+                              expireRaw: String, maker: String) -> LabelData {
+        let best = MeatRule.thawedBest(from: now)
+        return LabelData(
+            title: clamp(MeatRule.thawTitle(baseName: baseName)),
+            rows: [
+                LabelRow(label: "解冻时间：", value: fmtDateTime(now)),
+                LabelRow(label: "原始保质期：", value: expireRaw),
+                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, best)),
+            ],
+            weekdayCn: weekdayCn(now),
+            weekdayEn: weekdayEn(now),
+            rightText: fmtTime(now),
+            maker: "制作人：\(clamp(maker, maxNameLength))"
+        )
+    }
+
     // MARK: 康普茶
 
     static func kombuchaTitle(_ variety: String) -> String {
@@ -317,6 +361,19 @@ enum LabelTemplate {
         case .generic, .dairy:
             rows = [
                 LabelRow(label: "开封时间：", value: fmtDateTime(now)),
+                LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, record.expireAt)),
+                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
+            ]
+        case .meat:
+            // 肉类有两副面孔：普通肉类标签第一行是「开封时间」，
+            // 扫冷冻标签生成的**解冻**标签第一行是「解冻时间」。
+            // 记录里没有单独存这个字段，但标题前缀是确定性的
+            // （解冻标签的标题一定是「解冻-…」，见 `MeatRule.thawTitle`），
+            // 由它反推即可，不必为一行文案去改数据模型。
+            let firstLabel = record.title.hasPrefix(MeatRule.thawPrefix + MeatRule.titleSeparator)
+                ? "解冻时间：" : "开封时间："
+            rows = [
+                LabelRow(label: firstLabel, value: fmtDateTime(now)),
                 LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, record.expireAt)),
                 LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
             ]
@@ -435,5 +492,75 @@ enum LabelTemplate {
             )
         }
         return nil
+    }
+
+    // MARK: 肉类二维码解析
+
+    /// 肉类标签二维码：`{标题}原始保质期：{保质期}最佳使用时间：{最佳}`。
+    ///
+    /// ★ 标题必须以 `冷藏-` / `冷冻-` / `解冻-` 开头（见 `MeatRule.title`），
+    ///   否则就不是肉类标签 —— 这也正是「扫冷冻标签进解冻流程」的判据。
+    ///
+    /// ⚠️ 只收「原始保质期 + 最佳使用时间」两段，与 `LabelData.qrText` 一致
+    ///   （第一行「开封/解冻时间」不进码，所以这里也无从得知它 —— 不过它本来
+    ///    就不影响任何判断）。
+    private static let meatQrRe = try! NSRegularExpression(
+        pattern: "^(?<title>.+?)原始保质期：(?<exp>\(dateTimePat))"
+            + "最佳使用时间：(?<best>\(dateTimePat))$"
+    )
+
+    /// 解析肉类标签二维码；不是肉类标签返回 nil。
+    static func parseMeatQr(_ raw: String) -> MeatLabelInfo? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.utf8.count <= maxQrBytes else { return nil }
+        let ns = text as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        guard let m = meatQrRe.firstMatch(in: text, range: full) else { return nil }
+
+        func group(_ name: String) -> String? {
+            let r = m.range(withName: name)
+            guard r.location != NSNotFound else { return nil }
+            return ns.substring(with: r)
+        }
+
+        guard let title = group("title")?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let expireRaw = group("exp"),
+              let expireAt = parseDate(expireRaw),
+              let bestBefore = group("best").flatMap(parseDate) else { return nil }
+
+        let sep = MeatRule.titleSeparator
+        let thawHead = MeatRule.thawPrefix + sep
+        let chilledHead = MeatStorage.chilled.label + sep
+        let frozenHead = MeatStorage.frozen.label + sep
+
+        let storage: MeatStorage
+        let alreadyThawed: Bool
+        let baseName: String
+        if title.hasPrefix(frozenHead) {
+            storage = .frozen
+            alreadyThawed = false
+            baseName = String(title.dropFirst(frozenHead.count))
+        } else if title.hasPrefix(chilledHead) {
+            storage = .chilled
+            alreadyThawed = false
+            baseName = String(title.dropFirst(chilledHead.count))
+        } else if title.hasPrefix(thawHead) {
+            // 解冻标签是从冷冻标签派生的，保存类型仍然是「冷冻」。
+            storage = .frozen
+            alreadyThawed = true
+            baseName = String(title.dropFirst(thawHead.count))
+        } else {
+            return nil
+        }
+        guard !baseName.isEmpty else { return nil }
+
+        return MeatLabelInfo(baseName: baseName,
+                             title: title,
+                             storage: storage,
+                             alreadyThawed: alreadyThawed,
+                             expireAt: expireAt,
+                             bestBefore: bestBefore,
+                             // 原样保留那一行的原文 —— 解冻标签要照搬，不能重新格式化。
+                             expireRaw: expireRaw)
     }
 }

@@ -17,6 +17,9 @@
 //    `.fullScreenCover(item:)` 即可 —— 那里面记录的 PDFKit/ScrollView 缩放坑
 //    别再踩第二遍。
 //
+//  ★ 2026-10-09：键盘抬起时底部操作条收起，改为在键盘上方的第一方
+//    accessory bar 里与「完成」并排 —— 详见 `LabelActions` 的文档注释。
+//
 
 import SwiftUI
 
@@ -131,14 +134,27 @@ enum LabelReprint {
 
 // MARK: - 动作修饰器
 
-/// 给模板页挂上：底部二级操作条 + 提示弹窗。
+/// 给模板页挂上：底部二级操作条 + 键盘上方的「完成 / 打印」+ 提示弹窗。
 ///
 /// - Parameter build: 由各页自己实现——校验通过返回 `LabelDraft`，
 ///   校验不过时页面内部弹自己的提示并返回 `nil`。
+///
+/// ★★ 2026-10-09 改动（用户反馈「输入文字时，完成和打印两个按钮重叠」）：
+///   原来底部那条「打印」操作条会跟着键盘一起抬到键盘正上方，
+///   而键盘自己的 accessory bar（「完成」）也在键盘正上方 ——
+///   两条 bar 贴在一起、又都是半透明材质，看起来就是「叠在一起」。
+///
+///   现在的做法：**同一时刻只存在一条 bar**
+///     · 键盘收起 → 底部操作条显示「打印」
+///     · 键盘抬起 → 底部操作条当场收起；「打印」搬到键盘上方的
+///       第一方 accessory bar，与「完成」并排（`ToolbarItemGroup(placement: .keyboard)`）
+///   两边都是系统第一方控件，位置由系统安排，结构上不可能重叠。
+///   收起/展开的动画时长取自键盘通知，和键盘同一条时间线。
 struct LabelActions: ViewModifier {
     let build: () -> LabelDraft?
 
     @ObservedObject private var printer = PrinterService.shared
+    @ObservedObject private var keyboard = KeyboardWatcher.shared
 
     @AppStorage("printCopies") private var copies: Int = 1
     @AppStorage("printDensity") private var density: Int = 0
@@ -149,7 +165,17 @@ struct LabelActions: ViewModifier {
     func body(content: Content) -> some View {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                LabelActionBar(isBusy: printer.isPrinting, onPrint: printNow)
+                // 键盘抬起时就地收起，把位置让给键盘自己的 accessory bar。
+                if !keyboard.isVisible {
+                    LabelActionBar(isBusy: printer.isPrinting, onPrint: printNow)
+                }
+            }
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Button("完成") { SoftKeyboard.hide() }
+                    Spacer()
+                    keyboardPrintButton
+                }
             }
             .alert(notice?.title ?? "",
                    isPresented: Binding(get: { notice != nil },
@@ -158,6 +184,21 @@ struct LabelActions: ViewModifier {
             } message: {
                 Text(notice?.body ?? "")
             }
+    }
+
+    /// 键盘上方那个「打印」——和「完成」同一条 accessory bar，永远不会重叠。
+    @ViewBuilder
+    private var keyboardPrintButton: some View {
+        Button {
+            printNow()
+        } label: {
+            if printer.isPrinting {
+                ProgressView().controlSize(.small)
+            } else {
+                Text("打印").fontWeight(.semibold)
+            }
+        }
+        .disabled(printer.isPrinting)
     }
 
     // MARK: 动作

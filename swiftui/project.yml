@@ -18,6 +18,10 @@ targets:
     platform: iOS
     sources:
       - Sources/ExpiryApp
+      # ★ 2026-10-09 新增：主 App 与 Widget 扩展**共用**的源码
+      #   （灵动岛的活动属性 / 按钮 Intent / 日期格式化）。
+      #   同一个文件也编进下面的 ExpiryWidget 目标，靠编译宏区分实现。
+      - Sources/Shared
       # ⚠️ 不要用 `type: folder`。folder 会生成「蓝色文件夹引用」，
       #    打包后字体落在 app 包内的 `Resources/` 子目录里（非标准位置），
       #    UIAppFonts 里写的裸文件名就找不到文件，字体静默失效。
@@ -32,6 +36,11 @@ targets:
       #   硕方 SDK 直接由 swiftui 工程自带，换台电脑 clone 下来就能编。
       - framework: Vendor/SFPrintSDK.xcframework
         embed: false
+      # ★ 2026-10-09：灵动岛需要 WidgetKit 扩展，它必须作为
+      #   `PlugIns/ExpiryWidget.appex` 嵌进 App 包，否则 `Activity.request()`
+      #   找不到能渲染 Live Activity 的扩展。
+      - target: ExpiryWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager
@@ -41,9 +50,14 @@ targets:
         # ★ 2026-10-08：优化清单做完，正式投入使用，版本号从 1.6.15 重置为 1.0.0。
         #   ⚠️ `CURRENT_PROJECT_VERSION`（build）**必须只增不减** ——
         #      iOS 就地升级时如果 build 比在装的低，installd 会拒绝安装。
-        #      上一版是 25，所以这里从 26 继续走。
-        CURRENT_PROJECT_VERSION: 26
-        MARKETING_VERSION: 1.0.0
+        # ★ 2026-10-09：本轮（肉类模板 + 键盘/日期交互 + 提醒分级 + 灵动岛）
+        #   升到 1.0.1 / build 27。
+        CURRENT_PROJECT_VERSION: 27
+        MARKETING_VERSION: 1.0.1
+        # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
+        #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
+        #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_APP"
         # 硕方 SDK 是 ObjC 且没有 modulemap，Swift 只能通过桥接头访问
         SWIFT_OBJC_BRIDGING_HEADER: Sources/ExpiryApp/Native/ExpiryApp-Bridging-Header.h
         # ★ 必须 -ObjC：静态库里只被 ObjC 类/分类引用的符号否则会被链接器剥掉，
@@ -61,6 +75,39 @@ targets:
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: 用于读取图片以生成标签。
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+
+  # ---------------------------------------------------------------- 灵动岛扩展
+  # ★ 2026-10-09 新增。Live Activity 的 UI **只能**由 WidgetKit 扩展渲染，
+  #   宿主 App 里没法内联（ActivityKit 的结构要求）。
+  #
+  # ⚠️ 它不需要 App Group —— 扩展渲染用的全部内容都由 `ContentState` 带过来，
+  #    按钮回写走 `LiveActivityIntent`（在主 App 进程执行，能直接访问
+  #    `ExpiryStore`）。少一个临场创建的 `4U3G6835M9.xxx`，
+  #    就少一份「装机时多出第二个 App」的风险。
+  ExpiryWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Sources/ExpiryWidget
+      - Sources/Shared
+      # 只借用品牌色常量（Theme.swift 没有任何主 App 依赖）。
+      # ⚠️ 往 Theme.swift 里加东西前先看它会不会引进 App 专属类型，
+      #    否则会连带把这个扩展编崩。
+      - Sources/ExpiryApp/Theme.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
+        PRODUCT_NAME: ExpiryWidget
+        SKIP_INSTALL: YES
+        MARKETING_VERSION: 1.0.1
+        CURRENT_PROJECT_VERSION: 27
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
+        # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
+        #    否则 xcodegen 可能把它当成资源再打一份进包里。
+        INFOPLIST_FILE: Support/ExpiryWidget-Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+
   ExpiryManagerTests:
     type: bundle.unit-test
     platform: iOS

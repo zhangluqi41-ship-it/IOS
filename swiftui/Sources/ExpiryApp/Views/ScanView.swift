@@ -2,11 +2,21 @@
 //  ScanView.swift
 //  扫码 —— AVFoundation 实时二维码识别。
 //
-//  用途：扫标签上的二维码。目前接的是「康普茶一发」标签 → 取回制备/完成/最佳使用时间，
-//  直接进入「二发」填写页；扫到的这条物料同时会进「效期管理」列表。
+//  目前接两条业务链：
+//    ① **康普茶一发**标签 → 取回完成 / 最佳使用时间，直接进「二发」填写页；
+//    ② **冷冻的肉类**标签 → 进「解冻」页（冷藏标签只入库、不跳转）。
+//  扫到的物料同样会进「效期管理」列表。
 //
 //  ★ 二维码内容就是标签页面文字顺序拼接的结果，解析规则在
-//    `LabelTemplate.parseKombuchaQr`，与安卓/Flutter 版完全一致。
+//    `LabelTemplate.parseKombuchaQr` / `LabelTemplate.parseMeatQr`，
+//    与安卓/Flutter 版完全一致。
+//
+//  ★★ 2026-10-09：新增肉类。**判定顺序很重要** —— 先康普茶、再肉类。
+//    两者正则不同（康普茶靠「完成时间」锚点、肉类靠「原始保质期」锚点），
+//    理论上不会互相误吃，但顺序固定下来最稳。
+//
+//  ★ 肉类为什么会走「扫码才能出来」这条路：用户要求解冻**不作为可选模板**
+//    （见 `MeatThawView` 顶部注释）。
 //
 
 import AVFoundation
@@ -16,6 +26,8 @@ import UIKit
 /// 扫码 Tab 的二级页路由。
 enum ScanRoute: Hashable {
     case secondFermentation(KombuchaFirstLabel)
+    /// 扫到**冷冻的肉类**标签 → 解冻页（冷藏 / 已解冻的标签不会走到这里）。
+    case thaw(MeatLabelInfo)
 }
 
 // MARK: - 扫码模型
@@ -352,6 +364,7 @@ struct ScanView: View {
 
     @StateObject private var scanner = QRScannerModel()
     @State private var showInvalidAlert = false
+    @State private var alertTitle = "无法识别的标签"
     @State private var invalidText = ""
 
     private let boxSide: CGFloat = 250
@@ -373,6 +386,8 @@ struct ScanView: View {
                 switch route {
                 case .secondFermentation(let first):
                     KombuchaSecondView(first: first)
+                case .thaw(let meat):
+                    MeatThawView(meat: meat)
                 }
             }
             .onAppear {
@@ -389,7 +404,7 @@ struct ScanView: View {
             .onChange(of: scanner.lastCode) { _, code in
                 handle(code)
             }
-            .alert("这不是康普茶一发标签", isPresented: $showInvalidAlert) {
+            .alert(alertTitle, isPresented: $showInvalidAlert) {
                 Button("继续扫描", role: .cancel) { scanner.resume() }
             } message: {
                 Text(invalidText)
@@ -481,6 +496,7 @@ struct ScanView: View {
     private func handle(_ code: String?) {
         guard let code, !code.isEmpty else { return }
 
+        // ① 康普茶一发标签 → 进二发
         if let first = LabelTemplate.parseKombuchaQr(code) {
             // 扫到的物料同样进「效期管理」；同一条码重复扫会按 qrText 合并
             ExpiryStore.shared.add(
@@ -499,7 +515,60 @@ struct ScanView: View {
             return
         }
 
-        invalidText = "识别到的内容：\n\(code.prefix(160))\n\n请扫描「康普茶」模板生成的标签二维码。"
+        // ② 肉类标签
+        if let meat = LabelTemplate.parseMeatQr(code) {
+            handleMeat(meat, code: code)
+            return
+        }
+
+        // ③ 都不是 —— 不是本 App 印出来的标签
+        showAlert(title: "无法识别的标签",
+                  message: "识别到的内容：\n\(code.prefix(160))\n\n请扫描本 App 生成的标签二维码。")
+    }
+
+    /// 肉类标签：先入库（和康普茶一样，按 qrText 去重合并），
+    /// 再决定要不要进解冻流程。
+    ///
+    /// ★ 只有「**冷冻** 且 **尚未解冻**」才进解冻页 —— 逐条对应用户要求：
+    ///     · 「冷冻打印出来的二维码，再次扫描就是解冻」
+    ///     · 冷藏肉不需要解冻，「扫它不会再生成新标签」（模板页 footer 也是这么写的）
+    ///     · 解冻标签自己再被扫，不能又解冻一次（否则会无限套娃）
+    private func handleMeat(_ meat: MeatLabelInfo, code: String) {
+        ExpiryStore.shared.add(
+            LabelRecord(title: meat.title,
+                        kind: .meat,
+                        // 二维码里没有制作人（`LabelData.qrText` 只含后两组时间），
+                        // 所以扫回来的记录 maker 为空 —— 列表会显示占位。
+                        maker: "",
+                        createdAt: Date(),
+                        printedAt: nil,
+                        expireAt: meat.expireAt,
+                        bestBefore: meat.bestBefore,
+                        usedAt: nil,
+                        qrText: code,
+                        source: .scanned)
+        )
+
+        if meat.alreadyThawed {
+            showAlert(title: "这是解冻标签",
+                      message: "「\(meat.title)」已经解冻过一次了，已加入效期管理，"
+                             + "不会再触发解冻。")
+            return
+        }
+        guard meat.storage.isFrozen else {
+            showAlert(title: "冷藏肉类标签",
+                      message: "「\(meat.title)」是冷藏肉类，不需要解冻。"
+                             + "已加入效期管理。")
+            return
+        }
+
+        // 冷冻 + 未解冻 → 进解冻页
+        path.append(ScanRoute.thaw(meat))
+    }
+
+    private func showAlert(title: String, message: String) {
+        alertTitle = title
+        invalidText = message
         showInvalidAlert = true
     }
 }

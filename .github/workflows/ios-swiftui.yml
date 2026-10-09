@@ -98,6 +98,18 @@ jobs:
           $PB -c "Delete :LSSupportsOpeningDocumentsInPlace" "$PL" 2>/dev/null || true
           $PB -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PL"
 
+          # ★ 2026-10-09：灵动岛（Live Activity）。
+          #   `NSSupportsLiveActivities` 不是 `INFOPLIST_KEY_*` 认识的键，
+          #   写在 project.yml 里会被静默丢掉 —— 只能在这里补。
+          #   缺了它的症状：`Activity.request()` 直接抛
+          #   `ActivityAuthorizationError`，灵动岛永远不出现。
+          $PB -c "Delete :NSSupportsLiveActivities" "$PL" 2>/dev/null || true
+          $PB -c "Add :NSSupportsLiveActivities bool true" "$PL"
+
+          # ★ 确认 Widget 扩展真的被嵌进来了（少一个就说明 embedding 没生效）。
+          echo "=== PlugIns ==="
+          ls -la "$APP/PlugIns" 2>/dev/null || echo "!! 没有 PlugIns 目录，扩展没嵌进来"
+
           # ★ 本地化：开发区设成 zh_CN 并显式声明支持简体中文。
           #   不声明的话 App 的「首选语言」是 en，日期选择器会显示英文月份 / 星期。
           $PB -c "Delete :CFBundleDevelopmentRegion" "$PL" 2>/dev/null || true

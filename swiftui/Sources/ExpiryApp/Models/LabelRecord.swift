@@ -18,6 +18,7 @@ enum LabelKind: String, Codable, CaseIterable, Identifiable {
     case generic
     case kombucha
     case dairy
+    case meat
 
     var id: String { rawValue }
 
@@ -26,6 +27,7 @@ enum LabelKind: String, Codable, CaseIterable, Identifiable {
         case .generic: return "通用效期"
         case .kombucha: return "康普茶"
         case .dairy: return "奶制品"
+        case .meat: return "肉类"
         }
     }
 
@@ -34,6 +36,7 @@ enum LabelKind: String, Codable, CaseIterable, Identifiable {
         case .generic: return "clock"
         case .kombucha: return "drop.fill"
         case .dairy: return "flask.fill"
+        case .meat: return "fork.knife"
         }
     }
 }

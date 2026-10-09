@@ -3,9 +3,10 @@
 //  模板页的键盘交互 —— 填完信息不想打印时，键盘不能赖在屏幕上挡住下面的内容。
 //
 //  提供三种收起方式（用户要求「点屏幕或滑动屏幕自动隐藏键盘」）：
-//    ① 滑动列表     → `.scrollDismissesKeyboard(.immediately)`
+//    ① 滑动列表     → `.scrollDismissesKeyboard(.interactively)`
 //    ② 点屏幕任意处 → 挂在 **window** 上的 UITapGestureRecognizer
-//    ③ 键盘上方「完成」按钮（iOS 标准做法，兜底）
+//    ③ 键盘上方「完成」按钮（第一方 ToolbarItemGroup(placement: .keyboard)，
+//       由 `LabelActions` 统一挂，和「打印」并排 —— 见下面「2026-10-09 改动」）
 //
 //  ★★ 为什么不用 `.onTapGesture` / `.simultaneousGesture(TapGesture())`：
 //     把手指手势挂在 List 上会和 TextField 争抢 ——
@@ -16,7 +17,19 @@
 //     TextField 的聚焦 / 光标拖动、按钮点击照常生效，只是在同一次点击结束时
 //     额外把键盘收起来 —— 这正是「点屏幕自动隐藏键盘」想要的效果。
 //
+//  ★★ 2026-10-09 改动（用户反馈「动画生硬」+「完成和打印两个按钮重叠」）：
+//     1. `.immediately` → `.interactively`。
+//        `.immediately` 是「手指一动就把键盘整块抽走」，观感就是很生硬的
+//        一记闪跳；`.interactively` 让键盘**跟着手指走**，拖到哪收到哪，
+//        这才是 iOS 系统键盘该有的手感。
+//     2. 键盘弹起时，底部那条「打印」操作条**就地淡出并收起**，
+//        同时把「打印」搬到键盘上方的第一方 accessory bar 里，
+//        和「完成」并排 —— 两个按钮从此不可能再重叠。
+//        键盘隐藏的时长从 `keyboardAnimationDurationUserInfoKey` 读出来，
+//        用它驱动动画，操作条才会和键盘同步起落，不会各走各的。
+//
 
+import Combine
 import SwiftUI
 import UIKit
 
@@ -31,6 +44,50 @@ enum SoftKeyboard {
                                         to: nil, from: nil, for: nil)
     }
 }
+
+// MARK: - 键盘可见性
+
+/// 全局键盘可见性。
+///
+/// ★ 用系统的 `keyboardWillShow/Hide` 通知（第一方 API）而不是自己猜，
+///   顺带把键盘自己的动画时长读出来 —— 底部操作条要和键盘**同一条时间线**
+///   起落，否则看起来就是「按钮自己乱动」（用户说的「动画生硬」）。
+///
+/// 做成单例：所有模板页共享同一份状态，不需要各自注册一遍观察者。
+final class KeyboardWatcher: ObservableObject {
+
+    static let shared = KeyboardWatcher()
+
+    /// 键盘当前是否可见。
+    @Published private(set) var isVisible = false
+    /// 键盘这次动画的时长（秒），用于让我们的动画与其对齐。
+    @Published private(set) var duration: Double = 0.25
+
+    private init() {
+        let center = NotificationCenter.default
+        // 闭包捕获 self 用 weak，观察者活到进程结束（单例），无需移除。
+        center.addObserver(forName: UIResponder.keyboardWillShowNotification,
+                           object: nil, queue: .main) { [weak self] note in
+            self?.apply(note, visible: true)
+        }
+        center.addObserver(forName: UIResponder.keyboardWillHideNotification,
+                           object: nil, queue: .main) { [weak self] note in
+            self?.apply(note, visible: false)
+        }
+    }
+
+    private func apply(_ note: Notification, visible: Bool) {
+        let raw = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
+        duration = raw ?? 0.25
+        guard isVisible != visible else { return }
+        // 动画包在这里，底部操作条的收起/展开就与键盘同步。
+        withAnimation(.easeInOut(duration: duration)) {
+            isVisible = visible
+        }
+    }
+}
+
+// MARK: - 点空白收起键盘
 
 /// 「点空白收起键盘」的安装器。
 ///
@@ -107,18 +164,18 @@ private final class WindowHookView: UIView {
 
 // MARK: - 一行挂载
 
-/// 带输入框的页面统一挂这个：滑动收起 + 点空白收起 + 键盘上方「完成」。
+/// 带输入框的页面统一挂这个：滑动收起 + 点空白收起。
+///
+/// ⚠️ 键盘上方「完成」与「打印」两个按钮**不在这里**，而是在
+///   `LabelActions` 里统一挂 —— 那里才有 `printNow`。
+///   两处各挂一个 `.toolbar(placement: .keyboard)` 虽然也能编译，
+///   但会变成两条独立 accessory bar，反而更容易出怪相。
 struct KeyboardDismissModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .scrollDismissesKeyboard(.immediately)
+            // ★ 跟着手指走，而不是整块闪走 —— 见文件头 2026-10-09 说明。
+            .scrollDismissesKeyboard(.interactively)
             .background(DismissKeyboardOnTap())
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("完成") { SoftKeyboard.hide() }
-                }
-            }
     }
 }
 

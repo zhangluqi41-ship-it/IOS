@@ -35,6 +35,11 @@ enum Theme {
     ///   三张卡片需要互相区分。如果也要统一成蓝色，改这两行即可。）
     static let tplDairyTint = Color(red: 0x85 / 255.0, green: 0x4F / 255.0, blue: 0x0B / 255.0)
     static let tplDairyFill = Color(red: 0xFA / 255.0, green: 0xEE / 255.0, blue: 0xDA / 255.0)
+    /// 肉类 = 玫红（★ 2026-10-09 新增，第 4 张卡片）。
+    ///   选玫红是因为其余三张已经占了蓝 / 靛蓝 / 琥珀 —— 再上一个暖色系的红，
+    ///   既能一眼和奶制品的琥珀分开，又符合「肉类」的直觉。
+    static let tplMeatTint = Color(red: 0xC1 / 255.0, green: 0x33 / 255.0, blue: 0x54 / 255.0)
+    static let tplMeatFill = Color(red: 0xFD / 255.0, green: 0xE8 / 255.0, blue: 0xEC / 255.0)
 
     /// 卡片圆角（squircle 近似）。
     static let cardRadius: CGFloat = 16

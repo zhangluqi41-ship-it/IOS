@@ -3,7 +3,8 @@
 热敏标签机打效期标签的 App。**纯 iOS 原生（SwiftUI）**，50 × 30 mm 标签，
 蓝牙连接硕方 T50 Pro 打印机。
 
-- **版本**：1.0.0（build 26）— 2026-10-08 由优化清单定稿，正式投入使用
+- **版本**：1.0.1（build 27）— 2026-10-09 肉类模板 / 键盘与日期交互 / 提醒分级 + 灵动岛
+  （上一版 1.0.0 / build 26，2026-10-08 定稿）
 - **仓库**：`https://github.com/zhangluqi41-ship-it/IOS.git`（`main`）
 - **部署目标**：iOS 26.0（跟着 Xcode 26 SDK 走，直接拿系统 Liquid Glass 材质）
 - **设备**：iPhone 17 Pro / iOS 27.0.1 / UDID `00008150-0002283A3EF0401C`
@@ -21,14 +22,17 @@ expiry_manager/
 │   ├── project.yml                     # XcodeGen 工程描述（.xcodeproj 是生成物，不进仓库）
 │   ├── Vendor/SFPrintSDK.xcframework   # 硕方官方蓝牙 SDK（静态 framework，14 MB）
 │   ├── Resources/NotoSansSC-*.ttf      # 标签用的中文字体（版式是按它量的）
+│   ├── Support/ExpiryWidget-Info.plist # 灵动岛扩展的 Info.plist（刻意放在 sources 之外）
 │   ├── Tools/                          # 本机自测脚本（见第四节）
 │   ├── Tests/ExpiryAppTests/           # 单元测试
+│   ├── Sources/Shared/                 # 主 App 与扩展**共用**的代码（编译宏区分实现）
+│   ├── Sources/ExpiryWidget/           # 灵动岛（Live Activity）Widget 扩展
 │   └── Sources/ExpiryApp/
 │       ├── ExpiryApp.swift             # @main
 │       ├── RootView.swift              # 四个一级页签 + 切页回一级的导航
 │       ├── Theme.swift / LiquidGlass.swift
-│       ├── Models/                     # LabelData(版式) / LabelRecord(记录) / LabelTemplate(业务规则)
-│       ├── Services/                   # 存储、通知、字体、二维码、打印、渲染、PDF
+│       ├── Models/                     # LabelData(版式) / LabelRecord(记录) / LabelTemplate(业务规则) / Meat(肉类)
+│       ├── Services/                   # 存储、通知、灵动岛、字体、二维码、打印、渲染、PDF
 │       ├── Views/                      # 模板页 / 扫码 / 效期管理 / 打印机 / 键盘交互
 │       └── Native/                     # 硕方 SDK 的 ObjC 封装 + 桥接头 + 打印日志
 └── README.md
@@ -94,6 +98,16 @@ GitHub Actions 自动跑：
 5. **连接打印机失败时不要「刚发起连接就 stopScan」** —— 会把在途连接掐死，症状是「完全无法连接」。
 6. **`ScrollView` 里 `aspectRatio(.fit)` 会失效**，必须先用 `GeometryReader` 量出可用区域。
 7. **预览功能已下线**：`PreviewView` / `PreviewPayload` / `PDFRasterizer` 源码保留但没入口，**别当死代码删**。
+8. **灵动岛（Live Activity）只能由前台 App 启动。** 本地通知拉不起它，后台只能靠 APNs
+   push-to-start（免费账号没有推送能力）。所以做法只能是「用户打开 App 时，把 8 小时内会到期的
+   那个里程碑先挂上去」。**别试图改成由通知拉起。**
+9. **`Sources/Shared/` 里的文件同时编进主 App 与扩展**，跨目标的引用必须包在
+   `#if EXPIRY_APP` 里（扩展没有 `ExpiryStore`）。往 `Theme.swift` 加东西前也要先想清楚会不会
+   把扩展编崩 —— 它也被借去扩展了。
+10. **肉类标签靠标题前缀区分**（`冷藏-` / `冷冻-` / `解冻-`）。肉类和奶制品三行正文完全一样，
+    二维码里只有后两组时间，没有前缀就分不出「扫这张该不该走解冻」。
+11. **「稍后提醒」只在「已到时间」时才重复**（每 5 分钟一条 repeating 通知）；「提前 10 分钟」
+    那一档点了什么都不做。判据是按下按钮那一刻的 `Date()`，不是 `ContentState.phase`。
 
 ## 四、本机自测脚本（`swiftui/Tools/`）
 

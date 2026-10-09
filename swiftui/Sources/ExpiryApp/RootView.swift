@@ -89,6 +89,8 @@ struct RootView: View {
 
     @ObservedObject private var store = ExpiryStore.shared
 
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         TabView(selection: $nav.selection) {
             Tab("效期打印", systemImage: "square.grid.2x2", value: AppTab.templates) {
@@ -134,7 +136,24 @@ struct RootView: View {
             //   放在 RootView（而不是「打印机」页）是因为自动连接要在
             //   用户还没进过打印机页时就生效。
             PrinterService.shared.startAppSession()
+            // ★ 灵动岛对齐（冷启动时 `ExpiryStore.init` 还没有触发过重排）。
+            syncLiveActivity()
         }
+        .onChange(of: scenePhase) { _, phase in
+            // ★★ 只有回到前台才可能启动 Live Activity —— 这是 ActivityKit 的硬限制
+            //    （本地通知 / 后台都拉不起它，见 `ExpiryActivityManager` 顶部说明）。
+            //    所以每次用户打开 App 都重算一次：把「8 小时内会到期」的那个
+            //    里程碑挂到灵动岛上。
+            guard phase == .active else { return }
+            syncLiveActivity()
+        }
+    }
+
+    /// 让灵动岛对齐到最近那个里程碑。
+    private func syncLiveActivity() {
+        let records = store.records
+        let enabled = store.reminderEnabled
+        Task { await ExpiryActivityManager.shared.sync(records: records, enabled: enabled) }
     }
 
     /// 延后把所有已登记、且**当前不可见**的 Tab 归位到一级菜单。

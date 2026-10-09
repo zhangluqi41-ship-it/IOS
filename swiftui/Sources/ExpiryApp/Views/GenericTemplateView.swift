@@ -27,10 +27,10 @@ struct GenericTemplateView: View {
             }
 
             Section {
-                DatePicker("原始保质期", selection: $expireDate, displayedComponents: .date)
+                AutoCloseDatePicker(title: "原始保质期", date: $expireDate)
                 QuickDateChips(selection: $expireDate)
 
-                DatePicker("最佳使用时间", selection: $bestDate, displayedComponents: .date)
+                AutoCloseDatePicker(title: "最佳使用时间", date: $bestDate)
                 QuickDateChips(selection: $bestDate)
             } header: {
                 Text("日期")
@@ -80,7 +80,12 @@ struct GenericTemplateView: View {
     }
 }
 
-/// 快捷档位：+7 天 / +15 天 / +1 个月。
+/// 快捷档位：+3 天 / +7 天 / +15 天 / +1 个月。
+///
+/// ★ 2026-10-09 用户要求增加「+3 天」—— 奶制品最推荐档就是 +3 天，
+///   通用模板里也常要填「开封后 3 天用完」，手点日历太慢。
+///   四个 chip 在 iPhone 最窄机型上仍能一行放下（约 296pt < 343pt 可用宽度），
+///   所以不做横向滚动，保持一眼看全。
 struct QuickDateChips: View {
     @Binding var selection: Date
 
@@ -121,6 +126,7 @@ struct QuickDateChips: View {
         func add(_ days: Int) -> Date { cal.date(byAdding: .day, value: days, to: today) ?? today }
         func addMonth(_ m: Int) -> Date { cal.date(byAdding: .month, value: m, to: today) ?? today }
         return [
+            Preset(label: "+3 天", date: add(3)),
             Preset(label: "+7 天", date: add(7)),
             Preset(label: "+15 天", date: add(15)),
             Preset(label: "+1 个月", date: addMonth(1)),

@@ -1,6 +1,6 @@
 //
 //  TemplatesTab.swift
-//  模板 Tab —— 三个模板卡片（通用效期 / 康普茶 / 奶制品）+ 使用流程说明。
+//  模板 Tab —— 四个模板卡片（通用效期 / 康普茶 / 奶制品 / 肉类）+ 使用流程说明。
 //
 //  ★ 导航采用 value-based（`NavigationLink(value:)` + `navigationDestination(for:)`），
 //    因为只有 value-based 跳转才会写进父级传入的 NavigationPath；
@@ -15,6 +15,7 @@ enum TemplateRoute: Hashable {
     case generic
     case kombucha
     case dairy
+    case meat
 }
 
 struct TemplatesTab: View {
@@ -53,6 +54,18 @@ struct TemplatesTab: View {
                             fill: Theme.tplDairyFill,
                             route: .dairy
                         )
+                        // ★ 2026-10-09 新增（用户清单「一、模板二级菜单」第 4 条）：
+                        //   肉类模板「菜单和奶制品一样」，所以直接作为第 4 张卡片。
+                        //   ⚠️「解冻」**不是**卡片 —— 它只能由扫冷冻标签的二维码进入，
+                        //   见 `MeatThawView`。
+                        TemplateCard(
+                            title: "肉类",
+                            subtitle: "冷藏 / 冷冻自动算",
+                            systemImage: "fork.knife",
+                            tint: Theme.tplMeatTint,
+                            fill: Theme.tplMeatFill,
+                            route: .meat
+                        )
                     }
 
                     howItWorks
@@ -70,6 +83,8 @@ struct TemplatesTab: View {
                     KombuchaTemplateView()
                 case .dairy:
                     DairyTemplateView()
+                case .meat:
+                    MeatTemplateView()
                 }
             }
         }

@@ -33,7 +33,12 @@ struct ExpiryApp: App {
     }
 }
 
-/// 让本地通知在 App 处于前台时也以横幅 + 声音呈现。
+/// 让本地通知在 App 处于前台时也以横幅 + 声音呈现，并把
+/// 「已完成使用 / 稍后提醒」两个动作转给 `ExpiryStore`。
+///
+/// ★ 2026-10-09 新增 `didReceive`：
+///   通知上的按钮（以及灵动岛里的按钮走的是另一条路 —— `LiveActivityIntent`）
+///   都是从这里进 App 的。少接这一个方法，按钮点下去就只是「打开 App」。
 final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
 
     static let shared = NotificationPresenter()
@@ -42,5 +47,14 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
                                willPresent notification: UNNotification)
     async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound, .badge]
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                               didReceive response: UNNotificationResponse)
+    async {
+        let content = response.notification.request.content
+        ExpiryStore.shared.handleNotificationResponse(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: content.userInfo)
     }
 }
