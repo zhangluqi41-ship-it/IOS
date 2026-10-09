@@ -113,7 +113,16 @@ struct ExpiryLiveActivityWidget: Widget {
                     .foregroundStyle(.white)
             }
             .keylineTint(Theme.brand)
-            .contentMarginsDisabled()
+            // ★★ 紧凑态两侧留白的正解：
+            //    用户反馈「左侧沙漏离摄像头缝隙过大、右侧时间右边有多余黑色，
+            //    左右两侧留出的好像是相同的空格一样的占位」—— 这正是系统给
+            //    紧凑态默认加的**对称内容边距**。
+            //    官方 API 是 `DynamicIsland.contentMargins(_:_:for:)`，
+            //    这里把 `.compactLeading` / `.compactTrailing` 两侧都压到 0，
+            //    内容就真正贴到摄像头两侧，不再有那圈「空图标位」。
+            //    （`.expanded` 保持默认，展开态本来就该有呼吸感。）
+            .contentMargins(.horizontal, 0, for: .compactLeading)
+            .contentMargins(.horizontal, 0, for: .compactTrailing)
         }
     }
 }
