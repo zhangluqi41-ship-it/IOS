@@ -37,9 +37,24 @@ final class ExpiryActivityManager {
     /// 提前多久就把灵动岛挂上去（见文件头）。
     static let window: TimeInterval = 8 * 60 * 60
 
+    /// 「已经到点」之后还允许挂多久。
+    ///
+    /// ★★ 为什么需要这段宽限：如果只保留 `delta > 0`（还没到点），
+    ///    `dueAt` 一到活动就会被下一次 `sync` 收掉 —— 用户根本没机会点
+    ///    「已完成使用 / 稍后提醒」。给 30 分钟，让他有充裕时间处理；
+    ///    这段时间岛上显示「已到时间 + 两个按钮」。
+    static let graceWindow: TimeInterval = 30 * 60
+
     private var activity: Activity<ExpiryActivityAttributes>?
     /// 当前这条活动对应的「记录 + 里程碑」。
     private var currentKey: String?
+
+    /// 「稍后提醒」设下的新目标时刻（recordID → 时刻）。
+    ///
+    /// ★ 只活在内存里：它不是「数据」，只是给 `sync` 一个提示 ——
+    ///   用户点过稍后提醒的话，回到前台时把倒计时区间接回那个 5 分钟目标。
+    ///   App 被杀掉就丢了，此时退回「已到时间」展示，功能不丢。
+    private var snoozeTargets: [String: Date] = [:]
 
     private init() {}
 
@@ -63,8 +78,11 @@ final class ExpiryActivityManager {
         for record in records where record.usedAt == nil {
             for milestone in ExpiryStore.milestones(of: record) {
                 let delta = milestone.date.timeIntervalSince(now)
-                // 只要「还没到、且 8 小时内」的；越近越优先。
-                guard delta > 0, delta <= Self.window else { continue }
+                // ★ 窗口扩到 `window + graceWindow`（8h + 30min）：
+                //   刚过点半小时内的物料仍然要留在岛上（否则「到时间」那一刻
+                //   活动就自己消失了，用户根本来不及点按钮）。这段时间
+                //   `ContentState.phase` 是 `.due`，岛上显示「已到时间 + 两个按钮」。
+                guard delta > -Self.graceWindow, delta <= Self.window else { continue }
                 if best == nil || milestone.date < best!.milestone.date {
                     best = (record, milestone)
                 }
@@ -82,15 +100,23 @@ final class ExpiryActivityManager {
             kindLabel: best.record.kind.label,
             milestoneLabel: best.milestone.label)
 
+        // ★★ 「已经到点」的两条岔路：
+        //    ① 用户点过「稍后提醒」（`snoozedUntil` 是未来时刻）
+        //       → 倒计时用那个未来时刻，`phase` 现算仍为 `.soon`，
+        //         岛上就是一段新的 5 分钟倒计时。
+        //    ② 没点过 → 倒计时区间已经走完，`phase` 现算为 `.due`，
+        //         岛上显示「已到时间 + 两个按钮」，等他处理。
+        let freshTarget = snoozedUntil(recordID: best.record.id.uuidString)
+        let dueAt = freshTarget ?? best.milestone.date
         let state = ExpiryActivityAttributes.ContentState(
             startedAt: now,
-            dueAt: best.milestone.date,
-            phase: .soon)
+            dueAt: dueAt)
 
         let key = "\(best.record.id.uuidString)#\(best.milestone.label)"
-        let content = ActivityContent(state: state, staleDate: best.milestone.date)
+        let content = ActivityContent(state: state, staleDate: dueAt)
 
-        // 还是同一个目标：只刷新一下状态（比如用户刚打开 App、phase 该重算了）。
+        // 还是同一个目标：只刷新一下状态
+        //（比如刚打开 App、用户点过「稍后提醒」要把区间换新）。
         if currentKey == key, let activity {
             await activity.update(content)
             return
@@ -111,10 +137,56 @@ final class ExpiryActivityManager {
         }
     }
 
+    /// 把灵动岛的倒计时重置成「从现在起 5 分钟」。
+    ///
+    /// ★★ 用户反馈：「到时间后的稍后提醒，点击完无重新倒计时 5 分钟功能」。
+    ///
+    /// ★ 为什么是「重起」而不是「`update`」：
+    ///   `Activity.update` 能让内容秒变，但倒计时的**区间下界**只有重起
+    ///   才能干净地换成新值（同一条活动反复 update 容易出现视觉上的
+    ///   「时间不连续」）。重起代价只是一次 request，用户体验更直观。
+    ///
+    /// ★ 重起前先把「5 分钟后的目标时刻」记进 `snoozeTargets`，
+    ///   这样哪怕用户马上又杀掉 App，回到前台时 `sync` 也能把区间接回去
+    ///   （见 `sync` 里的 `snoozedUntil`）。
+    func restart(recordID: String, dueAt: Date) async {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        snoozeTargets[recordID] = dueAt
+
+        // 手上没有活动（缓存丢了）→ 让调用方之后走正常的 sync 重建。
+        guard let activity else {
+            await endAll()
+            return
+        }
+        let attrs = activity.attributes
+        let state = ExpiryActivityAttributes.ContentState(startedAt: Date(), dueAt: dueAt)
+        let content = ActivityContent(state: state, staleDate: dueAt)
+
+        await activity.end(nil, dismissalPolicy: .immediate)
+        self.activity = nil
+        currentKey = nil
+
+        do {
+            self.activity = try Activity.request(attributes: attrs,
+                                                 content: content,
+                                                 pushType: nil)
+            currentKey = "\(recordID)#\(attrs.milestoneLabel)"
+        } catch {
+            NSLog("ExpiryActivityManager: 稍后提醒重起失败 \(error.localizedDescription)")
+        }
+    }
+
+    /// 「稍后提醒」设下的新目标时刻（如果用户点过）。
+    private func snoozedUntil(recordID: String) -> Date? {
+        guard let t = snoozeTargets[recordID], t > Date() else { return nil }
+        return t
+    }
+
     // MARK: - 结束
 
     /// 收掉某条记录对应的灵动岛（点了「已完成使用」时用）。
     func end(recordID: String) async {
+        snoozeTargets.removeValue(forKey: recordID)
         guard let activity, currentKey?.hasPrefix(recordID) == true else { return }
         await activity.end(nil, dismissalPolicy: .immediate)
         self.activity = nil

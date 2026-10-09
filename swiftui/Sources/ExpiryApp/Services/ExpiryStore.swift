@@ -53,12 +53,17 @@ final class ExpiryStore: ObservableObject {
     /// ★ iOS 系统上限是 64 条；留 4 条余量给「稍后提醒」的重复通知等。
     ///   超出的部分按**触发时刻从近到远**截断 —— 快到期的物料一定要保得住。
     private static let maxPendingNotifications = 60
-    /// 每个里程碑排几档通知（前一天 / 当天 / 提前 1 小时 / 提前 10 分钟 / 到时间）。
+    /// 每个里程碑排几档通知（前一天 09:00 / 当天 09:00 / 提前 1 小时 / 提前 10 分钟）。
+    ///
+    /// ★★ 2026-10-09 第二轮：编号仍是 5 档，但**第 5 档（到时间）不再排通知** ——
+    ///   「到时间」那一刻改由灵动岛承担（紧凑态自动变展开态 + 两个按钮）。
+    ///   编号保留 5 是为了 `ids(for:)` 与 `cancelNotifications(for:)` 的下标稳定。
     private static let tiersPerMilestone = 5
 
     private static let reminderKey = "expiryReminderEnabled"
     private static let idPrefix = "expiry.milestone."
-    /// 每个里程碑 5 档 → 一条记录最多 2 × 5 = 10 条。
+    /// 每个里程碑 5 个档位 → 一条记录最多 2 × 5 = 10 个 identifier。
+    /// （其中「到时间」那一档已不再使用，但编号保留，见 `tiersPerMilestone`。）
     private static let notificationsPerRecord = 2 * tiersPerMilestone
 
     /// 提前多久的「临期提醒」（正常推送）。
@@ -324,18 +329,27 @@ final class ExpiryStore: ObservableObject {
                         repeats: false)))
             }
 
-            // ③④⑤ 提前 1 小时 / 提前 10 分钟 / 到时间
-            for (delta, tier) in [(soonTier, 2), (imminentTier, 3), (0, 4)] {
+            // ③④ 提前 1 小时 / 提前 10 分钟
+            //
+            // ★★ 2026-10-09 第二轮修正（用户反馈「目前是小灵动岛加一个横幅，
+            //    但是逻辑应该是小灵动岛放大灵动岛，然后让我选择已完成或者其他」）：
+            //    **「到时间」那一档不再排常规通知** —— 那一刻由灵动岛承担
+            //    （紧凑态自动变成展开态并给按钮）。这里只保留提前 1 小时
+            //    与提前 10 分钟两条，它们仍会正常弹横幅 + 上灵动岛倒计时。
+            //
+            //    ⚠️ tier 的序号仍然按 5 档算（tier 4 留给「到时间」），
+            //      不要压缩成 4 档 —— `cancelNotifications(for:)` 与
+            //      identifier 下标都依赖这个编号。
+            for (delta, tier) in [(soonTier, 2), (imminentTier, 3)] {
                 let fire = milestone.date.addingTimeInterval(-delta)
                 guard fire > now else { continue }
-                let isImminent = tier >= 3
+                // 提前 1 小时：纯告知。提前 10 分钟：带按钮 + 时效性。
+                let isImminent = (tier == 3)
                 let content = makeContent(
                     title: isImminent ? milestone.dueTitle : milestone.soonTitle,
                     body: "\(record.title)（\(kindLabel)）"
                         + (isImminent ? milestone.dueBody : milestone.soonBody),
                     record: record, milestone: milestone,
-                    // ★ 临期 / 到时间这两档带「已完成使用 / 稍后提醒」按钮，
-                    //   并且提升到「时效性通知」—— 让它在专注模式下也能冒出来。
                     category: isImminent ? categoryDue : categoryNotice,
                     timeSensitive: isImminent)
                 out.append(Candidate(
@@ -417,10 +431,19 @@ final class ExpiryStore: ObservableObject {
     ///     · 「到时间」那条点稍后提醒 → **每 5 分钟提醒一次**
     ///   判据就是「点下去的这一刻有没有到时间」。
     ///
-    /// ★ 重复提醒用一条 `repeats: true` 的独立通知（只占 1 个待发名额）。
-    ///   停止它的方式：点通知 / 灵动岛上的「已完成使用」，或任何一次记录改动
-    ///   （`rescheduleReminders` 会整批清掉）。identifier 固定按记录 id 生成，
-    ///   重复点「稍后提醒」也只会有一条。
+    /// ★ 每 5 分钟循环靠一条 `repeats: true` 的本地通知做心跳
+    ///   （只占 1 个待发名额）。灵动岛那边的倒计时重置是另一条路：
+    ///   按钮走 `ExpiryActivityBridge.snooze` → `ExpiryActivityManager.restart`。
+    ///
+    /// ★★ 2026-10-09 修「点击完无重新倒计时 5 分钟」：通知里带的
+    ///   `userInfoDueAt` 改成 **新的 5 分钟目标时刻**，而不是原来那个已经过去的
+    ///   `dueAt` —— 否则用户从**通知上**再点一次「稍后提醒」会被
+    ///   `guard Date() >= dueAt` 通过（对），但活动那边拿到的还是旧时刻，
+    ///   倒计时依旧不动。
+    ///
+    /// 停止它的方式：点「已完成使用」，或任何一次记录改动
+    /// （`rescheduleReminders` 会整批清掉）。identifier 固定按记录 id 生成，
+    /// 重复点「稍后提醒」也只会有一条。
     func startSnooze(byID idString: String, dueAt: Date?) {
         // 还没到时间（= 提前 10 分钟那一档）→ 什么都不做。
         guard let dueAt, Date() >= dueAt else { return }
@@ -428,6 +451,8 @@ final class ExpiryStore: ObservableObject {
             guard let self,
                   let record = self.records.first(where: { $0.id.uuidString == idString }),
                   record.usedAt == nil else { return }
+            // ★ 新的目标时刻 = 现在 + 5 分钟（不是原来的 dueAt）。
+            let target = Date().addingTimeInterval(Self.snoozeInterval)
             let content = UNMutableNotificationContent()
             content.title = "还不处理吗？"
             content.body = "\(record.title)（\(record.kind.label)）已经到时间了。"
@@ -436,7 +461,7 @@ final class ExpiryStore: ObservableObject {
             content.categoryIdentifier = Self.categoryDue
             content.userInfo = [
                 Self.userInfoRecordID: record.id.uuidString,
-                Self.userInfoDueAt: dueAt.timeIntervalSince1970,
+                Self.userInfoDueAt: target.timeIntervalSince1970,
             ]
             let trigger = UNTimeIntervalNotificationTrigger(
                 timeInterval: Self.snoozeInterval, repeats: true)

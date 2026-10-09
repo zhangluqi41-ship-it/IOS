@@ -26,6 +26,18 @@
 //    push-to-start，免费开发者账号没有推送能力）。
 //    所以只能「用户最后一次打开 App 时，把 8 小时内会到期的那个里程碑先挂上去」。
 //
+//  ★★ 但这只限制「起点」，不限制「之后」：
+//    活动一旦起来了，它的**倒计时和阶段切换都是系统自己算的** ——
+//    `Text(timerInterval:)` 每秒刷新，`ContentState.phase` 按 `Date()` 现算。
+//    所以在 `dueAt` 那一刻，紧凑态会自己渲染成「已到时间 + 两个按钮」，
+//    不需要 App 在后台做任何事（见 `ContentState.phase` 的注释）。
+//
+//  ★ 「稍后提醒」的 5 分钟循环：
+//    活动起来之后也没法从后台重置倒计时 → 用一条 `repeats: true` 的本地通知
+//    每 5 分钟敲一次（见 `ExpiryStore.startSnooze`）；App 一回到前台，
+//    `ExpiryActivityManager.sync` 会检测到「已经到点但还没处理」，
+//    把倒计时区间重置成 `[now, now+5min]`，灵动岛上就又是满格的 5 分钟。
+//
 
 import ActivityKit
 import AppIntents
@@ -57,7 +69,30 @@ struct ExpiryActivityAttributes: ActivityAttributes {
         var startedAt: Date
         /// 到期时刻（= 里程碑时间）。
         var dueAt: Date
-        var phase: Phase
+
+        // MARK: 派生属性（**不要存 phase**）
+
+        /// 当前处于哪个阶段。
+        ///
+        /// ★★ 为什么不把 `phase` 存进 `ContentState`：
+        ///    存下来的值只有在「我们主动 update 活动」时才会变 ——
+        ///    而这正是免费账号做不到的事（没有 APNs，App 在后台不能更新活动）。
+        ///    所以**改成按当前时刻现算**：系统每秒刷新倒计时的时候会一起重绘，
+        ///    `Date()` 越过 `dueAt` 的那一刻，它自然就从 `.soon` 翻成 `.due`，
+        ///    紧凑态自动渲染展开内容、按钮也自动多出「稍后提醒」。
+        ///    这就是用户要的「小灵动岛自动放大灵动岛」，全程不需要 App 干预。
+        var phase: Phase {
+            Date() >= dueAt ? .due : .soon
+        }
+
+        /// 倒计时的渲染区间；`nil` 表示已经到时间（别再画负数倒计时）。
+        ///
+        /// ★ `Text(timerInterval:)` 要求「下界 < 上界」，否则会崩。
+        ///   到点之后返回 `nil`，由视图显示「已到时间 / 到点」。
+        var countdownInterval: ClosedRange<Date>? {
+            guard dueAt > startedAt, Date() < dueAt else { return nil }
+            return startedAt...dueAt
+        }
     }
 
     /// 记录的 `id.uuidString` —— 按钮回写时用来定位这条记录。
@@ -143,10 +178,21 @@ enum ExpiryActivityBridge {
     }
 
     /// 「稍后提醒」：只有**已经到时间**的那条才需要重复提醒。
+    ///
+    /// ★★ 2026-10-09 修正（用户反馈「点击完无重新倒计时 5 分钟功能」）：
+    ///    以前只排了一条 `repeats: true` 的 5 分钟通知，**灵动岛上的倒计时
+    ///    一动不动**（因为它还是指向原来那个已经走完的 `dueAt`）。
+    ///    现在多一步：把灵动岛重起一遍，倒计时区间重置成 `[now, now+5min]`，
+    ///    用户点完就能看到岛上重新跳 5 分钟。
+    ///
+    ///    ⚠️ 重起活动代替「更新活动」，是因为 `Activity.update` 只让内容秒变，
+    ///       而这里要的是**倒计时区间换新的**；重起最直接、也顺带清了 staleDate。
     static func snooze(recordID: String, dueAt: Date) {
         // 提前 10 分钟的那条：不做任何操作。
         guard Date() >= dueAt else { return }
         ExpiryStore.shared.startSnooze(byID: recordID, dueAt: dueAt)
+        let fresh = Date().addingTimeInterval(ExpiryStore.snoozeInterval)
+        Task { await ExpiryActivityManager.shared.restart(recordID: recordID, dueAt: fresh) }
     }
 
     #else
