@@ -59,6 +59,21 @@
 //     日期永远在右侧。`DatePicker` 只保留它的按钮（label 已被
 //     `.labelsHidden()` 藏掉），点击照旧弹出日历。
 //
+//  【第五轮】★ 本次 —— 用户反馈：
+//     「日期选择这里，排版出现了问题，左侧文字目前已恢复，
+//       右侧的时间出现了重复排版，其中一个日期是可使用的正常功能
+//       『xxxx年xx月xx日』，另一个日期『yyyy/mm/dd』是多余的，需要删除」
+//
+//  ★★ 上一轮虽然修好了左右位置，但**留下了重复**：
+//     `DatePicker(.compact)` **藏不掉它自己那行日期文字** ——
+//     `.labelsHidden()` 只藏 label（标题），系统那行日期照样画出来。
+//     于是「我自绘的 `2026/10/09`」+「系统的 `2026年10月9日`」同屏出现。
+//
+//  ★★ 本次正解：**删掉自绘 Text，只留系统 DatePicker**。
+//     用户已明确表态「系统的 `xxxx年xx月xx日` 是可用于点击的正常功能」，
+//     所以系统那行才是要保留的那一个。
+//     ⚠️ **不要再往这一行加任何自绘日期文字**（历史坑，见 `body` 注释）。
+//
 
 import SwiftUI
 
@@ -73,9 +88,25 @@ struct AutoCloseDatePicker: View {
     @Binding var date: Date
 
     var body: some View {
-        // ★ 用 HStack 做**主布局**（不再是 overlay）：
-        //   行内三段 ——「标题」—「弹性空白」—「自绘日期 + 系统 compact 按钮」。
-        //   标题是真实布局元素，**不可能**再被挤没；日期永远贴在右侧。
+        // ★ 行内两段 ——「标题」—「弹性空白」—「系统 DatePicker」。
+        //   标题是真实布局元素，**不可能**再被挤没。
+        //
+        //  【第五轮关键修复】用户反馈「右侧的时间出现了重复排版：
+        //    『xxxx年xx月xx日』是可用正常功能，『yyyy/mm/dd』是多余的，要删」。
+        //
+        //  ★★ 根因：`DatePicker(.compact)` **无法被藏掉自己的日期文字** ——
+        //     `.labelsHidden()` 只藏标题（label），系统那行日期（受 locale 影响，
+        //     渲染成「2026年10月9日」）**照旧画在按钮上**。
+        //     于是「自绘 `2026/10/09`」和「系统 `2026年10月9日`」**同时出现** = 重复。
+        //
+        //  ★★ 正解：**只保留系统 DatePicker**（用户明确说它「是可用于点击的正常功能」），
+        //     删掉自绘的那行 Text。这样：
+        //       · 没有重复；
+        //       · 点击区域就是系统按钮本身，弹出日历照旧；
+        //       · 「选完自动收起」由 `DatePickerDismissal` 负责，不受影响。
+        //
+        //  ⚠️ 曾经为了「统一成 `xxxx/xx/xx`」而自绘 —— 但那会与系统文字打架。
+        //     用户已表态保留系统格式，**不要再加回自绘 Text**。
         HStack(spacing: 8) {
             Text(title)
                 .foregroundStyle(.primary)
@@ -83,15 +114,8 @@ struct AutoCloseDatePicker: View {
 
             Spacer(minLength: 8)
 
-            // ★ 自绘日期：固定 `xxxx/xx/xx`，绕开 locale。
-            Text(Self.text(for: date))
-                .monospacedDigit()
-                .foregroundStyle(Theme.brand)
-                .layoutPriority(1)
-
-            // ★ 系统 DatePicker 只留**按钮**（label 已被 `labelsHidden()` 藏掉），
-            //   点击它才会弹出日历。给它一个紧凑的固定宽度，
-            //   不让它按自己的固有宽度去抢标题的位置。
+            // ★ 系统 DatePicker：**自带**日期文字（`xxxx年xx月xx日`，可点击弹出）。
+            //   这是这一行**唯一**的日期显示 —— 不再叠加任何自绘文字。
             DatePicker("", selection: normalized, displayedComponents: .date)
                 .labelsHidden()
                 .datePickerStyle(.compact)
@@ -120,7 +144,12 @@ struct AutoCloseDatePicker: View {
     }
 
     /// `xxxx/xx/xx` —— 固定 4/2/2 位，手拼而不用 DateFormatter，
-    /// 彻底绕开 locale 对格式的影响（这也正是需求①要的）。
+    /// 彻底绕开 locale 对格式的影响。
+    ///
+    /// ⚠️ **第五轮起本方法不再被视图调用**（日期显示交回系统 DatePicker，
+    ///    否则会与系统文字重复排版 —— 见 `body` 的注释）。
+    ///    保留它是为了「万一又要自绘」时有现成的格式化入口，
+    ///    同时也是 #Preview 与未来可能的迁移参照。**不要因为"没人用"就删掉。**
     static func text(for date: Date) -> String {
         let c = AppCalendar.shared
         let y = c.component(.year, from: date)
@@ -130,15 +159,11 @@ struct AutoCloseDatePicker: View {
     }
 }
 
-/// 日期单位图例：英文缩写 `Y / M / D`（需求③）。
+/// 日期单位图例：英文缩写 `Y / M / D`。
 ///
-/// ★ 为什么要单独做一个 `UnitLegend` 而不是塞进 DatePicker 里：
-///   系统滚轮的单位文字由 locale 决定（`zh_Hans_CN` → 年/月/日），
-///   SwiftUI 没有提供「只换单位不换 locale」的口子。
-///   所以做法是在**弹出面板下方压一排自己的标签**。
-///
-/// ⚠️ 顺序按中文区域滚轮的实际呈现（年 / 月 / 日）标注为 `Y / M / D`。
-///   若真机上顺序不符，只改这里的数组。
+/// ⚠️ **从未接入任何真实页面**（只在 #Preview 里出现过）。保留原因：
+///   当初想解决「滚轮单位是中文」，但系统 DatePicker 的 `.compact` 弹出面板
+///   无法稳定外挂图例，方案搁置。**别当死代码删** —— 这是有意留的备选。
 struct UnitLegend: View {
     var body: some View {
         HStack(spacing: 0) {

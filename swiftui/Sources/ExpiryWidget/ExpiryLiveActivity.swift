@@ -150,20 +150,29 @@ struct ExpiryLiveActivityWidget: Widget {
                     .padding(.bottom, 2)
                 }
             } compactLeading: {
-                // ★ 只放一个图标，**不加任何 frame / padding**。
-                //   `.imageScale(.small)` 把它收到最小，避免图标被塞进一个
-                //   偏大的区域里居中 → 那正是「左侧离摄像头一大段缝隙」的观感来源。
-                //   到点后换成警示三角 + 红色，作为「该长按进来了」的信号。
+                // ★★ 【第五轮修复】「左侧沙漏离中间缝隙依旧很大」。
+                //
+                //  根因：`compactLeading` / `compactTrailing` 是**系统预留给内容的
+                //  固定槽位**，不是「内容多大就占多大」。内容比槽位小时，
+                //  系统会让它**在槽内居中** → 视觉上就是「离摄像头一大段缝隙」。
+                //
+                //  ★ 正解：用 `.frame(maxWidth: .infinity, alignment: ...)`
+                //    让内容**撑满槽位**，并把对齐方向**朝向摄像头**：
+                //      · 左槽 → 右对齐（`.trailing`，往中间靠）
+                //      · 右槽 → 左对齐（`.leading`，往中间靠）
+                //    这样「缝隙」和「黑边」都会被推掉，内容紧贴灵动岛中央。
+                //  ⚠️ 不要用负 padding 硬顶 —— 会与系统裁切打架。
                 Image(systemName: context.state.phase == .due
                       ? "exclamationmark.triangle.fill"
                       : "hourglass")
                     .imageScale(.small)
                     .foregroundStyle(context.state.phase == .due ? Color.red : Color.white)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             } compactTrailing: {
-                // ★ 用户要求「小图标时右侧数字加粗」+「紧贴摄像头、无空隙」。
-                //   宽度收敛靠 `CompactCountdownText` 里的 `showsHours: false`
-                //   （`M:SS` 比 `H:MM:SS` 窄得多），这里不要再加任何 frame。
+                // ★ 右侧同理：内容**左对齐**（往摄像头靠），把右侧黑边推掉。
+                //   宽度收敛靠 `CompactCountdownText` 里的 `showsHours` 动态判断。
                 CompactCountdownText(state: context.state)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } minimal: {
                 // minimal 只留给一个图标，别放文字。
                 Image(systemName: "hourglass")

@@ -53,17 +53,19 @@ final class ExpiryStore: ObservableObject {
     /// ★ iOS 系统上限是 64 条；留 4 条余量给「稍后提醒」的重复通知等。
     ///   超出的部分按**触发时刻从近到远**截断 —— 快到期的物料一定要保得住。
     private static let maxPendingNotifications = 60
-    /// 每个里程碑排几档通知（前一天 09:00 / 当天 09:00 / 提前 1 小时 / 提前 10 分钟）。
+    /// 每个里程碑排几档通知（前一天 09:00 / 当天 09:00 / 提前 1 小时 / 提前 10 分钟 / 到时间强化）。
     ///
-    /// ★★ 2026-10-09 第二轮：编号仍是 5 档，但**第 5 档（到时间）不再排通知** ——
-    ///   「到时间」那一刻改由灵动岛承担（紧凑态自动变展开态 + 两个按钮）。
-    ///   编号保留 5 是为了 `ids(for:)` 与 `cancelNotifications(for:)` 的下标稳定。
+    /// ★★ 2026-10-09 第二轮：编号定为 5 档，第 5 档（到时间）**当时故意空着**，
+    ///   理由是「那一刻由灵动岛承担」。**那个理由已被证伪** ——
+    ///   灵动岛不会自动展开（平台无此 API），所以那一刻其实什么都没发生。
+    /// ★★ 2026-10-10 第五轮：**第 5 档已启用**，改排
+    ///   `timeSensitive` + 带按钮的强化通知（见 `candidates` 的 tier 4）。
+    ///   编号仍保留 5 —— `ids(for:)` 与 `cancelNotifications(for:)` 的下标依赖它。
     private static let tiersPerMilestone = 5
 
     private static let reminderKey = "expiryReminderEnabled"
     private static let idPrefix = "expiry.milestone."
     /// 每个里程碑 5 个档位 → 一条记录最多 2 × 5 = 10 个 identifier。
-    /// （其中「到时间」那一档已不再使用，但编号保留，见 `tiersPerMilestone`。）
     private static let notificationsPerRecord = 2 * tiersPerMilestone
 
     /// 提前多久的「临期提醒」（正常推送）。
@@ -330,16 +332,6 @@ final class ExpiryStore: ObservableObject {
             }
 
             // ③④ 提前 1 小时 / 提前 10 分钟
-            //
-            // ★★ 2026-10-09 第二轮修正（用户反馈「目前是小灵动岛加一个横幅，
-            //    但是逻辑应该是小灵动岛放大灵动岛，然后让我选择已完成或者其他」）：
-            //    **「到时间」那一档不再排常规通知** —— 那一刻由灵动岛承担
-            //    （紧凑态自动变成展开态并给按钮）。这里只保留提前 1 小时
-            //    与提前 10 分钟两条，它们仍会正常弹横幅 + 上灵动岛倒计时。
-            //
-            //    ⚠️ tier 的序号仍然按 5 档算（tier 4 留给「到时间」），
-            //      不要压缩成 4 档 —— `cancelNotifications(for:)` 与
-            //      identifier 下标都依赖这个编号。
             for (delta, tier) in [(soonTier, 2), (imminentTier, 3)] {
                 let fire = milestone.date.addingTimeInterval(-delta)
                 guard fire > now else { continue }
@@ -359,6 +351,42 @@ final class ExpiryStore: ObservableObject {
                     trigger: UNCalendarNotificationTrigger(
                         dateMatching: AppCalendar.shared.dateComponents(
                             [.year, .month, .day, .hour, .minute], from: fire),
+                        repeats: false)))
+            }
+
+            // ⑤ 到时间那一刻 —— **强化通知**（tier 4）。
+            //
+            // ★★ 2026-10-10 第五轮修正（用户反复反馈「倒计时结束后无铃感/无强化通知」）：
+            //    之前这里**故意空着**，理由是「那一刻由灵动岛自动展开承担」——
+            //    但那是**错的**：**灵动岛不会自动展开**（平台没这个 API，
+            //    只有用户长按或系统事件才会展开，见 ExpiryLiveActivity.swift 文件头）。
+            //    所以那一刻其实**什么都没发生** → 用户完全被漏掉。
+            //
+            //    ✅ 现在补回这一档：到点即弹一条
+            //       · `interruptionLevel = .timeSensitive`（能穿透专注模式，
+            //         这是免费账号能拿到的最强级别 —— `.critical` 需要苹果特批）；
+            //       · 走 `categoryDue` 类别 → 通知上直接带
+            //         「已完成使用 / 稍后提醒」两个按钮，不用打开 App；
+            //       · 用 `UNTimeIntervalNotificationTrigger`（而不是日历触发器），
+            //         因为到点时刻就是「现在」，秒级精度更稳。
+            //
+            //    ➜ 这才是「强化通知」在无推送能力下的正确形态：
+            //      **声音 + 时效性横幅 + 直接可操作按钮**。
+            //      ⚠️ tier 4 的编号是历史约定（见文件头的 5 档说明），**别改**。
+            let dueDelta = milestone.date.timeIntervalSince(now)
+            if dueDelta > 0, dueDelta <= 60 * 60 * 24 * 30 {
+                let content = makeContent(
+                    title: milestone.strengthenTitle,
+                    body: "\(record.title)（\(kindLabel)）" + milestone.strengthenBody,
+                    record: record, milestone: milestone,
+                    category: categoryDue,
+                    timeSensitive: true)
+                out.append(Candidate(
+                    id: ids[base + 4],
+                    fire: milestone.date,
+                    content: content,
+                    trigger: UNTimeIntervalNotificationTrigger(
+                        timeInterval: max(dueDelta, 1),
                         repeats: false)))
             }
         }
@@ -481,7 +509,7 @@ final class ExpiryStore: ObservableObject {
 
     /// 一条记录上的一个「值得提醒的时刻」。
     ///
-    /// ★ 2026-10-09 扩成五档（前一天 / 当天 / 提前 1 小时 / 到时间，
+    /// ★ 2026-10-09 扩成五档（前一天 / 当天 / 提前 1 小时 / 到时间 / 到时间强化，
     ///   「提前 1 小时」与「到时间」的正文复用同一套语义）。
     ///   标题里「明天到 xxx / 今天到 xxx / 快到 xxx 了 / xxx 到了」
     ///   多半能从 `label` 自动拼出来，只有康普茶需要自带一套（见 `init`）。
@@ -497,6 +525,11 @@ final class ExpiryStore: ObservableObject {
         let soonBody: String
         let dueTitle: String
         let dueBody: String
+        /// ★ 2026-10-10 第五轮：**到时间那一刻的强化通知**专用文案。
+        ///   与 `dueTitle` 的区别在于语气更急、更「必须现在处理」，
+        ///   并且这一条是带按钮 + `timeSensitive` 的（见 `candidates` 的 tier 4）。
+        let strengthenTitle: String
+        let strengthenBody: String
 
         /// 默认标题按 `label` 拼；`tomorrowTitle` / `todayTitle` 传了就用自己的。
         init(date: Date,
@@ -516,6 +549,11 @@ final class ExpiryStore: ObservableObject {
             self.soonBody = "还差 1 小时到\(label)。"
             self.dueTitle = "\(label)到了"
             self.dueBody = dueBody
+            // ★ 强化通知：标题用「⚠️」开头 + 明确的「请立即处理」，
+            //   和提前 10 分钟那条（`dueTitle`）**刻意不同** ——
+            //   用户在锁屏上一眼能分清「还有 10 分钟」和「已经到点」。
+            self.strengthenTitle = "⚠️ \(label)已到，请立即处理"
+            self.strengthenBody = dueBody + "（现在）"
         }
     }
 
