@@ -96,14 +96,12 @@ targets:
       # 只借用品牌色常量（Theme.swift 没有任何主 App 依赖）。
       # ⚠️ 往 Theme.swift 里加东西前先看它会不会引进 App 专属类型，
       #    否则会连带把这个扩展编崩。
-      # ★ 2026-10-09：`DatePickerDismissal.swift` import UIKit 且用
-      #   `UIApplication.shared`，是主 App 专属代码。虽然它在
-      #   `Sources/ExpiryApp/Views/` 下（扩展本来就不会整目录扫），
-      #   但显式排除一次，防止将来有人把 View 目录也加进来时踩坑 ——
-      #   扩展里调 UIApplication.shared 会直接编译不过。
-      - path: Sources/ExpiryApp/Views
-        excludes:
-          - "DatePickerDismissal.swift"
+      #
+      # ★ 2026-10-09：这里**只显式列出 Theme.swift 一个文件**，不整目录引用
+      #   `Sources/ExpiryApp`。`Views/DatePickerDismissal.swift` 用了
+      #   `UIApplication.shared`，是主 App 专属代码 —— 只要不整目录扫进来，
+      #   扩展就永远编不到它，无需 `excludes`（那反而容易把整棵树顶掉）。
+      - Sources/ExpiryApp/Theme.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
