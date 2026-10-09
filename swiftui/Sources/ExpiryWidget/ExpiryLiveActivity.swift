@@ -53,6 +53,36 @@
 //
 //  ★ 紧凑态：右侧数字**加粗放大**（用户要求「小图标时右侧数字加粗」）。
 //
+//  【第四轮】★ 本次 —— 用户仍然不满：
+//    「小图标时：左侧沙漏图标距离中间缝隙依旧很大，不需要有缝隙，
+//      右侧的倒计时与中心摄像头距离超长，需要紧贴
+//      （整个界面除了文字无任何空格，不影响文字大小下尽量保证最小灵动岛）」
+//    「功能逻辑不对：距离倒计时结束计时后，无灵动岛主动变大图标进行提醒」
+//
+//  ★★ 缝隙的真正来源（上一轮判断错了）：
+//     上一轮我以为删掉 `contentMargins` 就够了 —— **不够**。
+//     真正的元凶是倒计时用了 `showsHours: true`：
+//     它强制文本按 `H:MM:SS`（如 `12:34:56`）预留宽度，
+//     于是 `compactTrailing` 区域被撑得很宽，系统把内容**推离摄像头**；
+//     左侧的沙漏同理，被塞进一个偏大的区域里居中，看着就是「一大段缝隙」。
+//
+//     ✅ 本版三处收敛：
+//       ① 倒计时改 `showsHours: false` —— 走 `M:SS`，
+//          只有真的超过 1 小时才回退成带小时的形式（见 `CompactCountdownText`）；
+//       ② 两侧内容**显式压到最小**（沙漏用 `.imageScale(.small)`，
+//          文字 `minimumScaleFactor` 收紧），并**不加任何多余 padding / frame**；
+//       ③ 不再写 `contentMargins`（保持系统默认），也不加 `Spacer`。
+//     ➜ 目标就是用户说的「除了文字无任何空格」。
+//
+//  ★★ 「倒计时结束主动变大」——必须说清楚：**平台做不到**。
+//     苹果没有开放任何 API 让第三方 App 撑开灵动岛；展开只由
+//     ① 用户长按 ② 系统事件（来电 / Face ID / 计时器归零）触发。
+//     第三方 Live Activity 两条都拿不到。
+//     ➜ 本版把「到点」这一刻的**紧凑态做到最醒目**作为替代：
+//        沙漏换成 `exclamationmark.triangle.fill` + 红色，
+//        右侧文字变红色「到点」——用户一眼就知道要长按进来处理。
+//        这是无推送权限下唯一诚实的做法。
+//
 
 import ActivityKit
 import AppIntents
@@ -120,24 +150,31 @@ struct ExpiryLiveActivityWidget: Widget {
                     .padding(.bottom, 2)
                 }
             } compactLeading: {
-                // ★ 只放沙漏，不加任何 frame —— 让它自然贴边。
-                Image(systemName: "hourglass")
-                    .font(.caption2)
-                    .foregroundStyle(.white)
+                // ★ 只放一个图标，**不加任何 frame / padding**。
+                //   `.imageScale(.small)` 把它收到最小，避免图标被塞进一个
+                //   偏大的区域里居中 → 那正是「左侧离摄像头一大段缝隙」的观感来源。
+                //   到点后换成警示三角 + 红色，作为「该长按进来了」的信号。
+                Image(systemName: context.state.phase == .due
+                      ? "exclamationmark.triangle.fill"
+                      : "hourglass")
+                    .imageScale(.small)
+                    .foregroundStyle(context.state.phase == .due ? Color.red : Color.white)
             } compactTrailing: {
-                // ★ 用户要求「小图标时右侧数字加粗」→ 加粗 + 略放大。
+                // ★ 用户要求「小图标时右侧数字加粗」+「紧贴摄像头、无空隙」。
+                //   宽度收敛靠 `CompactCountdownText` 里的 `showsHours: false`
+                //   （`M:SS` 比 `H:MM:SS` 窄得多），这里不要再加任何 frame。
                 CompactCountdownText(state: context.state)
             } minimal: {
-                // minimal 只留给「沙漏」一个图标，别放文字。
+                // minimal 只留给一个图标，别放文字。
                 Image(systemName: "hourglass")
-                    .font(.caption2)
+                    .imageScale(.small)
                     .foregroundStyle(.white)
             }
             .keylineTint(Theme.brand)
             // ⚠️⚠️ **千万不要再加 `.contentMargins(.horizontal, 0, for: .compact*)`**
             //    上一版就是这么写的，结果把紧凑态内容推到两端、
             //    数字被挤出屏幕（用户反馈「已完全看不到数字」）。
-            //    系统的默认边距就是正确的，保持不放任何 contentMargins。
+            //    系统的默认边距才是对的 —— 保持不放任何 contentMargins。
         }
     }
 }
@@ -245,30 +282,58 @@ private struct CountdownText: View {
 
 /// 紧凑态（灵动岛最小宽度）专用的倒计时。
 ///
-/// ★★ 用户要求「小图标时右侧数字加粗」→ 加粗 + 略放大（`.caption` 而非
-///    `.caption2`），让它在摄像头右侧更醒目。
+/// ★★ 【第四轮关键修复】宽度收敛 —— 这是「右侧与摄像头距离超长」的真正解法：
+///    上一版用 `Text(timerInterval:countsDown:showsHours: true)`，
+///    它会按 `H:MM:SS`（`12:34:56`，8 个字符）**预留宽度**，
+///    把 `compactTrailing` 撑得很宽 → 系统把这一块**推离摄像头**，
+///    于是用户看到「中间一大段空隙」。
 ///
-/// ★★ 到点之后不再是「0:00」也不是小小的「到点」，而是**红色「到点」** ——
-///    因为平台不允许 App 主动撑开灵动岛（见文件头），
-///    我们能做的就是让紧凑态在到点那一刻本身变得最醒目，
-///    提示用户「长按进来看 / 去处理」。
+///    ✅ 现在改成：
+///      · 剩余时间 **< 1 小时**（绝大多数场景）→ `showsHours: false`，
+///        只渲染 `M:SS`（`12:34`，5 个字符），宽度立刻收窄一大截；
+///      · 剩余时间 **≥ 1 小时** → 才回退成带小时的 `H:MM:SS`。
+///    判据用 `state.dueAt.timeIntervalSinceNow`，**每秒由系统重绘时现算**，
+///    所以跨越 1 小时的那个瞬间会自动从 `59:59` 切到 `1:00:00`，无需 App 干预。
+///
+/// ★ 用户要求「小图标时右侧数字加粗」→ `.bold`。
+/// ★ 用户要求「除了文字无任何空格」→ 这里**不加任何 padding / frame**，
+///   只靠 `minimumScaleFactor` 往下缩，绝不主动占宽。
+///
+/// ★★ 到点之后显示**红色「到点」** —— 因为平台不允许 App 主动撑开灵动岛
+///    （见文件头），我们能做的就是让紧凑态在到点那一刻本身最醒目。
 private struct CompactCountdownText: View {
     let state: ExpiryActivityAttributes.ContentState
 
     var body: some View {
         Group {
-            if let interval = state.countdownInterval {
-                Text(timerInterval: interval, countsDown: true, showsHours: true)
-                    .monospacedDigit()
-            } else {
+            if state.phase == .due {
+                // 已到点：不再走 timerInterval（区间已走完），直接给醒目文字。
                 Text("到点")
+            } else {
+                // ★ 以「是否还有 1 小时以上」决定格式：
+                //   < 1h → `M:SS`（`showsHours: false`），窄；
+                //   ≥ 1h → `H:MM:SS`（`showsHours: true`），宽但必要。
+                //
+                //   ⚠️ `Text(timerInterval:)` 要求**下界 < 上界**，否则崩。
+                //      这里直接复用 `state.countdownInterval`（内部已 guard
+                //      「dueAt > startedAt 且 now < dueAt」），只有在
+                //      `phase != .due` 时才非 nil —— 天然安全。
+                if let interval = state.countdownInterval {
+                    let needsHours = state.dueAt.timeIntervalSinceNow >= 3600
+                    Text(timerInterval: interval,
+                         countsDown: true,
+                         showsHours: needsHours)
+                        .monospacedDigit()
+                } else {
+                    Text("到点")
+                }
             }
         }
         .font(.caption)
         .fontWeight(.bold)
         .lineLimit(1)
         // ★ 长时长（如 `1:23:45`）自动缩，而不是把容器撑宽把数字挤出屏幕。
-        .minimumScaleFactor(0.8)
+        .minimumScaleFactor(0.7)
         .foregroundStyle(state.phase == .due ? Color.red : Color.white)
     }
 }

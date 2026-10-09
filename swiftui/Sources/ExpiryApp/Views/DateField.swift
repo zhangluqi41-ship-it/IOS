@@ -38,6 +38,27 @@
 //  ⚠️ 刻意**不动全局 locale** —— 那会连月份、星期、其它控件一起改，
 //     是「为了一个控件改全站」的高风险动作。
 //
+//  【第四轮】★ 本次 —— 用户又提：
+//     「日期选择这里，排版出现了问题，左侧文字全无，需要恢复文字，
+//       右侧的确认时间移动到了左侧，需要恢复到右侧」
+//
+//  ★★ 为什么上一轮会「左侧文字全无、时间跑到左边」：
+//     上一轮用的是 **`.overlay(alignment: .leading)` + 内含 `Spacer()` 的 HStack**
+//     来顶替被隐藏的系统 label。问题是：
+//       · overlay 的宽度**不由我们决定** —— 它跟随 DatePicker 自身在
+//         `Form` 行里的固有宽度，那行里系统还要画自己的 compact 日期按钮；
+//       · 我为了「给系统按钮让位」在末尾塞了 `Color.clear.frame(width: 84)`，
+//         又把整条 HStack 压在 `.leading` 上 → 一旦容器实际宽度不足，
+//         `Text(title)` 被挤没（左侧文字全无），
+//         而 `Text(日期)` 在 `Spacer()` 的挤压下正好落到左侧。
+//     ➜ 这就是用户看到的两个症状，**同一个根因**。
+//
+//  ★★ 本次正解：**不要再叠 overlay**，改成用 `HStack` 当**主布局**：
+//        HStack { Text(标题) ; Spacer() ; 自绘日期 ; DatePicker(.compact) 只留按钮 }
+//     标题是布局里真实的一等公民，**物理上不可能被挤没**；
+//     日期永远在右侧。`DatePicker` 只保留它的按钮（label 已被
+//     `.labelsHidden()` 藏掉），点击照旧弹出日历。
+//
 
 import SwiftUI
 
@@ -52,35 +73,37 @@ struct AutoCloseDatePicker: View {
     @Binding var date: Date
 
     var body: some View {
-        DatePicker(title, selection: normalized, displayedComponents: .date)
-            // ★ 系统文字同样跑 locale，会渲染成「2026年10月9日」——
-            //   与下面自绘的 `xxxx/xx/xx` 打架，所以藏掉。
-            .labelsHidden()
-            .datePickerStyle(.compact)
-            .overlay(alignment: .leading) {
-                // ★ 用 overlay 顶一行自绘文字，替掉被隐藏的系统 label。
-                //   这样「标题 + xxxx/xx/xx」这一行的排版完全由我们掌控，
-                //   且右侧留给系统的 compact 日期按钮（点击弹出）。
-                //   `.allowsHitTesting(false)` 保证不吃掉点击 —— 否则点不到
-                //   系统那个日期按钮，面板就弹不出来。
-                HStack {
-                    Text(title)
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Text(Self.text(for: date))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.brand)
-                    // 给系统的 compact 按钮留出位置（它渲染在 overlay 之下的右侧）。
-                    Color.clear.frame(width: 84)
+        // ★ 用 HStack 做**主布局**（不再是 overlay）：
+        //   行内三段 ——「标题」—「弹性空白」—「自绘日期 + 系统 compact 按钮」。
+        //   标题是真实布局元素，**不可能**再被挤没；日期永远贴在右侧。
+        HStack(spacing: 8) {
+            Text(title)
+                .foregroundStyle(.primary)
+                .layoutPriority(1)          // ★ 标题优先保宽度，绝不先被压
+
+            Spacer(minLength: 8)
+
+            // ★ 自绘日期：固定 `xxxx/xx/xx`，绕开 locale。
+            Text(Self.text(for: date))
+                .monospacedDigit()
+                .foregroundStyle(Theme.brand)
+                .layoutPriority(1)
+
+            // ★ 系统 DatePicker 只留**按钮**（label 已被 `labelsHidden()` 藏掉），
+            //   点击它才会弹出日历。给它一个紧凑的固定宽度，
+            //   不让它按自己的固有宽度去抢标题的位置。
+            DatePicker("", selection: normalized, displayedComponents: .date)
+                .labelsHidden()
+                .datePickerStyle(.compact)
+                .fixedSize()
+                .onChange(of: date) { _, _ in
+                    // ★ 用户点中「某一天」→ 收起弹出的日历。
+                    //   翻年翻月也走这里，但 `DatePickerDismissal` 内部有冷却窗口，
+                    //   不会把「翻月」误判成「选完了」。
+                    DatePickerDismissal.dismissAfterSelection()
                 }
-                .allowsHitTesting(false)
-            }
-            .onChange(of: date) { _, _ in
-                // ★ 用户点中「某一天」→ 收起弹出的日历。
-                //   翻年翻月也走这里，但 `DatePickerDismissal` 内部有冷却窗口，
-                //   不会把「翻月」误判成「选完了」。
-                DatePickerDismissal.dismissAfterSelection()
-            }
+        }
+        .contentShape(Rectangle())
     }
 
     /// ★ 把外部绑定的值**规范化到当天 0 点**再喂给 DatePicker。
