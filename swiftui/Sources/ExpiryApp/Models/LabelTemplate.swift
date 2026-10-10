@@ -217,18 +217,19 @@ enum LabelTemplate {
 
     /// 解冻标签（扫冷冻标签的二维码后生成）。
     ///
-    /// 三处改动，逐条对应用户要求：
+    /// 三行，逐条对应用户要求：
     ///   ① 第一行「开封时间」→「解冻时间」，值 = 扫码那一刻；
-    ///   ② 「原始保质期」**原样照搬**二维码里的原文（`expireRaw`），不重新格式化；
-    ///   ③ 「最佳使用时间」= 扫码那一刻 + `MeatRule.thawedBestDays`（3）天。
-    static func buildMeatThaw(baseName: String, now: Date,
-                              expireRaw: String, maker: String) -> LabelData {
+    ///   ② 第二行「原始保质期」→「**完成时间**」，值 = 解冻那一刻 + 1 天
+    ///      （2026-10-10 第十五轮用户要求：解冻需要一天）；
+    ///   ③ 第三行「最佳使用时间」= 扫码那一刻 + `MeatRule.thawedBestDays`（3）天。
+    static func buildMeatThaw(baseName: String, now: Date, maker: String) -> LabelData {
+        let complete = MeatRule.thawedComplete(from: now)
         let best = MeatRule.thawedBest(from: now)
         return LabelData(
             title: clamp(MeatRule.thawTitle(baseName: baseName)),
             rows: [
                 LabelRow(label: "解冻时间：", value: fmtDateTime(now)),
-                LabelRow(label: "原始保质期：", value: expireRaw),
+                LabelRow(label: "完成时间：", value: fmtDateByThreshold(now, complete)),
                 LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, best)),
             ],
             weekdayCn: weekdayCn(now),
@@ -338,9 +339,14 @@ enum LabelTemplate {
     ///
     ///   所以这里**只按记录里存着的三个时间原样排版**：
     ///     `createdAt` → 第一行（通用/奶制品=开封时间，康普茶=制备时间）
-    ///     `expireAt`  → 第二行（原始保质期 / 完成时间）
+    ///     `expireAt`  → 第二行（原始保质期 / 康普茶的完成时间）
     ///     `bestBefore`→ 第三行（最佳使用时间）
     ///   这正是 `makeRecord` 当初存进去的东西，逐字一致。
+    ///
+    ///   ⚠️ **解冻肉类是唯一例外**：它的第二行是「完成时间」= `createdAt` + 1 天，
+    ///      这个值当初没有单独存 —— 但它只依赖 `createdAt`，用
+    ///      `MeatRule.thawedComplete(from: now)` 重算即可**逐字复现**
+    ///      （`now` 就是 `createdAt`，与 `buildMeatThaw` 同源）。
     ///
     /// ★ 「原始保质期」那两行当初用的是 `fmtDateByThreshold(now, date)`，
     ///   依赖 `now` 只是为了判「是否 ≤7 天」，所以这里传 `createdAt` 复现结果完全相同。
@@ -355,18 +361,28 @@ enum LabelTemplate {
                 LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
             ]
         case .meat:
-            // 肉类有两副面孔：普通肉类标签第一行是「开封时间」，
-            // 扫冷冻标签生成的**解冻**标签第一行是「解冻时间」。
-            // 记录里没有单独存这个字段，但标题前缀是确定性的
+            // 肉类有两副面孔：
+            //   · 普通肉类标签 = 开封时间 / 原始保质期 / 最佳使用时间；
+            //   · 扫冷冻标签生成的**解冻**标签 = 解冻时间 / **完成时间** / 最佳使用时间。
+            // 记录里没有单独存「是哪一副」，但标题前缀是确定性的
             // （解冻标签的标题一定是「解冻-…」，见 `MeatRule.thawTitle`），
             // 由它反推即可，不必为一行文案去改数据模型。
-            let firstLabel = record.title.hasPrefix(MeatRule.thawPrefix + MeatRule.titleSeparator)
-                ? "解冻时间：" : "开封时间："
-            rows = [
-                LabelRow(label: firstLabel, value: fmtDateTime(now)),
-                LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, record.expireAt)),
-                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
-            ]
+            if record.title.hasPrefix(MeatRule.thawPrefix + MeatRule.titleSeparator) {
+                // 解冻标签第二行「完成时间」与 `buildMeatThaw` 同源：
+                // 由 `createdAt`（= 当初的解冻时刻）再算一次 +1 天，逐字一致。
+                rows = [
+                    LabelRow(label: "解冻时间：", value: fmtDateTime(now)),
+                    LabelRow(label: "完成时间：",
+                             value: fmtDateByThreshold(now, MeatRule.thawedComplete(from: now))),
+                    LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
+                ]
+            } else {
+                rows = [
+                    LabelRow(label: "开封时间：", value: fmtDateTime(now)),
+                    LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, record.expireAt)),
+                    LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
+                ]
+            }
         case .kombucha:
             rows = [
                 LabelRow(label: "制备时间：", value: fmtDateTime(now)),
@@ -545,16 +561,20 @@ enum LabelTemplate {
 
     // MARK: 肉类二维码解析
 
-    /// 肉类标签二维码：`{标题}原始保质期：{保质期}最佳使用时间：{最佳}`。
+    /// 肉类标签二维码：`{标题}(原始保质期|完成时间)：{日期}最佳使用时间：{最佳}`。
     ///
     /// ★ 标题必须以 `冷藏-` / `冷冻-` / `解冻-` 开头（见 `MeatRule.title`），
     ///   否则就不是肉类标签 —— 这也正是「扫冷冻标签进解冻流程」的判据。
     ///
-    /// ⚠️ 只收「原始保质期 + 最佳使用时间」两段，与 `LabelData.qrText` 一致
-    ///   （第一行「开封/解冻时间」不进码，所以这里也无从得知它 —— 不过它本来
-    ///    就不影响任何判断）。
+    /// ★ 第二段锚点**两种都要收**（2026-10-10 第十五轮）：
+    ///   · `原始保质期` —— 冷藏 / 冷冻标签，以及改动前打出的**存量旧解冻标签**；
+    ///   · `完成时间`   —— 改动后的**新解冻标签**（第二行已改名）。
+    ///   漏掉任何一个都会让对应标签「扫不出来」，务必保留两种。
+    ///
+    /// ⚠️ 只收这两段，与 `LabelData.qrText` 一致（第一行「开封/解冻时间」不进码，
+    ///   所以这里也无从得知它 —— 不过它本来就不影响任何判断）。
     private static let meatQrRe = try! NSRegularExpression(
-        pattern: "^(?<title>.+?)原始保质期：(?<exp>\(dateTimePat))"
+        pattern: "^(?<title>.+?)(?:原始保质期|完成时间)：(?<exp>\(dateTimePat))"
             + "最佳使用时间：(?<best>\(dateTimePat))$"
     )
 
@@ -609,7 +629,8 @@ enum LabelTemplate {
                              alreadyThawed: alreadyThawed,
                              expireAt: expireAt,
                              bestBefore: bestBefore,
-                             // 原样保留那一行的原文 —— 解冻标签要照搬，不能重新格式化。
+                             // 保留该行原文：对冷藏/冷冻是「原始保质期」，
+                             // 对新解冻标签是「完成时间」—— 解冻页顶部只作展示用。
                              expireRaw: expireRaw)
     }
 }

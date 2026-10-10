@@ -3,12 +3,12 @@
 //  肉类模板 + 解冻流程的回归测试（2026-10-09 优化清单「一、模板二级菜单」第 4 条）。
 //
 //  重点钉住四件事：
-//    1. 规则数值：冷藏两个日期都 +5 天；冷冻都 +3 个月；解冻后最佳 +3 天；
+//    1. 规则数值：冷藏两个日期都 +5 天；冷冻都 +3 个月；解冻后完成 +1 天、最佳 +3 天；
 //    2. 部位清单与用户给的原文**逐字一致**（少一个 / 多一个都会红）；
 //    3. 二维码闭环：自己印的码必须能自己解析回来，并且**扫冷冻码 = 解冻、
 //       扫解冻码 = 不再解冻、扫冷藏码 = 只入库**；
-//    4. 「重新打印」对肉类 / 解冻标签也必须逐字一致（解冻标签第一行是
-//       「解冻时间」而不是「开封时间」—— 这一行靠标题前缀反推）。
+//    4. 「重新打印」对肉类 / 解冻标签也必须逐字一致（解冻标签是
+//       「解冻时间 / 完成时间 / 最佳使用时间」—— 靠标题前缀反推）。
 //
 
 import XCTest
@@ -50,6 +50,11 @@ final class MeatTests: XCTestCase {
 
     func testThawedBestIsPlus3Days() {
         XCTAssertEqual(MeatRule.thawedBest(from: now), day(3))
+    }
+
+    /// 2026-10-10 第十五轮：解冻的「完成时间」= 解冻那一刻 + 1 天。
+    func testThawedCompleteIsPlus1Day() {
+        XCTAssertEqual(MeatRule.thawedComplete(from: now), day(1))
     }
 
     // MARK: - 部位清单（照抄用户原文，逐字比对）
@@ -107,16 +112,29 @@ final class MeatTests: XCTestCase {
     /// 解冻标签再被扫：必须认得出「已经解冻过」，否则会无限套娃。
     func testThawLabelQrIsMarkedAlreadyThawed() {
         let stamp = d(2026, 10, 9, 10, 0)
-        let data = LabelTemplate.buildMeatThaw(baseName: "牛肉-眼肉", now: stamp,
-                                               expireRaw: "2027/01/08 23:59", maker: "四野")
+        let data = LabelTemplate.buildMeatThaw(baseName: "牛肉-眼肉", now: stamp, maker: "四野")
         XCTAssertEqual(data.title, "解冻-牛肉-眼肉")
         XCTAssertEqual(data.rows[0].label, "解冻时间：", "解冻标签第一行要改成「解冻时间」")
-        XCTAssertEqual(data.rows[1].value, "2027/01/08 23:59", "原始保质期照搬原文，不重新格式化")
+        // ★ 2026-10-10 第十五轮：第二行由「原始保质期」改成「完成时间 = 解冻 + 1 天」。
+        XCTAssertEqual(data.rows[1].label, "完成时间：", "解冻标签第二行要改成「完成时间」")
+        XCTAssertEqual(data.rows[1].value,
+                       LabelTemplate.fmtDateByThreshold(stamp, MeatRule.thawedComplete(from: stamp)),
+                       "完成时间 = 解冻时间 + 1 天")
+        XCTAssertEqual(data.rows[2].label, "最佳使用时间：")
 
         let parsed = LabelTemplate.parseMeatQr(data.qrText)
-        XCTAssertNotNil(parsed)
+        XCTAssertNotNil(parsed, "解冻标签（第二行是「完成时间」）自己印的码必须仍能解析：\(data.qrText)")
         XCTAssertEqual(parsed?.alreadyThawed, true)
         XCTAssertEqual(parsed?.baseName, "牛肉-眼肉", "解冻标签的 baseName 要去掉「解冻-」前缀")
+    }
+
+    /// ★ 存量旧解冻标签（第二行仍是「原始保质期」）也必须还能扫得出来。
+    func testLegacyThawLabelQrStillParses() {
+        let raw = "解冻-牛肉-眼肉原始保质期：2027/01/08 23:59最佳使用时间：2026/10/12 10:00"
+        let parsed = LabelTemplate.parseMeatQr(raw)
+        XCTAssertNotNil(parsed, "旧格式（「原始保质期」锚点）的解冻标签要继续可解析")
+        XCTAssertEqual(parsed?.alreadyThawed, true)
+        XCTAssertEqual(parsed?.baseName, "牛肉-眼肉")
     }
 
     func testParseMeatQrRejectsNonMeat() {
@@ -197,17 +215,20 @@ final class MeatTests: XCTestCase {
 
     func testRebuildThawLabelKeepsThawTimeRow() {
         let stamp = d(2026, 10, 9, 10, 0)
+        // 记录里仍存冷冻标签的「原始保质期」当 expireAt —— 它只服务于提醒，
+        // 不参与标签第二行的排版（第二行按 createdAt 现算「完成时间」）。
         let expireAt = d(2027, 1, 8, 23, 59)
         let best = MeatRule.thawedBest(from: stamp)
-        let data = LabelTemplate.buildMeatThaw(baseName: "牛肉-眼肉", now: stamp,
-                                               expireRaw: LabelTemplate.fmtDateByThreshold(stamp, expireAt),
-                                               maker: "四野")
+        let data = LabelTemplate.buildMeatThaw(baseName: "牛肉-眼肉", now: stamp, maker: "四野")
         let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: stamp,
                                               expireAt: expireAt, bestBefore: best,
                                               maker: "四野")
         assertRebuildMatches(record, data, "解冻标签")
-        XCTAssertEqual(LabelTemplate.rebuild(from: record).rows[0].label, "解冻时间：",
+        let rebuilt = LabelTemplate.rebuild(from: record)
+        XCTAssertEqual(rebuilt.rows[0].label, "解冻时间：",
                        "解冻标签重打时第一行必须还是「解冻时间」，不能变成「开封时间」")
+        XCTAssertEqual(rebuilt.rows[1].label, "完成时间：",
+                       "解冻标签重打时第二行必须还是「完成时间」")
     }
 
     // MARK: - 到期提醒

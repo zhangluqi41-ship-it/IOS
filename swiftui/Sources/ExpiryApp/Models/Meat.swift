@@ -9,8 +9,14 @@
 //      · 冷冻：原始保质期与最佳使用时间**都 +3 个月**
 //      · 冷冻标签的二维码**再扫一次 = 解冻**：
 //          开封时间 → 「解冻时间」（= 扫码那一刻）
-//          原始保质期 → **原样不变**
+//          原始保质期 → **改成「完成时间」**（= 解冻那一刻 + 1 天）
 //          最佳使用时间 → 扫码那一刻 + 3 天
+//
+//  ★ 2026-10-10（第十五轮，用户要求）：解冻标签的第二行由「原始保质期（照搬原文）」
+//    改成「完成时间 = 解冻时间 + 1 天」（解冻需要一天）。其余各行、二维码格式
+//    与提醒逻辑**一律未动**。
+//    ⚠️ 连带：二维码原文里这一段也随之变成「完成时间：…」，`parseMeatQr`
+//       的正则已同步兼容「原始保质期 / 完成时间」两种锚点（存量旧标签仍可扫）。
 //
 //  ★ 为什么标题里要带保存类型（`冷冻-牛肉-眼肉`）：
 //    二维码内容只有「名称 + 后两组时间」，而肉类和奶制品的三行标签**完全一样**
@@ -30,6 +36,8 @@ enum MeatRule {
     static let frozenMonths = 3
     /// 解冻后：最佳使用时间 = 解冻那一刻 + 3 天。
     static let thawedBestDays = 3
+    /// 解冻后：完成时间 = 解冻那一刻 + 1 天（2026-10-10 用户要求）。
+    static let thawCompleteDays = 1
     /// 解冻标签标题前缀（也用来在二维码里区分「已解冻」）。
     static let thawPrefix = "解冻"
     /// 标题层级分隔符。
@@ -53,6 +61,14 @@ enum MeatRule {
     /// 解冻后的最佳使用时间。
     static func thawedBest(from base: Date) -> Date {
         AppCalendar.shared.date(byAdding: .day, value: thawedBestDays, to: base) ?? base
+    }
+
+    /// 解冻的**完成时间** = 解冻那一刻 + `thawCompleteDays`（1）天。
+    ///
+    /// ★ 与 `thawedBest` 一样**按时刻相加**（不是当天 0 点起算）——
+    ///   扫码那一刻几点，完成时间就是次日的几点。
+    static func thawedComplete(from base: Date) -> Date {
+        AppCalendar.shared.date(byAdding: .day, value: thawCompleteDays, to: base) ?? base
     }
 
     /// 肉类标签主标题：`冷藏-牛肉-眼肉`。
@@ -124,10 +140,10 @@ enum MeatAnimal: String, CaseIterable, Identifiable {
 
 /// 从肉类标签二维码解析出来的信息。
 ///
-/// ★ `expireRaw` 存的是二维码里**原始保质期那一行的原文**：
-///   用户要求解冻后「原始保质期保持原保不变」，
-///   所以要原样搬过去，而不是拿 Date 重新格式化一遍
-///   （重新格式化会按「是否 ≤7 天」改写时刻，就不叫「不变」了）。
+/// ★ `expireRaw` 存的是二维码里**原冷冻标签「原始保质期」那一行的原文**。
+///   ⚠️ 2026-10-10 起，解冻标签的第二行已改成「完成时间」（解冻 + 1 天），
+///     不再照搬这段原文；`expireRaw` 现在只用于解冻页顶部
+///     「扫到的冷冻标签」区块的信息展示。
 struct MeatLabelInfo: Hashable {
     /// 去掉保存类型 / 解冻前缀之后的「肉类-部位」，如 `牛肉-眼肉`。
     let baseName: String
@@ -138,6 +154,6 @@ struct MeatLabelInfo: Hashable {
     let alreadyThawed: Bool
     let expireAt: Date
     let bestBefore: Date
-    /// 原始保质期那一行的**原文**（原样搬到解冻标签上）。
+    /// 原冷冻标签「原始保质期」那一行的**原文**（仅用于解冻页的信息展示）。
     let expireRaw: String
 }

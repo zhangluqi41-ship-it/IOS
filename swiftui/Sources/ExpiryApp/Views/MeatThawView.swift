@@ -2,16 +2,18 @@
 //  MeatThawView.swift
 //  肉类 · 解冻 —— 扫「冷冻」标签的二维码后进入，直接生成一张解冻标签。
 //
-//  ★ 用户要求（清单「一、模板二级菜单」第 4 条）：
+//  ★ 用户要求（清单「一、模板二级菜单」第 4 条；2026-10-10 第十五轮更新）：
 //      「解冻后的菜单中开封时间改成解冻时间，时间为扫码时的时间，
-//        原始保质期保持原保不变，最佳使用时间改为当前时间 + 3 天」
+//        原始保质期改成完成时间（解冻时间 + 1 天），
+//        最佳使用时间改为当前时间 + 3 天」
+//    最初版本是「原始保质期保持原保不变」，本轮改成「完成时间 = 解冻时间 + 1 天」。
 //
 //  ★ 这个页面**只有扫码能进来**：它没有模板卡片、也不在 `TemplateRoute` 里 ——
 //    用户明确要求「不作为可选模板，只有扫描二维码才能出来」。
 //
-//  ★ 原始保质期那一行**照搬二维码原文**（`meat.expireRaw`），
-//    不是拿 Date 重新格式化 —— 否则会按「是否 ≤7 天」把时刻改写成 23:59
-//    或写回当前时刻，那就不是「保持不变」了。
+//  ★ 顶部「扫到的冷冻标签」区块显示的是**原冷冻标签**上的信息
+//    （`meat.expireRaw` = 那张标签印的原始保质期），
+//    与「解冻后要打印的内容」是两回事 —— 别把它也一起改了。
 //
 
 import SwiftUI
@@ -23,6 +25,9 @@ struct MeatThawView: View {
     @State private var flash: String?
 
     private var now: Date { Date() }
+    /// 完成时间 = 解冻时间 + 1 天。
+    private var thawComplete: Date { MeatRule.thawedComplete(from: now) }
+    /// 最佳使用时间 = 解冻时间 + 3 天。
     private var thawBest: Date { MeatRule.thawedBest(from: now) }
 
     var body: some View {
@@ -40,13 +45,13 @@ struct MeatThawView: View {
 
             Section {
                 LabeledContent("解冻时间", value: LabelTemplate.fmtDateTime(now))
-                LabeledContent("原始保质期", value: meat.expireRaw)
-                LabeledContent("最佳使用时间", value: LabelTemplate.fmtDateTime(thawBest))
+                LabeledContent("完成时间", value: LabelTemplate.fmtDateByThreshold(now, thawComplete))
+                LabeledContent("最佳使用时间", value: LabelTemplate.fmtDateByThreshold(now, thawBest))
             } header: {
                 Text("解冻后要打印的内容")
             } footer: {
-                Text("解冻时间 = 扫码这一刻；原始保质期保持不变；"
-                     + "最佳使用时间 = 现在 + \(MeatRule.thawedBestDays) 天。")
+                Text("解冻时间 = 扫码这一刻；完成时间 = 解冻时间 + \(MeatRule.thawCompleteDays) 天；"
+                     + "最佳使用时间 = 解冻时间 + \(MeatRule.thawedBestDays) 天。")
             }
 
             Section {
@@ -76,7 +81,6 @@ struct MeatThawView: View {
         let best = MeatRule.thawedBest(from: stamp)
         let data = LabelTemplate.buildMeatThaw(baseName: meat.baseName,
                                                now: stamp,
-                                               expireRaw: meat.expireRaw,
                                                maker: makerFinal)
         let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: stamp,
                                               expireAt: meat.expireAt, bestBefore: best,
