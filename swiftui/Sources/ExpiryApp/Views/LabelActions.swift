@@ -163,7 +163,7 @@ enum LabelReprint {
     /// 成功时的正文由调用方给（两处文案**刻意不同**，别合并）。
     static func printNoticing(_ record: LabelRecord,
                               successBody: String,
-                              setNotice: (Notice?) -> Void) {
+                              setNotice: @escaping (Notice?) -> Void) {
         guard PrinterService.shared.isConnected else {
             setNotice(Notice(title: "还没有连接打印机",
                              body: "请到「打印机」标签页连接硕方 T50 Pro，再回来重打。"))
