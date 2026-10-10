@@ -95,8 +95,17 @@ struct LabelActionBar: View {
 /// 「操作人」输入行：图标 + 限长 TextField。
 /// 五个模板页（通用 / 康普茶一发 / 康普茶二发 / 奶制品 / 肉类）共用，
 /// 别在各页里再手抄一遍 HStack。
+///
+/// ★★★ 2026-10-10（第十九轮）新增 `focused(_:)`：
+///   为了让「收键盘」走**第一方 `@FocusState`**（`focused = nil`），
+///   这个输入框必须把自己的 focus 绑定暴露出去。
+///   用法：`MakerField(maker: $maker, focused: $focus)`
+///   ⚠️ 加了它之后，`@FocusState.Binding` 的类型会传染 —— 见 `KeyboardFocus.swift`。
 struct MakerField: View {
     @Binding var maker: String
+    /// 页面级的焦点绑定。⚠️ **不要设默认值** —— 全页共用的焦点必须显式传进来，
+    /// 否则会各自为政、收键盘只收得到其中一部分（第十九轮定的规矩）。
+    var focused: FocusState<AnyHashable?>.Binding
 
     var body: some View {
         HStack(spacing: 12) {
@@ -104,6 +113,7 @@ struct MakerField: View {
                 .foregroundStyle(Theme.brand)
                 .frame(width: 22)
             TextField("输入操作人", text: $maker)
+                .focused(focused, equals: AnyHashable("maker"))
                 .onChange(of: maker) { _, value in
                     if value.count > LabelTemplate.maxNameLength {
                         maker = String(value.prefix(LabelTemplate.maxNameLength))
@@ -213,6 +223,21 @@ enum LabelReprint {
 ///
 ///   ⚠️ 千万不要把「打印」再挂回 `ToolbarItemGroup(placement: .keyboard)` ——
 ///      那正是本轮删掉的东西。
+///
+/// ★★★ 2026-10-10（第十九轮）**「完成」也删掉了** —— 用户：
+///   「『完成』按钮也不需要，因为逻辑上是**点击或滑动屏幕任意位置，流畅收起键盘**」。
+///   确实不需要：滑动收键盘已由第一方 `.scrollDismissesKeyboard` 负责、
+///   点空白由我们那个只观察不拦截的手势负责，两者都走 **`@FocusState`**
+///   （`FocusCoordinator`）→ 键盘是**动画**收起的，不再需要这个快捷键。
+///
+///   ➜ 于是**整条 keyboard accessory bar 被彻底移除** —— 这顺带解决了
+///     第十八轮那个疑难：以前 accessory bar 上挂过「打印」，
+///     会让 `.scrollDismissesKeyboard` 失效（第十七轮的观察）；
+///     现在 bar 没了，`ToolbarItemGroup(placement: .keyboard)` 不再出现，
+///     那条干扰也一并消失。
+///
+///   ⚠️ 以后**不要再往这里加 `ToolbarItemGroup(placement: .keyboard)`** ——
+///      键盘上方应该只有系统键盘自己。
 struct LabelActions: ViewModifier {
     let build: () -> LabelDraft?
 
@@ -233,14 +258,11 @@ struct LabelActions: ViewModifier {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 LabelActionBar(isBusy: printer.isPrinting, onPrint: printNow)
             }
-            .toolbar {
-                // ★ 键盘上方**只留系统自带的「完成」**（收键盘用）。
-                //   ⚠️ 别再往这里加「打印」—— 见上面的长注释。
-                ToolbarItemGroup(placement: .keyboard) {
-                    Button("完成") { SoftKeyboard.hide() }
-                    Spacer()
-                }
-            }
+            // ★★★ 第十九轮：**没有任何 `ToolbarItemGroup(placement: .keyboard)`**。
+            //   模拟器实测（历史轮次）只挂一个 accessory bar 时
+            //   `.scrollDismissesKeyboard` 依然生效 —— 但那时 bar 上只有「完成」。
+            //   既然「完成」也被用户点名删掉，索性整条 bar 拿掉，
+            //   键盘上方只剩系统键盘自己，干扰最小。
             .alert(notice?.title ?? "",
                    isPresented: Binding(get: { notice != nil },
                                         set: { if !$0 { notice = nil } })) {

@@ -14,13 +14,17 @@ struct GenericTemplateView: View {
     @State private var expireDate = Date()
     @State private var bestDate = Date()
     @State private var showTitleAlert = false
+    /// ★ 第一方焦点：收键盘（点空白 / 滚动）都改走 `focused = nil`，
+    ///   这样键盘才会播系统动画而不是瞬间消失。
+    @FocusState private var focus: AnyHashable?
 
     var body: some View {
         List {
             Section {
                 field(icon: "tag", placeholder: "输入物料名称", text: $title,
                       limit: LabelTemplate.maxTitleLength)
-                MakerField(maker: $maker)
+                    .focused($focus, equals: AnyHashable("title"))
+                MakerField(maker: $maker, focused: $focus)
             } footer: {
                 Text("会记住上次填写的操作人")
             }
@@ -37,7 +41,7 @@ struct GenericTemplateView: View {
         }
         .navigationTitle("通用效期")
         .navigationBarTitleDisplayMode(.inline)
-        .keyboardDismissible()
+        .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
         .alert("请先填写物料名称", isPresented: $showTitleAlert) {
             Button("好", role: .cancel) {}
@@ -56,7 +60,6 @@ struct GenericTemplateView: View {
                 }
         }
     }
-
     private func buildDraft() -> LabelDraft? {
         let name = LabelTemplate.clamp(title)
         guard !name.isEmpty else {

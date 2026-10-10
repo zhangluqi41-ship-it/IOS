@@ -258,8 +258,36 @@ targets:
         #      键盘抬起时它自己跟着上移（`safeAreaInset` 行为），不再盖住内容。
         #      键盘上方只留系统自带的「完成」。
         #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
-        CURRENT_PROJECT_VERSION: 44
-        MARKETING_VERSION: 1.1.2
+        # ★★★ 2026-10-10（第十九轮，v1.1.3）：用户拿真机复验 v1.1.2，报两条**否定上一轮方案**的问题 ——
+        #   ① 「日期选择**点击完全不弹出日历选择**，重大 bug」
+        #      → 多因一果，两条都得修：
+        #        【A·结构错】`Menu { DatePicker(.graphical) }` **根本不成立** ——
+        #           `Menu` 的内容区是命令列表（Button/Toggle/Picker），
+        #           不是任意视图宿主，塞整块 DatePicker 进去**不会渲染出日历**。
+        #        【B·手势被吞】我们挂在 window 上的 `UITapGestureRecognizer`（收键盘用）
+        #           会抢走 `DatePicker` 的点击 —— 这正是用户一直质疑的「第一方协议」问题。
+        #           iOS 17.1 起 `DatePicker` 的已知回归：层级里有更高层 tap 手势
+        #           → 点不开 / 要长按 2~3 秒。
+        #        ➜ 回归**最朴素的标准写法**：`DatePicker("标题", …).datePickerStyle(.compact)`
+        #          直接当 List 行 + `.simultaneousGesture(TapGesture())` 抢回优先级
+        #          + 手势 `shouldReceive` 排除 `DatePicker` 宿主。
+        #   ② 「收回键盘是**瞬间收回、并无流畅动画**，依然质疑第一方」
+        #      → 根因找到：收键盘一直走 UIKit 的 `resignFirstResponder`，
+        #        它**不带 SwiftUI 转场上下文** → 键盘「啪」地消失。
+        #      ➜ 新增 `FocusCoordinator` + 七页 `@FocusState`：
+        #        点空白 / 滚动收键盘全部改走 `focused = nil` → **系统动画**。
+        #   ③ 「『完成』按钮**也不需要**，逻辑上是点击或滑动屏幕任意位置，流畅收键盘」
+        #      → 删掉整条 `ToolbarItemGroup(placement: .keyboard)`。
+        #      （顺带解决第十八轮那个疑难：accessory bar 曾是
+        #        `.scrollDismissesKeyboard` 失效的原因，现在 bar 整个没了。）
+        #   ④ 滑动收键盘模式定案：`.immediately`（瞬间、无动画，被用户否定）
+        #      → **`.interactively`**（键盘跟手逐帧走 = 用户要的流畅动画）。
+        #      第十八轮误判「逐帧跟随吃主线程」，真凶其实是自研 pan 手势（已删）。
+        #   ⑤ 「问题 4 因 2 失灵无法验证」→ 本轮日期能用后请一并复验：
+        #      改完日期后 +15 天高亮应立刻消失（第十八轮已改为按天现算）。
+        #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
+        CURRENT_PROJECT_VERSION: 45
+        MARKETING_VERSION: 1.1.3
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -311,8 +339,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.2
-        CURRENT_PROJECT_VERSION: 44
+        MARKETING_VERSION: 1.1.3
+        CURRENT_PROJECT_VERSION: 45
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

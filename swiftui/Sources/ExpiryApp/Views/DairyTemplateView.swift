@@ -11,6 +11,8 @@ struct DairyTemplateView: View {
     @State private var expireDate = Date()
     @State private var bestDate = Date()
     @State private var showKindAlert = false
+    /// ★ 第一方焦点（第十九轮）：收键盘走 `focused = nil`，键盘才有系统动画。
+    @FocusState private var focus: AnyHashable?
 
     var body: some View {
         List {
@@ -52,14 +54,14 @@ struct DairyTemplateView: View {
             }
 
             Section {
-                MakerField(maker: $maker)
+                MakerField(maker: $maker, focused: $focus)
             } footer: {
                 Text("会记住上次填写的操作人")
             }
         }
         .navigationTitle("奶制品")
         .navigationBarTitleDisplayMode(.inline)
-        .keyboardDismissible()
+        .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
         .alert("请先选择奶制品类型", isPresented: $showKindAlert) {
             Button("好", role: .cancel) {}

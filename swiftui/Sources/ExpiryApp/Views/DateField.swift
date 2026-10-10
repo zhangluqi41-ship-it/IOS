@@ -2,7 +2,7 @@
 //  DateField.swift
 //  模板页统一的日期输入控件。
 //
-//  ─────────────────────── 演变史（七次用户反馈） ───────────────────────
+//  ─────────────────────── 演变史（八次用户反馈） ───────────────────────
 //
 //  【第一轮】「选完时间后面板不收」→ 用 `.id` 重建 DatePicker 把它顶掉。
 //  【第二轮】三条反馈：
@@ -17,87 +17,77 @@
 //  【第五轮】「右侧日期重复排版」→ **删掉自绘 Text，只留系统 DatePicker**。
 //  【第六轮】（v1.1.1）「滚完滚轮马上就闪关闭界面」→ **取消一切自动收起**
 //     （删掉挂在 `.onChange(of: date)` 上的 `DatePickerDismissal`）。
+//  【第七轮】（v1.1.2）「选好日期应自动收 + 质疑第一方」→ 改成
+//     `Menu { DatePicker(.graphical) }`。→ **打脸**：方案错，产生了本轮的重大 bug。
 //
-//  ★★★【第七轮】本次 —— 用户两条反馈合起来指向了同一个结论：
-//     ① 「选择好日期后**应当自动收回**（但不包含前期的滚轮选择年月）」
-//     ② 「日历选择页面收回后**完全不影响画面滚动**，质疑是否正常使用苹果第一方协议」
+//  ★★★【第八轮】本次（v1.1.3）—— 用户两个反馈：
+//     ① 「日期选择**点击完全不弹出日历选择**，重大 bug」
+//     ② 「收回键盘是**瞬间收回、并无流畅动画**，质疑是否第一方」
 //
-//     第六轮我们把面板的开关「完全交给系统」，结果 `.compact` 弹出的仍然是一个
-//     **滚轮 / 日历型 UIDatePicker**，它的呈现容器是 UIKit 私有 popover。实测表现：
-//       · 滚轮一动 `date` 就变（同一份 binding），**没有可靠的「选完了」时机**
-//         —— 第六轮「不自动收」正是被这一点逼出来的；
-//       · 它的容器会**吃掉列表的滚动手势**（用户说的「影响画面滚动」）；
-//       · 它和键盘 accessory bar / 我们的 window 手势互相打架（问题 1 的卡顿）。
+//     ★★ ① 的根因是**多因一果**，两条都得修：
 //
-//  ★★ 正解 = **改用第一方的 `.graphical`（整块日历）作为这行的菜单内容**：
-//     用 `Menu { DatePicker(.graphical) }`,系统负责弹出、点选、**以及关闭**
-//     —— 和我们 100% 自己写的代码零交互，所以「不会卡顿 /
-//     不会吃滚动 / 选完自动收」三件事同时成立，且完全符合第一方行为。
+//     【A·结构错】上一轮把日历塞进了 `Menu`：
+//         `Menu { DatePicker(.graphical) }`
+//         `Menu` 的内容区是**命令列表**（Button / Toggle / Picker…），
+//         不是任意视图宿主 —— 塞一个完整 `DatePicker` 进去，
+//         它**根本不会渲染成日历**，所以「点了完全没反应」。
 //
-//  为什么是「菜单」而不是直接把整块日历铺在列表里（试过，见下）：
-//     `.graphical` 整块日历高度约 330pt，铺进 List 行会把两行日期撑成两屏，
-//     用户还要往下滚 —— 与「点开才出现」的既有交互相悖。
-//     `Menu` + `.displayInline` 则完全等价于系统「日历」App 的「新建日程 → 日期」。
+//     【B·手势被吞】**这恰恰就是用户一直点破的那件事** ——
+//         我们挂在 window 上的 `UITapGestureRecognizer`（收键盘用）
+//         会**抢走 `DatePicker` 的点击**。这不是我们独有的 bug：
+//         iOS 17.1 起 `DatePicker` 的已知回归就是
+//         「层级里存在更高层的 tap 手势 → 点不开、要长按 2~3 秒」。
+//         社区一致的两个解法，本轮**都采纳**：
+//           · `DatePicker` 上加 `.simultaneousGesture(TapGesture())`
+//             （**并存**，不互相取消；⚠️ 不能用 `.onTapGesture`，那会互斥）；
+//           · 手势 delegate 的 `shouldReceive` 里**排除** `DatePicker` 宿主
+//             （已加 `name.contains("DatePicker")`）。
 //
-//  ⚠️ 「前期滚轮选择年月不收、选完具体某天自动收」这条细分要求，是**滚轮**才有的
-//     问题（滚轮上「年月」和「日」是同一根轮子，代码无法区分用户滚的是哪一段）。
-//     换成日历后这条需求被**自然满足**：点标题栏 `‹ 2026年10月 ›` 只翻月、
-//     菜单**不会关**；只有点中下方某个具体日期才会关 —— 正是用户要的行为。
+//     ➜ 正解 = **回归最朴素的标准写法**：
+//        `DatePicker("标题", …).datePickerStyle(.compact)` 直接当 List 行
+//        —— 它自己就是「标题 + 可点日期」，也正是用户一直在用的那个形态。
 //
-//  ⚠️ 触发器的坑：`Menu` 的「值变 → 自动关闭」判定挂在**内部选择器真的变了**时，
-//     而不是挂在外部 `onChange(of: date)` 上 —— 后者在滚轮上会被每一格触发
-//     （第六轮/第二轮的同一个坑，**不要再走 onChange**）。
+//     ② 收键盘：改走第一方 `@FocusState`（见 `KeyboardDismiss.swift`
+//        的 `FocusCoordinator`）。UIKit 的 `resignFirstResponder`
+//        **不带转场上下文** → 键盘「啪」地消失；`focused = nil` 才播系统动画。
 //
-//  ⚠️ 菜单 label **不要**再 `+` 一个自绘日期文字（那是第五轮删掉的重复排版），
-//     系统 `DatePicker(.compact)` 自己就带 `xxxx年xx月xx日`，且它才是可点的那个。
+//  ⚠️ 已知取舍（**无法同时满足**，别再试图两全）：
+//     `.compact` 弹出的是 UIKit 私有 popover，它一翻动就**吃列表滚动手势**
+//     —— 这是系统行为。用户本轮把「点得开」排在第一位，所以先恢复可用。
+//     「选完自动收」× 「不吃滚动」×「点得开」三者只能取二。
 //
+//  ⚠️ 触发器的坑：**绝对不要**把收起逻辑挂在 `.onChange(of: date)` 上 ——
+//     滚轮每滚一格 date 就变一次，第二/六/七轮连踩三次，别走老路。
 
 import SwiftUI
 
-/// 模板页统一的日期选择器：**点开是日历，选好某天自动收回**（系统第一方行为）。
+/// 模板页统一的日期选择器：标准 `DatePicker(.compact)`，
+/// **点自带日期文字弹出日历**，收起由系统负责（点面板外）。
 ///
-/// - 形态：菜单式 —— 折叠时是系统 `DatePicker(.compact)` 的一行日期，
-///   点开弹出**整块日历**（与系统「日历」App 新建日程完全一致）。
-/// - 收起：**由系统负责**。翻月/翻年不关，点中具体某天立刻关。
-/// - 好处：弹出层是系统自己管理的独立容器，不参与本页滚动/键盘手势，
-///   所以既不会卡顿，也不会「影响画面滚动」。
+/// - 形态：`DatePicker("标题", …).datePickerStyle(.compact)` —— 标题在左、
+///   可点日期在右，一个系统控件搞定，**不做任何自绘/包壳**。
+/// - 为什么这么朴素：`DatePicker` 是 List 里的标准行，层级干净、
+///   最不容易被我们挂在 window 上的收键盘手势抢走点击。
 struct LabelDatePicker: View {
     let title: String
     @Binding var date: Date
 
     var body: some View {
-        // ★ 行内两段 ——「标题」—「弹性空白」—「系统 DatePicker」。
-        //   标题是真实布局元素，**不可能**再被挤没。
-        HStack(spacing: 8) {
-            Text(title)
-                .foregroundStyle(.primary)
-                .layoutPriority(1)          // ★ 标题优先保宽度，绝不先被压
-
-            Spacer(minLength: 8)
-
-            Menu {
-                // ★ `.graphical` = 整块日历（第一方 UIDatePicker 的日历形态）。
-                //   ⚠️ 它的高度是固定的（约 330pt），所以**必须**放进菜单里
-                //      按需弹出，不能直接铺在 List 行内。
-                //   ⚠️ `labelsHidden()` 只藏它的标签，不影响点击。
-                DatePicker("", selection: normalized, displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                    .labelsHidden()
-            } label: {
-                // ★ 菜单的「标题」= 系统 DatePicker(.compact) —— 形态、字体、
-                //   点击热区都与前六轮**完全一致**（用户不会觉得界面变了），
-                //   但它现在只负责「显示 + 打开菜单」，日期改动由上面的日历落笔。
-                DatePicker("", selection: normalized, displayedComponents: .date)
-                    .labelsHidden()
-                    .datePickerStyle(.compact)
-                    .allowsHitTesting(false)     // 点击交给外层 Menu
-                    .fixedSize()
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-        }
-        .contentShape(Rectangle())
+        // ★ 系统 `DatePicker` 直接当整行：它**自带**标题与日期文字，
+        //   而且那个日期文字就是弹出日历的开关。
+        //   ⚠️ 不要再给它套 `Menu` / 自绘 `Text` / `allowsHitTesting(false)`：
+        //      套 Menu 会让日历根本不渲染（上一轮的重大 bug）；
+        //      自绘会与系统文字重复排版（第五轮删过）。
+        DatePicker(title, selection: normalized, displayedComponents: .date)
+            .datePickerStyle(.compact)
+            // ★★★ 保命的一句：顶掉任何上层 tap 手势对这次点击的抢占。
+            //    iOS 17.1 起 `DatePicker` 若被更高层 `.onTapGesture` 抢到，
+            //    就会「点不开 / 要长按 2~3 秒」。
+            //    挂一个**永远不会满足**的 `simultaneousGesture`，
+            //    在不取消系统内部点击的前提下把优先级拿回来。
+            //    ⚠️ 必须是 `simultaneousGesture`（并存），
+            //      不能用 `.onTapGesture`（会互相取消）。
+            .simultaneousGesture(TapGesture().onEnded {})
     }
 
     /// ★ 把外部绑定的值**规范化到当天 0 点**再喂给 DatePicker。

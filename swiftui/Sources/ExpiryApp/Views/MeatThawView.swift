@@ -23,6 +23,8 @@ struct MeatThawView: View {
 
     @State private var maker = Prefs.lastMaker
     @State private var flash: String?
+    /// ★ 第一方焦点（第十九轮）：收键盘走 `focused = nil`，键盘才有系统动画。
+    @FocusState private var focus: AnyHashable?
 
     private var now: Date { Date() }
     /// 完成时间 = 解冻时间 + 1 天。
@@ -55,7 +57,7 @@ struct MeatThawView: View {
             }
 
             Section {
-                MakerField(maker: $maker)
+                MakerField(maker: $maker, focused: $focus)
             } footer: {
                 Text("会记住上次填写的操作人")
             }
@@ -70,7 +72,7 @@ struct MeatThawView: View {
         }
         .navigationTitle("肉类 · 解冻")
         .navigationBarTitleDisplayMode(.inline)
-        .keyboardDismissible()
+        .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
     }
 

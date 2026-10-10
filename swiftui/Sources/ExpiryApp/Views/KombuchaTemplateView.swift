@@ -9,6 +9,8 @@ struct KombuchaTemplateView: View {
     @State private var variety = ""
     @State private var maker = Prefs.lastMaker
     @State private var showVarietyAlert = false
+    /// ★ 第一方焦点（第十九轮）：收键盘走 `focused = nil`，键盘才有系统动画。
+    @FocusState private var focus: AnyHashable?
 
     var body: some View {
         List {
@@ -18,13 +20,14 @@ struct KombuchaTemplateView: View {
                         .foregroundStyle(Theme.brand)
                         .frame(width: 22)
                     TextField("输入茶叶品种", text: $variety)
+                        .focused($focus, equals: AnyHashable("variety"))
                         .onChange(of: variety) { _, value in
                             if value.count > LabelTemplate.maxNameLength {
                                 variety = String(value.prefix(LabelTemplate.maxNameLength))
                             }
                         }
                 }
-                MakerField(maker: $maker)
+                MakerField(maker: $maker, focused: $focus)
             } footer: {
                 Text("标题自动为「康普茶-\(variety.isEmpty ? "品种" : variety)」")
             }
@@ -39,7 +42,7 @@ struct KombuchaTemplateView: View {
         }
         .navigationTitle("康普茶 · 一发")
         .navigationBarTitleDisplayMode(.inline)
-        .keyboardDismissible()
+        .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
         .alert("请先填写茶叶品种", isPresented: $showVarietyAlert) {
             Button("好", role: .cancel) {}

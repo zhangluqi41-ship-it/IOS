@@ -39,7 +39,7 @@
 //     ➜ 更名 `ScrollKeyboardDismisser`，判定放宽为「**任意方向**的垂直滚动」
 //       都收起键盘（仅排除纯横向滑动，避免误伤滑动删行）。
 //
-//  ★★★ 2026-10-10（第十八轮·本次）用户两条反馈把问题指向了同一件事：
+//  ★★★ 2026-10-10（第十八轮）用户两条反馈把问题指向了同一件事：
 //     「滑动收回时**存在明显卡顿**，是否存在**未使用苹果第一方协议**？」
 //     「日历选择页面收回后完全不影响画面滚动，继续质疑是否正常使用第一方协议？」
 //
@@ -52,35 +52,34 @@
 //              坐标系换算，UIKit 内部还要回溯手势状态）；
 //           ③ 命中阈值就跨进程发一次 `resignFirstResponder`。
 //         这些活儿全都跑在**主线程**上，而主线程此刻正忙着驱动滚动 +
-//         键盘 `.interactively` 的跟随动画 —— 于是滚动肉眼可见地一顿一顿。
+//         键盘的跟随动画 —— 于是滚动肉眼可见地一顿一顿。
 //
 //     二、更重要的是：它和系统的键盘拖拽/滚动识别链**并存**，
 //         系统在 60fps 的滚动回调里还要额外调度我们这条第三方手势 →
 //         识别器竞争本身就是开销。
 //
-//     ➜ 正解 = **删掉自研手势，回归纯粹的苹果第一方协议**。
-//       `.scrollDismissesKeyboard(.immediately)` —— 这一句就是系统的
-//       「滚动即收键盘」，输入完全交给 UIKit 的滚动识别器，
+//     ➜ 正解 = **删掉自研手势，回归纯粹的苹果第一方协议**
+//       `.scrollDismissesKeyboard(...)`，输入完全交给 UIKit 的滚动识别器，
 //       零 Swift 回调、零额外手势、零跨边界调用。
 //
-//     ★ 为什么用 `.immediately` 而不是 `.interactively`：
-//       · `.interactively` 让键盘**逐帧跟随**手指 —— 这恰恰是最吃主线程的
-//         模式（每一帧都要重排列表 + 重算键盘位置），正是卡顿的来源之一；
-//       · `.immediately` 是**识别到滚动就一次性收起**，由系统一手包办，
-//         没有逐帧跟随 → 顺滑，行为上也完全满足「滑动即隐藏」。
-//       · 代价：第十五轮说的「不跟手」是 `.immediately` 的观感；
-//         但本轮用户把「顺滑」排在了「跟手」前面（「存在明显卡顿」），
-//         而且卡顿的根因就是逐帧跟随 + 自研手势，所以这里选顺滑。
+//  ★★★ 2026-10-10（第十九轮·本次）用户再报两条，逼出最终答案：
+//     「收回键盘是**瞬间收回，并无流畅动画**」
+//     「『完成』按钮也不需要，逻辑上是点击或滑动屏幕任意位置，流畅收起键盘」
 //
-//     ⚠️ 第十七轮那个「挂了 keyboard toolbar 时 `.scrollDismissesKeyboard`
-//        会失效」的观察，在**本轮删掉 accessory bar 里的「打印」之后已不成立** ——
-//        accessory bar 上只剩系统自带的「完成」，不再接管拖拽链路。
-//        若日后真又失效，**不要**再写 UIPanGestureRecognizer 补丁，
-//        优先查是不是 `.toolbar(placement: .keyboard)` 又挂了什么自定义控件。
+//     ★ 这两条合起来说明：**上一轮选 `.immediately` 是错的**。
+//       `.immediately` 的语义就是「滚动一开始就**立刻**收起键盘」
+//       —— 字面上就是**瞬间、无动画**，正是用户看到的观感。
 //
-//     ⚠️ 日历/日期面板曾经是「吃掉滚动」的另一支（`.compact` 的私有 popover）
-//        —— 第十八轮已改用 `Menu + DatePicker(.graphical)`（见 `DateField.swift`），
-//        菜单层由系统托管，不再参与本页手势。
+//     ➜ 最终定案 = **`.interactively`**：
+//       键盘**跟着手指逐帧走**，拖到哪收到哪 —— 这就是「流畅动画」本身。
+//       ⚠️ 第十八轮曾以「`.interactively` 逐帧跟随最吃主线程」为由放弃它，
+//          但那次卡顿的**真凶是自研 pan 手势**（已被删除），不是 `.interactively`。
+//          现在手势没了，`.interactively` 只剩系统自己一条链路 → 不再卡。
+//
+//     ⚠️ 别再改回 `.immediately`：它 = 瞬间消失、无动画（用户明确否定）。
+//     ⚠️ 也别再写 `UIPanGestureRecognizer`：自研手势会被系统识别器「二选一」，
+//        反而让 `.interactively` 失效，还可能吞掉 `DatePicker` 的点击
+//        （本轮那个「日期点不开」的重大 bug 就有它一份）。
 
 import Combine
 import SwiftUI
@@ -95,6 +94,76 @@ enum SoftKeyboard {
     static func hide() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                         to: nil, from: nil, for: nil)
+    }
+}
+
+// MARK: - 第一方聚焦：让键盘收起带上系统动画
+
+/// 全局「当前聚焦的输入框」。
+///
+/// ★★★ 2026-10-10（第十九轮）为什么必须有它 —— 用户连续三轮反馈同一件事：
+///     「收回键盘是**瞬间收回，并无流畅动画**，我依然质疑你是不是没有用第一方工具或协议」
+///
+///     ★ 用户的质疑**是对的**，而且根因就在本文件里：
+///
+///     之前收键盘走的是 `UIApplication.shared.sendAction(#selector(
+///     UIResponder.resignFirstResponder), …)` —— 这是**命令式的 UIKit 收键盘**，
+///     它只是让第一响应者 resign，**不带任何 SwiftUI 的转场上下文**。
+///     iOS 26 的键盘收起动画由 SwiftUI 的 focus 系统驱动
+///     （`@FocusState` / `focused(_:)` 是它的第一方入口），
+///     绕过它 → 键盘直接「啪」地消失，也就是用户看到的「瞬间收回、没有动画」。
+///
+///     ➜ 正解 = **把焦点交回 SwiftUI**：全局只认一个「当前聚焦的输入框」，
+///       任何要收键盘的动作（点空白 / 滚动 / 点日期）都走 `focused = nil`，
+///       由 SwiftUI 自己把键盘**动画**收起。
+///
+///     ⚠️ `SoftKeyboard.hide()`（UIKit 的 resignFirstResponder）**不要再用来收键盘** ——
+///        那正是「瞬间收回、没动画」的来源。它现在只留作最后兜底
+///        （见 `dismiss()`：万一焦点状态没跟上，至少保证键盘能被收掉）。
+///
+/// ★ 焦点值由 `keyboardDismissible(focus:)`（`KeyboardFocus.swift`）持续同步进来。
+@MainActor
+final class FocusCoordinator: ObservableObject {
+
+    static let shared = FocusCoordinator()
+
+    /// 当前聚焦的输入框标识；`nil` = 没有聚焦（键盘应收起）。
+    @Published var focused: AnyHashable?
+
+    private init() {}
+
+    /// 第一方收键盘：清空焦点 → SwiftUI 播系统动画收起键盘。
+    ///
+    /// ★ 正常路径就是「把 `focused` 置 nil」——`keyboardDismissible(focus:)`
+    ///   的 `onChange` 会把 nil 写回页面的 `@FocusState`，SwiftUI 随即动画收键盘。
+    ///   只有焦点状态确实没跟上的极端情况，才退到 UIKit 兜底，
+    ///   保证「点空白一定能把键盘收掉」这件事不会失效。
+    func dismiss() {
+        focused = nil
+        if Self.hasFirstResponder {
+            // 走到这里说明 SwiftUI 侧没跟着收（例如某页漏了绑定）→ 兜底。
+            SoftKeyboard.hide()
+        }
+    }
+
+    /// 系统里是否真的有第一响应者在编辑（说明键盘该收而未收）。
+    private static var hasFirstResponder: Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .contains { $0.firstResponderIsEditing }
+    }
+}
+
+private extension UIWindow {
+    /// 沿 responder chain 找一找有没有正在编辑的第一响应者。
+    var firstResponderIsEditing: Bool {
+        func find(_ responder: UIResponder?) -> Bool {
+            guard let responder else { return false }
+            if responder is UITextField || responder is UITextView { return true }
+            return find(responder.next)
+        }
+        return find(self)
     }
 }
 
@@ -147,17 +216,21 @@ final class KeyboardWatcher: ObservableObject {
 
 /// 「点空白收起键盘」的安装器。
 ///
-/// ★ 为什么这个**保留**（而 `ScrollKeyboardDismisser` 被删掉）：
-///   收键盘这件事 SwiftUI **没有**第一方 API（没有 `.dismissKeyboardOnTap()`），
-///   所以只能用 UIKit 补一个手势 —— 这是**唯一**可行的做法。
-///   它与滚动无关：`cancelsTouchesInView = false` 不吃触摸，
-///   且 `shouldReceive` 遇到 `UIControl` 直接返回 false（点输入框/按钮不抢）。
-///   ⚠️ 它只在**触摸开始**时被系统问一次「要不要接收」（`shouldReceive`），
-///      在拖动过程中**不会**被逐帧回调 —— 所以它不是滚动卡顿的来源。
+/// ★ 为什么这个**必须保留**（不能用纯 SwiftUI 替代）：
+///   收键盘这件事**没有**第一方 SwiftUI 修饰符（不存在 `.dismissKeyboardOnTap()`）。
+///   `.onTapGesture` 挂在 `List` 上会与 `TextField` **抢手势**
+///   （轻则点输入框键盘闪一下打不出字）—— 这是第十五轮实测过的坑，
+///   所以只能用 UIKit 补一个**只观察、不拦截**的手势。
 ///
-/// ★ 做成单例并记住装过的 window：SwiftUI 会反复创建/销毁 background 视图，
-///   如果每次都挂一个手势，同一个 window 上很快会叠上一串 ——
-///   功能上无害（都是收起键盘），但会白占内存、也让行为难以推理。
+/// ★★★ 2026-10-10（第十九轮）关键修正：手势本身没问题，**问题在它调用了什么**。
+///   以前它直接调 UIKit 的 `resignFirstResponder` → 键盘**瞬间消失、没有动画**
+///   （用户连续三轮反馈的同一个问题：「收回键盘是瞬间收回，并无流畅动画」）。
+///   ➜ 现在改走 `FocusCoordinator.dismiss()` —— **第一方 `@FocusState` 收键盘**，
+///     由 SwiftUI 播系统动画。
+///
+/// ⚠️ 这个手势只挂在 window 上、`cancelsTouchesInView = false`，
+///    在**触摸开始**时被系统问一次 `shouldReceive`，拖动过程中**不会**被逐帧回调，
+///    所以它**不是**滚动卡顿的来源（第十八轮删掉的是另一个 pan 手势）。
 final class TapOutsideKeyboardDismisser: NSObject, UIGestureRecognizerDelegate {
 
     static let shared = TapOutsideKeyboardDismisser()
@@ -176,7 +249,8 @@ final class TapOutsideKeyboardDismisser: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleTap() {
-        SoftKeyboard.hide()
+        // ★ 走第一方焦点，键盘才会「流畅收起」而不是瞬间消失。
+        FocusCoordinator.shared.dismiss()
     }
 
     // MARK: - 只对「点空白」生效
@@ -185,15 +259,20 @@ final class TapOutsideKeyboardDismisser: NSObject, UIGestureRecognizerDelegate {
     ///   否则会出现「点输入框的同时把键盘收掉」→ 根本聚焦不上，
     ///   或者「点快捷档位按钮时键盘一起收了」这类副作用。
     ///   只有点在真正的空白 / 静态文本上才收起键盘。
+    ///
+    /// ★ 这段**必须保留** —— 它同时是「日期选择器点得开」的保险
+    ///   （历史教训：window 级手势会把 `DatePicker` 的点击吞掉）。
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldReceive touch: UITouch) -> Bool {
         var node = touch.view
         while let current = node {
-            // UITextField / UIButton / UISwitch / UIDatePicker 全是 UIControl 的子类。
+            // UITextField / UIButton / UISwitch / UIDatePicker / UIKit 菜单宿主
+            // 全是 UIControl 的子类 —— 交给它们自己处理，我们不收键盘。
             if current is UIControl { return false }
             if current is UITextView { return false }
-            // SwiftUI 的 TextField 有时包在私有容器里，按类型名兜一刀。
-            if String(describing: type(of: current)).contains("TextField") { return false }
+            // SwiftUI 的 TextField / DatePicker 有时包在私有容器里，按类型名兜一刀。
+            let name = String(describing: type(of: current))
+            if name.contains("TextField") || name.contains("DatePicker") { return false }
             node = current.superview
         }
         return true
@@ -230,28 +309,29 @@ private final class WindowHookView: UIView {
 
 /// 带输入框的页面统一挂这个：滑动收起 + 点空白收起。
 ///
-/// ⚠️ 键盘上方「完成」按钮**不在这里**，而是在 `LabelActions` 里统一挂。
+/// ⚠️ 键盘上方**不挂任何东西**（`ToolbarItemGroup(placement: .keyboard)`
+///   在第十九轮被彻底移除，见 `LabelActions`）。
 struct KeyboardDismissModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            // ★★★ 2026-10-10（第十八轮）—— **苹果第一方**的「滚动即收键盘」。
+            // ★★★ 苹果第一方的「滑动收键盘」。
             //
-            //   `.immediately`：系统滚动识别器一判定是滚动，就一次性收起键盘。
-            //   全程由 UIKit 自己处理 —— 没有逐帧 Swift 回调、没有额外手势、
-            //   没有跨语言边界调用，所以滚动不再被拖累（第十七轮的卡顿就是这么来的）。
+            //   `.interactively`：键盘**跟着手指逐帧走**，拖到哪收到哪 ——
+            //   这就是用户要的「流畅动画」（`.immediately` 是瞬间消失，已被否定）。
             //
-            //   ⚠️ 不要再改回 `.interactively`（逐帧跟随 = 最吃主线程的模式），
-            //      也不要再补 `UIPanGestureRecognizer`（第十七轮的
-            //      `ScrollKeyboardDismisser` 已因此删除 —— 它就是卡顿的元凶）。
-            .scrollDismissesKeyboard(.immediately)
+            //   ⚠️ 2026-10-10（第十九轮）定案：`.immediately` ✗ / `.interactively` ✓。
+            //      第十八轮误以为「逐帧跟随吃主线程」，其实那次卡顿的真凶是
+            //      自研 `UIPanGestureRecognizer`（已删除）。
+            //   ⚠️ 别再补 `UIPanGestureRecognizer` —— 它会与这条系统识别器
+            //      「二选一」，既可能让本句失效，又会吞掉 `DatePicker` 的点击。
+            .scrollDismissesKeyboard(.interactively)
             // 点空白收键盘：SwiftUI 无对应 API，只能由 UIKit 手势补（见上）。
             .background(DismissKeyboardOnTap())
     }
 }
 
-extension View {
-    /// 给模板页挂上完整的键盘收起交互。
-    func keyboardDismissible() -> some View {
-        modifier(KeyboardDismissModifier())
-    }
-}
+// ⚠️ 带 `focus:` 的 `keyboardDismissible(...)` 在 `KeyboardFocus.swift`。
+//    那个版本会把焦点同步给 `FocusCoordinator`，从而让「点空白 / 滚动」
+//    都能走**第一方 `@FocusState`** 收键盘（有系统动画）。
+//    **所有七个模板页都用带 focus 的版本** —— 本文件不再提供无参版本，
+//    免得有人误用回「瞬间收起、没动画」的老路。

@@ -26,6 +26,8 @@ struct MeatTemplateView: View {
     @State private var bestDate = Date()
     @State private var alertText = ""
     @State private var showAlert = false
+    /// ★ 第一方焦点（第十九轮）：收键盘走 `focused = nil`，键盘才有系统动画。
+    @FocusState private var focus: AnyHashable?
 
     var body: some View {
         List {
@@ -97,14 +99,14 @@ struct MeatTemplateView: View {
             }
 
             Section {
-                MakerField(maker: $maker)
+                MakerField(maker: $maker, focused: $focus)
             } footer: {
                 Text("会记住上次填写的操作人")
             }
         }
         .navigationTitle("肉类")
         .navigationBarTitleDisplayMode(.inline)
-        .keyboardDismissible()
+        .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
         // ★★★【第十轮·用户图6 修复】「选择完肉类后部位信息全不见了」
         //
