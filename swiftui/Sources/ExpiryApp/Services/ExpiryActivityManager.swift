@@ -113,7 +113,19 @@ final class ExpiryActivityManager {
             dueAt: dueAt)
 
         let key = "\(best.record.id.uuidString)#\(best.milestone.label)"
-        let content = ActivityContent(state: state, staleDate: dueAt)
+        // ★★ 2026-10-10（第七轮）：`staleDate` 从 `dueAt` **延后到宽限期结束**。
+        //
+        //   为什么改：`staleDate` 一到，系统会把整块内容**降饱和 / 变灰**
+        //   （表示「这个数据可能过期了」）。但我们的场景里，`dueAt` 那一刻
+        //   恰恰是**最需要用户看清**的时刻（红色「到点」+ 两个按钮）。
+        //   若在 `dueAt` 就变灰，等于把最强的提示压暗了。
+        //
+        //   ➜ 改成 `dueAt + graceWindow`（30 分钟）：这期间内容保持满色，
+        //     用户有充裕时间看清并处理；过了宽限期才让系统标记为陈旧，
+        //     与 `sync` 里「超过宽限期就收掉活动」的窗口**对齐**。
+        //   ⚠️ 单位是秒，`graceWindow` 是 `TimeInterval`，直接相加即可。
+        let content = ActivityContent(state: state,
+                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow))
 
         // 还是同一个目标：只刷新一下状态
         //（比如刚打开 App、用户点过「稍后提醒」要把区间换新）。
@@ -160,7 +172,9 @@ final class ExpiryActivityManager {
         }
         let attrs = activity.attributes
         let state = ExpiryActivityAttributes.ContentState(startedAt: Date(), dueAt: dueAt)
-        let content = ActivityContent(state: state, staleDate: dueAt)
+        // ★ 同 `sync`：`staleDate` 延后到宽限期结束（别让刚设的 5 分钟倒计时就变灰）。
+        let content = ActivityContent(state: state,
+                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow))
 
         await activity.end(nil, dismissalPolicy: .immediate)
         self.activity = nil

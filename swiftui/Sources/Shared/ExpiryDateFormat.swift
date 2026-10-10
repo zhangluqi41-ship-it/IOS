@@ -16,6 +16,15 @@ import Foundation
 
 enum ExpiryDateFormat {
 
+    /// `yyyy/MM/dd`
+    ///
+    /// ★★ 2026-10-10 新增（第七轮用户反馈图8）：
+    ///    「时间改为对应的时间模组，比如『最佳使用时间 2026/01/01』」
+    ///    → 展开态底部那行要「里程碑文案 + 完整日期」，
+    ///      所以需要一个**只到日**的格式（不带时分，与 `time(_:)` 分工）。
+    ///    格式与标签一致（`yyyy/MM/dd`），保证用户核对的时刻逐字相同。
+    static func date(_ t: Date) -> String { formatter("yyyy/MM/dd").string(from: t) }
+
     /// `yyyy/MM/dd HH:mm`
     static func dateTime(_ t: Date) -> String { formatter("yyyy/MM/dd HH:mm").string(from: t) }
 

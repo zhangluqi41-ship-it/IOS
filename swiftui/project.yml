@@ -74,8 +74,27 @@ targets:
         #   ③ **到点无强化通知**：补回 tier 4 —— `timeSensitive` + 带按钮的
         #      「⚠️ xx已到，请立即处理」通知（之前误以为灵动岛会自动展开，故空着）。
         #   → 1.0.6 / build 32。
-        CURRENT_PROJECT_VERSION: 32
-        MARKETING_VERSION: 1.0.6
+        # ★ 2026-10-10 第七轮（用户发 8 张截图逐条圈注）：
+        #   ① **到点后灵动岛卡在 `0:00`**（图1/3/4）—— 这是本轮最重要的修复。
+        #      根因：`Text(timerInterval:)` 归零后系统最后一次重绘时，旧代码
+        #      仍走"有区间就渲染 timerInterval"的分支 → 永久卡 `0:00`。
+        #      正解 = **双轨绘制**：判据统一为 `countdownInterval == nil`
+        #      （非 nil → timerInterval；nil → 静态「到点/已到时间」），
+        #      图标 / 数字 / 颜色 / 按钮**全部同源**，一次重绘里同时切换。
+        #   ② 参照**苹果运动 App**（图2）：左侧图标改**纯白**（与标题同色），
+        #      右侧倒计时改**苹果运动黄** `#FFD60A`（到点仍红）。
+        #   ③ 展开态（图7）：左侧加 `.padding(.leading, 6)` 避免被胶囊圆角切；
+        #      左上「沙漏+类别」颜色 `white.opacity(0.8)` → **纯白**。
+        #   ④ 展开态（图7/图8）：右上大数字从「到期时刻」改成**真正的倒计时**
+        #      （用户说「红色数字应为倒计时」），到期时刻降级为下方小字。
+        #   ⑤ 展开态底部（图8）：改「**里程碑文案 + yyyy/MM/dd**」模板
+        #      （如「最佳使用时间 2026/01/01」）—— 新增 `ExpiryDateFormat.date(_:)`。
+        #   ⑥ 标题**不折行**（图8「保持完整一行」）：`lineLimit(1)` + 缩字。
+        #   ⑦ `staleDate` 从 `dueAt` 延后到 `dueAt + graceWindow`（30 分钟）：
+        #      避免到点那一刻整块卡片变灰，把最强提示压暗。
+        #   → 1.0.7 / build 33。
+        CURRENT_PROJECT_VERSION: 33
+        MARKETING_VERSION: 1.0.7
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -126,8 +145,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.0.6
-        CURRENT_PROJECT_VERSION: 32
+        MARKETING_VERSION: 1.0.7
+        CURRENT_PROJECT_VERSION: 33
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

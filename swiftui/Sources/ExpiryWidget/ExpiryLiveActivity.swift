@@ -34,6 +34,75 @@
 //        右边用红色「到点」字样 + 沙漏图标，用户一眼就知道该长按进来看。
 //        这是免费账号 + 无推送能力下能做到的极限，也是唯一诚实的做法。
 //
+//  ─────────── 2026-10-10 第七轮（用户 8 张截图反馈，本文件再次大改） ───────────
+//
+//  ★ 用户把「苹果运动 App 的灵动岛」当参照（图2），逐条要求：
+//      「就像苹果运动的这个样式一样，同时左侧图标修改成和我的字体
+//       一样的颜色，右侧倒计时和苹果这个黄色一致」
+//    ➜ ① 左侧沙漏图标 → **白色**（与标题文字同色，不再是品牌色）；
+//       ② 右侧倒计时 → **苹果运动那个黄色**（`#FFD60A` 一类的运动黄）。
+//    注意：黄色只在**正常倒计时**时用；**到点**仍用红色（危险色更高优先）。
+//
+//  ★★ 「两侧多出来的黑边」的真正成因（图1 / 图4 的蓝框）：
+//     用户圈出「灵动岛左右两端各有一块屏幕画出来的黑色，应该删掉」。
+//     这不是我们画的，而是**灵动岛胶囊形状本身**：摄像头在中间，
+//     左右两个槽位（compactLeading / compactTrailing）如果内容偏小，
+//     系统就把它们**居中**摆，于是槽位两端空出来的部分就是那块「黑边」。
+//     ➜ 正解 = 让内容**撑满槽位并朝摄像头方向靠**：
+//        左槽 `.frame(maxWidth: .infinity, alignment: .trailing)`
+//        右槽 `.frame(maxWidth: .infinity, alignment: .leading)`
+//       （第六轮已经这么做，本轮保留 —— 这是目前能做到的最大程度收敛。）
+//     ⚠️ 摄像头正上方/中间那条永远是黑的，**改不了**（用户也已承认）。
+//
+//  ★★★ 「亮屏时应该是大卡片而不是小胶囊」（图5 → 图6）：
+//     用户圈出展开态大卡片说「亮屏状态下的通知应该是这种通知」。
+//     **这条在 iOS 上做不到**，必须说清楚：
+//       · 灵动岛的**展开态**只能由 ① 用户长按 ② 系统事件 触发；
+//       · 第三方 App **没有任何 API** 能让自己在亮屏时直接展开；
+//       · 「亮屏时自动变大卡片」= App 主动撑开灵动岛 → 平台不开放。
+//     ➜ 我们能做的是把**长按展开后的大卡片**本身做得更接近用户预期（见图7/图8
+//       的两条修复），以及把紧凑态做到最醒目。**不要**去尝试
+//       `Activity.request(..., ...)` 之类「假冒展开」的写法 —— 不存在这种参数。
+//
+//  ★ 图7（展开大卡片左上「⏳ 肉类」超出左边界 + 颜色不对）：
+//     「蓝色左侧超出界面，部分不显示，可以右移，同时它的颜色应该文字这个颜色」
+//     ➜ ① 展开态 `.leading` 区域**显式加左内边距**（避免贴到胶囊最左侧被圆角切）；
+//       ② 左上「图沙漏 + 类别」的颜色从 `white.opacity(0.8)` 提亮到
+//          **纯白**，与标题文字同色（用户要求「和我的字体一样的颜色」）。
+//
+//  ★ 图7 另一条：「红色数字应为倒计时」——
+//     展开态右上那个大数字，用户希望它是**倒计时**而不是到期时刻。
+//     ⚠️ 但右下已经有「距离到期 0:16」的倒计时了，两处都放倒计时会重复。
+//     用户原话是「红色数字应为倒计时」+ 图7 里它显示的是 `06:09`（到期时刻）。
+//     ➜ 折中：右上大数字**保留到期时刻**（那是标签上印的、最该被核对的值），
+//       但把它改成**白色**（不再是红色，红色被用户当成「倒计时专用色」），
+//       倒计时统一只出现在右下那一处。
+//
+//  ★ 图8（展开大卡片文字折行 + 时间模板）：
+//     「这个区域文字可以放摄像头最下方线下一行，直接文字保持完整一行，
+//       时间改为对应的时间模组，比如『最佳使用时间 2026/01/01』」
+//     ➜ ① 左侧标题 `.lineLimit(2)` → **`lineLimit(1)` + `minimumScaleFactor`**，
+//          保证「保持完整一行」（宁可缩字也不折行）；
+//       ② 底部那行从「距离到期 + 倒计时」改成
+//          **「<里程碑文案> + yyyy/MM/dd」** 的模板（如「最佳使用时间 2026/01/01」），
+//          倒计时**移到右上角**（正好呼应图7「红色数字应为倒计时」）。
+//
+//  ★★ 到点后紧凑态显示 `0:00` 的问题（图1 / 图3 / 图4 都是 `0:00`）：
+//     `Text(timerInterval:)` 只在**区间未走完**时由系统每秒刷新；
+//     一旦归零，系统做**最后一次重绘**，此时必须靠「双轨绘制」切到静态文字
+//     —— 否则它就永久卡在 `0:00`（且 `staleDate` 只让它变灰、**不触发重绘**）。
+//
+//     ✅ 本轮统一判据为 **`countdownInterval == nil`**（全文件 6 处：
+//        紧凑态图标 / 紧凑态数字 / 展开态图标 / 展开态大数字 / 展开态按钮 /
+//        横幅图标 + 横幅倒计时）。理由：
+//          · 它非 nil ⟺ 系统还能渲染 `timerInterval`；
+//          · 为 nil ⟺ 必须渲染静态文字。
+//        「图标 / 数字 / 颜色 / 按钮」全部由**同一个表达式**决定，
+//        保证它们在同一次重绘里**同时**切换，不会各自漂移。
+//     ⚠️ 因此**不要再单独用 `state.phase` 去判这些呈现**（容易与
+//        `timerInterval` 的分支错开一帧）。`phase` 仅保留作语义别名，
+//        供 `ExpiryActivityBridge` 等非渲染逻辑参考。
+//
 //  ★★ 排版修复（用户说「间距超大、看不到数字」的真正原因）：
 //     上一版为了消掉两侧的默认边距，写了两句
 //        `.contentMargins(.horizontal, 0, for: .compactLeading/.compactTrailing)`
@@ -98,49 +167,85 @@ struct ExpiryLiveActivityWidget: Widget {
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
-                // ── 左上：logo + 类别（第一行），标题（第二行，允许折行）──
+                // ── 左上：logo + 类别（第一行），标题（第二行，**完整一行不折行**）──
+                //  ★★【第七轮】图7「左侧超出界面，可以右移」→ 显式加左内边距；
+                //     图7「颜色应该是文字这个颜色」→ 图标/类别提到纯白。
+                //  ★★【第七轮】图8「文字保持完整一行」→ `lineLimit(1)` + 允许缩字。
                 DynamicIslandExpandedRegion(.leading) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 4) {
-                            Image(systemName: "hourglass")
+                            // ★★ 2026-10-10：图标在「到点」时换成感叹号警示三角。
+                            //   判据统一用 `countdownInterval == nil`
+                            //   （见本文件「倒计时」一节的长注释），
+                            //   与数字变「已到时间」、变红**同步**。
+                            Image(systemName: context.state.countdownInterval == nil
+                                  ? "exclamationmark.triangle.fill"
+                                  : "hourglass")
                                 .font(.caption2)
                             Text(context.attributes.kindLabel)
                                 .font(.caption2)
                         }
-                        .foregroundStyle(.white.opacity(0.8))
+                        // ★ 纯白（原来是 `white.opacity(0.8)`）—— 与标题同色，
+                        //   用户要求「和我的字体一样的颜色」。
+                        .foregroundStyle(.white)
 
                         Text(context.attributes.title)
                             .font(.subheadline)
                             .fontWeight(.semibold)
-                            .lineLimit(2)
+                            // ★ 图8：「直接文字保持完整一行」—— 不折行，宁可缩字。
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
                             .foregroundStyle(.white)
                     }
-                    // ★ 不再写 `.padding(.leading, 4)` —— 交给系统的展开态默认边距，
-                    //   之前那点手工 padding 在真机上反而让内容贴边不齐。
+                    // ★ 图7：左上角被胶囊圆角切掉 → 往右推一点。
+                    //   只加 leading，不动其它方向，避免改变整卡高度。
+                    .padding(.leading, 6)
                 }
 
-                // ── 右上：只有「大号时间」，**不再有里程碑文案** ──
-                //   ★ 用户明确要求：「变大图标后右侧的时间上方不要最佳使用时间」。
-                //   ★ 「参考苹果健身的小数字变大」→ 用大号、粗体、等宽数字，
-                //     让它是整张卡的视觉重点。
+                // ── 右上：**倒计时**（图7「红色数字应为倒计时」）+ 到期时刻小字 ──
+                //  ★ 用户参照苹果运动（图2）：「右侧倒计时和苹果这个黄色一致」。
+                //  ★ 布局：大号倒计时在上（黄色/红色），到期时刻在下（小号白字），
+                //    这样「红色数字 = 倒计时」成立，也不会丢掉标签上印的时刻。
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(ExpiryDateFormat.time(context.state.dueAt))
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .foregroundStyle(.white)
+                    VStack(alignment: .trailing, spacing: 0) {
+                        // ① 大号倒计时 —— 这就是用户要的「红色数字」。
+                        //    未到点 → 苹果运动黄；已到点 → 红（危险优先）。
+                        //    ⚠️ 判色用 `countdownInterval == nil`，与
+                        //       `ExpandedCountdownText` 内部的分支**同源**，
+                        //       保证「文字换成『已到时间』」与「变红」同步发生。
+                        ExpandedCountdownText(state: context.state)
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                            .foregroundStyle(context.state.countdownInterval == nil
+                                             ? Color.red
+                                             : ExpiryLiveActivityColors.exerciseYellow)
+
+                        // ② 到期时刻（小号白字）—— 与标签上印的时刻逐字一致。
+                        Text(ExpiryDateFormat.time(context.state.dueAt))
+                            .font(.caption2)
+                            .monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                    // ★ 图7：右侧同样贴边被切 → 收一点右边距。
+                    .padding(.trailing, 6)
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
+                        // ★★【第七轮】图8：
+                        //   「时间改为对应的时间模组，比如『最佳使用时间 2026/01/01』」
+                        //   → 这里从「距离到期 + 倒计时」改成**里程碑文案 + 完整日期**。
+                        //   ⚠️ 倒计时已经移到右上角（见 `.trailing`），不再重复。
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(context.state.phase == .due ? "已到时间" : "距离到期")
+                            Text(context.attributes.milestoneLabel)
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.75))
-                            CountdownText(state: context.state)
-                                .font(.system(.title3, design: .rounded))
-                                .fontWeight(.bold)
+                            Text(ExpiryDateFormat.date(context.state.dueAt))
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
                                 .foregroundStyle(.white)
                             Spacer(minLength: 0)
                         }
@@ -162,15 +267,23 @@ struct ExpiryLiveActivityWidget: Widget {
                 //      · 右槽 → 左对齐（`.leading`，往中间靠）
                 //    这样「缝隙」和「黑边」都会被推掉，内容紧贴灵动岛中央。
                 //  ⚠️ 不要用负 padding 硬顶 —— 会与系统裁切打架。
-                Image(systemName: context.state.phase == .due
+                //
+                //  ★★【第七轮】图2「左侧图标修改成和我的字体一样的颜色」
+                //    → 未到点时用**纯白**（与标题同色）；到点才用红色示警。
+                //  ★★ 判据统一 `countdownInterval == nil`：与右侧数字
+                //     「变『到点』+ 变红」同步，不会出现「图标还是沙漏但数字已到点」。
+                Image(systemName: context.state.countdownInterval == nil
                       ? "exclamationmark.triangle.fill"
                       : "hourglass")
                     .imageScale(.small)
-                    .foregroundStyle(context.state.phase == .due ? Color.red : Color.white)
+                    .foregroundStyle(context.state.countdownInterval == nil
+                                     ? Color.red
+                                     : Color.white)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             } compactTrailing: {
                 // ★ 右侧同理：内容**左对齐**（往摄像头靠），把右侧黑边推掉。
                 //   宽度收敛靠 `CompactCountdownText` 里的 `showsHours` 动态判断。
+                //  ★★【第七轮】图2「右侧倒计时和苹果这个黄色一致」→ 见下组件内部。
                 CompactCountdownText(state: context.state)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } minimal: {
@@ -195,32 +308,48 @@ private struct LockScreenView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // ── 第一行：图标 + 标题 + 类别 ──
+            // ★★【第七轮】图8「文字保持完整一行」→ `lineLimit(1)` + 缩字。
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "clock.badge.exclamationmark")
+                // ★ 判据统一 `countdownInterval == nil`（见「倒计时」一节注释）。
+                Image(systemName: context.state.countdownInterval == nil
+                      ? "exclamationmark.triangle.fill"
+                      : "hourglass")
                     .font(.subheadline)
-                    .foregroundStyle(Theme.brandLight)
+                    .foregroundStyle(context.state.countdownInterval == nil
+                                     ? Color.red
+                                     : Theme.brandLight)
                 Text(context.attributes.title)
                     .font(.headline)
+                    // ★ 不再允许折成两行 —— 宁可缩字。
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Spacer(minLength: 0)
                 Text(context.attributes.kindLabel)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
+            // ── 第二行：里程碑文案 + 完整日期（图8「最佳使用时间 2026/01/01」）──
+            // ★★【第七轮】图8 明确要求把这里改成「时间模组 + 日期」的形式。
+            //   左侧是里程碑文案（`milestoneLabel`，如「最佳使用时间」），
+            //   右侧是同行的 `yyyy/MM/dd`；倒计时挪到最右侧（保持原有能力）。
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(context.attributes.milestoneLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(ExpiryDateFormat.dateTime(context.state.dueAt))
+                    .lineLimit(1)
+                Text(ExpiryDateFormat.date(context.state.dueAt))
                     .font(.caption)
+                    .fontWeight(.semibold)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer(minLength: 0)
-                CountdownText(state: context.state)
-                    .font(.system(.title3, design: .rounded))
-                    .fontWeight(.bold)
-                    .foregroundStyle(context.state.phase == .due ? .red : Theme.brandLight)
+                // 倒计时仍然保留（这是横幅最有用的信息），
+                // 未到点用苹果运动黄、到点用红色。
+                LockScreenCountdownText(state: context.state)
             }
 
             ActionButtons(attributes: context.attributes, state: context.state)
@@ -229,17 +358,54 @@ private struct LockScreenView: View {
     }
 }
 
+/// 横幅（锁屏 / 通知中心）用的倒计时。
+///
+/// ★★ 2026-10-10 新增（第七轮）：与紧凑态、展开态**分开**，因为三处的
+///    字号 / 颜色策略不同：
+///      · 紧凑态 —— 黄（未到点）/ 红（到点），`.caption` 加粗；
+///      · 展开态 —— 黄 / 红，`size 26` 粗体圆角；
+///      · **横幅** —— 黄 / 红，`.title3` 粗体圆角（本组件）。
+///    三者共享同一个色板（`ExpiryLiveActivityColors`），
+///    只在此处负责横版的排版。
+private struct LockScreenCountdownText: View {
+    let state: ExpiryActivityAttributes.ContentState
+
+    var body: some View {
+        // ★ 双轨绘制（见 `ContentState.countdownInterval` 的长注释）：
+        //   能拿到区间 → 系统实时倒计时；拿不到 → 静态文字。
+        //   ⚠️ 判据只用 `countdownInterval`，**不要再叠一层 `phase` 判断** ——
+        //      两者等价但重复，且 `phase` 是 Bool 语义、`interval` 是数据语义，
+        //      统一用后者才能一眼看出「就是这里决定渲染哪个分支」。
+        Group {
+            if let interval = state.countdownInterval {
+                Text(timerInterval: interval, countsDown: true, showsHours: true)
+                    .monospacedDigit()
+            } else {
+                Text("已到时间")
+            }
+        }
+        .font(.system(.title3, design: .rounded))
+        .fontWeight(.bold)
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .foregroundStyle(state.countdownInterval == nil
+                         ? Color.red
+                         : ExpiryLiveActivityColors.exerciseYellow)
+    }
+}
+
 // MARK: - 按钮（★ 按阶段显示）
 
 /// ★★ 2026-10-09 修正（用户反馈）：
 ///    「前 10 分钟提醒，按钮只保留已完成使用，删除到时间后的稍后提醒」
 ///
-///    → 所以**提前阶段（`.soon`）只显示「已完成使用」**；
-///      「稍后提醒」只在**已经到时间（`.due`）**之后才出现。
+///    → 所以**提前阶段只显示「已完成使用」**；
+///      「稍后提醒」只在**已经到时间**之后才出现。
 ///
-///    判据用 `ContentState.phase`，它是**按当前时刻现算**的派生属性
-///    （见 `ExpiryActivityAttributes.ContentState.phase`），
-///    系统每秒刷倒计时时会一起重绘 → 到点自动切换，不需要 App 干预。
+///    ★★ 2026-10-10（第七轮）：判据从 `phase` 改为
+///       **`countdownInterval == nil`**，与倒计时/图标/颜色**同源**。
+///       这样「数字变『到点』」和「稍后提醒按钮出现」发生在同一次重绘里，
+///       不会出现「已经显示到点了，但少一个按钮」的错帧。见下方 `body` 注释。
 private struct ActionButtons: View {
     let attributes: ExpiryActivityAttributes
     let state: ExpiryActivityAttributes.ContentState
@@ -255,7 +421,10 @@ private struct ActionButtons: View {
             .tint(.green)
 
             // ★ 只有「到时间」之后才给「稍后提醒」。
-            if state.phase == .due {
+            //   ⚠️ 判据与倒计时**同源**（`countdownInterval == nil`），
+            //      而不是 `phase`：这样「倒计时变『到点』」与「按钮冒出来」
+            //      在**同一次重绘**里发生，不会出现「显示到点了但少一个按钮」。
+            if state.countdownInterval == nil {
                 Button(intent: ExpirySnoozeIntent(recordID: attributes.recordID,
                                                   dueAt: state.dueAt)) {
                     Label("稍后提醒", systemImage: "clock.arrow.circlepath")
@@ -271,11 +440,62 @@ private struct ActionButtons: View {
 
 // MARK: - 倒计时
 
-/// 展开态 / 锁屏用的倒计时。
+/// ★★ 2026-10-10 新增（第七轮，用户参照苹果运动 App）。
+///
+/// 用户原话（图2）：
+///   「就像苹果运动的这个样式一样，同时左侧图标修改成和我的字体一样的颜色，
+///     右侧倒计时和苹果这个黄色一致」
+///
+/// 苹果运动 App 的灵动岛倒计时用的是**运动黄**（接近系统 `#FFD60A`）。
+/// 这里单独放一个常量，方便以后想调色只改一处。
+///
+/// ⚠️ **不要用 `.yellow`** —— 那是纯黄（`#FFFF00`），在黑色胶囊上发灰、
+///    不够「苹果运动」；下面这个是苹果运动黄，饱和度更高、更像原版。
+enum ExpiryLiveActivityColors {
+    /// 苹果运动 App 的倒计时黄。
+    static let exerciseYellow = Color(red: 0xFF / 255.0,
+                                      green: 0xD6 / 255.0,
+                                      blue: 0x0A / 255.0)
+}
+
+/// 展开态右上角的**大号倒计时**。
+///
+/// ★★ 2026-10-10 新增（第七轮用户反馈图7）：
+///    用户圈着展开态右上那个大数字说「红色数字应为倒计时」——
+///    上一版那里放的是 `ExpiryDateFormat.time(dueAt)`（到期时刻 `06:09`），
+///    所以用户觉得「红数字不是倒计时」。现在改成一个**真正的倒计时**。
+///
+/// ★ 与 `CountdownText` 的区别：
+///    · `CountdownText` —— 已无引用（保留作参照），带「已到时间」兜底；
+///    · **本组件** —— 展开态专用，到点显示「已到时间」，未到点走 `timerInterval`。
+private struct ExpandedCountdownText: View {
+    let state: ExpiryActivityAttributes.ContentState
+
+    var body: some View {
+        // ★ 双轨绘制 —— 判据只用 `countdownInterval`（见该属性的长注释）。
+        if let interval = state.countdownInterval {
+            // ⚠️ `Text(timerInterval:)` 要求**下界 < 上界**，`countdownInterval`
+            //    内部已 guard，天然安全。
+            // ★ 展开态空间充足 → 一律带小时（`showsHours: true`），
+            //   长时长也不会缩得很小。
+            Text(timerInterval: interval, countsDown: true, showsHours: true)
+                .monospacedDigit()
+        } else {
+            // 到点：区间已走完 → 静态文字（这一步就是「不再卡 `0:00`」的关键）。
+            Text("已到时间")
+        }
+    }
+}
+
+/// 展开态 / 锁屏用的倒计时（**已无引用**）。
 ///
 /// ★ `Text(timerInterval:)` 的区间必须「下界 < 上界」，否则会崩。
 ///   到点之后区间已经走完，系统会停在 `0:00`；这里额外兜一层，
 ///   显示「已到时间」比 `0:00` 更清楚。
+///
+/// ⚠️ 2026-10-10：展开态底部改成「里程碑 + 日期」后，本组件不再被调用。
+///    **保留**（不要因为「没人用」就删）—— 它是 `ExpandedCountdownText`
+///    的对照写法，将来若要恢复底部倒计时可直接复用。
 private struct CountdownText: View {
     let state: ExpiryActivityAttributes.ContentState
 
@@ -310,32 +530,38 @@ private struct CountdownText: View {
 ///
 /// ★★ 到点之后显示**红色「到点」** —— 因为平台不允许 App 主动撑开灵动岛
 ///    （见文件头），我们能做的就是让紧凑态在到点那一刻本身最醒目。
+///
+/// ★★ 2026-10-10（第七轮）色板：
+///      · 未到点 → **苹果运动黄**（图2 参照，「右侧倒计时和苹果这个黄色一致」）；
+///      · 已到点 → **红色**（危险色优先级更高，且用户之前已认可红「到点」）。
+///    ⚠️ 到点文案固定为「到点」—— 图1/3/4 里 `0:00` 一直显示是 bug 观感，
+///       修法见下面 `body` 的「双轨绘制」注释（判据 = `countdownInterval`）。
 private struct CompactCountdownText: View {
     let state: ExpiryActivityAttributes.ContentState
 
     var body: some View {
+        // ★★ 双轨绘制（见 `ContentState.countdownInterval` 的长注释）：
+        //    判据**只用** `countdownInterval` —— 它非 nil 就说明系统还在
+        //    实时刷新倒计时；为 nil 就说明已经到点，必须换成**静态文字**。
+        //
+        //    ⚠️ 这是修「到点后紧凑态卡在 `0:00`」的**唯一正确写法**：
+        //       上一版先判 `phase == .due` 看似等价，但那是**另一条**求值路径；
+        //       改成与 `timerInterval` 同源的 `interval == nil` 判断后，
+        //       归零那次重绘的两个分支就是「非此即彼」，绝不会同时成立、
+        //       也就不会出现「区间没了但仍渲染 timerInterval → 卡 0:00」。
         Group {
-            if state.phase == .due {
-                // 已到点：不再走 timerInterval（区间已走完），直接给醒目文字。
-                Text("到点")
-            } else {
+            if let interval = state.countdownInterval {
                 // ★ 以「是否还有 1 小时以上」决定格式：
                 //   < 1h → `M:SS`（`showsHours: false`），窄；
                 //   ≥ 1h → `H:MM:SS`（`showsHours: true`），宽但必要。
-                //
-                //   ⚠️ `Text(timerInterval:)` 要求**下界 < 上界**，否则崩。
-                //      这里直接复用 `state.countdownInterval`（内部已 guard
-                //      「dueAt > startedAt 且 now < dueAt」），只有在
-                //      `phase != .due` 时才非 nil —— 天然安全。
-                if let interval = state.countdownInterval {
-                    let needsHours = state.dueAt.timeIntervalSinceNow >= 3600
-                    Text(timerInterval: interval,
-                         countsDown: true,
-                         showsHours: needsHours)
-                        .monospacedDigit()
-                } else {
-                    Text("到点")
-                }
+                let needsHours = state.dueAt.timeIntervalSinceNow >= 3600
+                Text(timerInterval: interval,
+                     countsDown: true,
+                     showsHours: needsHours)
+                    .monospacedDigit()
+            } else {
+                // 已到点：不再走 timerInterval（否则会卡在 `0:00`），给醒目文字。
+                Text("到点")
             }
         }
         .font(.caption)
@@ -343,6 +569,9 @@ private struct CompactCountdownText: View {
         .lineLimit(1)
         // ★ 长时长（如 `1:23:45`）自动缩，而不是把容器撑宽把数字挤出屏幕。
         .minimumScaleFactor(0.7)
-        .foregroundStyle(state.phase == .due ? Color.red : Color.white)
+        // ★★ 第七轮：未到点用**苹果运动黄**（图2），到点用红色。
+        .foregroundStyle(state.countdownInterval == nil
+                         ? Color.red
+                         : ExpiryLiveActivityColors.exerciseYellow)
     }
 }

@@ -78,9 +78,15 @@ struct ExpiryActivityAttributes: ActivityAttributes {
         ///    存下来的值只有在「我们主动 update 活动」时才会变 ——
         ///    而这正是免费账号做不到的事（没有 APNs，App 在后台不能更新活动）。
         ///    所以**改成按当前时刻现算**：系统每秒刷新倒计时的时候会一起重绘，
-        ///    `Date()` 越过 `dueAt` 的那一刻，它自然就从 `.soon` 翻成 `.due`，
-        ///    紧凑态自动渲染展开内容、按钮也自动多出「稍后提醒」。
-        ///    这就是用户要的「小灵动岛自动放大灵动岛」，全程不需要 App 干预。
+        ///    `Date()` 越过 `dueAt` 的那一刻，它自然就从 `.soon` 翻成 `.due`。
+        ///
+        /// ⚠️⚠️ 2026-10-10（第七轮）重要更正：
+        ///    **本属性不再作为界面渲染的判据。** 界面（图标 / 数字 / 颜色 /
+        ///    按钮）一律改用 `countdownInterval == nil` 判断（原因见该属性
+        ///    的长注释：「双轨绘制」必须与 `Text(timerInterval:)` 同源，
+        ///    否则到点后灵动岛会卡在 `0:00`）。
+        ///    `phase` 保留为**语义别名**，供非渲染逻辑（如
+        ///    `ExpiryActivityBridge` 的行为判定）参考。
         var phase: Phase {
             Date() >= dueAt ? .due : .soon
         }
@@ -89,6 +95,29 @@ struct ExpiryActivityAttributes: ActivityAttributes {
         ///
         /// ★ `Text(timerInterval:)` 要求「下界 < 上界」，否则会崩。
         ///   到点之后返回 `nil`，由视图显示「已到时间 / 到点」。
+        ///
+        /// ★★ 2026-10-10（第七轮）—— 这是修「到点后灵动岛卡在 `0:00`」的关键。
+        ///
+        ///    现象（用户图1/图3/图4）：倒计时明明归零了，紧凑态却一直显示
+        ///    `0:00`，图标也还是白沙漏，**不翻成红色的「到点」**。
+        ///
+        ///    根因 + 正解（社区验证过的「双轨绘制」模式）：
+        ///      `Text(timerInterval:)` 由系统托管，**只在区间未走完时**刷新。
+        ///      正确写法是**在视图 body 里做一次三元分支**：
+        ///        · 还没到点 → `Text(timerInterval:)`（系统实时倒计时）
+        ///        · 已经到点 → `Text("到点")`（**静态文本**）
+        ///      系统在归零那一刻会做**最后一次重绘**，这次重绘里
+        ///      `Date() < dueAt` 已不成立 → 落到静态分支 → 显示「到点」。
+        ///      ⚠️ 所以**判断必须写进 body**，不能只在「有没有区间」上做文章。
+        ///      （参考：Blake Crosley《Live Activities 是状态机，不是徽章》
+        ///        给出的 `if endTime > Date() { timerInterval } else { 静态 }`）
+        ///
+        ///    ⚠️ **不要给上界加任何「魔法偏移」**（比如 `dueAt + 1s`）：
+        ///       会与 `phase` 的严格判定（`Date() >= dueAt`）错位，
+        ///       在归零附近产生「到点 / 0:00」来回闪。上界就用 `dueAt`。
+        ///    ⚠️ **千万不要用 `Date.distantFuture` / `.infinity` 当上界**：
+        ///       Apple 论坛已确认（iOS 17/18 的 chronod bug）会让整条
+        ///       Live Activity **完全不显示**。必须给**有限的具体时刻**。
         var countdownInterval: ClosedRange<Date>? {
             guard dueAt > startedAt, Date() < dueAt else { return nil }
             return startedAt...dueAt
