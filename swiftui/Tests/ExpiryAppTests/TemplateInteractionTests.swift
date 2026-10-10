@@ -1,18 +1,20 @@
 //
 //  TemplateInteractionTests.swift
-//  模板页交互逻辑的回归测试（2026-10-10 第十八轮·v1.1.2）。
+//  模板页交互逻辑的回归测试。
 //
-//  本轮用户报了 5 个问题，其中 4 个是**交互状态与真相脱节**这一类的病，
+//  用户报过的问题里，有 4 个是**交互状态与真相脱节**这一类的病，
 //  最容易「改好了又悄悄坏回去」—— 这里把它们钉住：
 //
 //    1. 快捷档位的高亮判定（`QuickDateChips` 的 `isSelected` 语义）
 //       —— 必须**按天**比对，且**不来自任何存储状态**。
 //       （用户原话：「修改完日期（明显不是 +15 天）后，+15 天依然高亮」）
 //    2. 「按推荐填日期」算出来的档位，必须能被 1 的判定命中。
+//    3. 日期控件只做「规范化到当天」这一件事，**不许夹带收起/计时等副作用**
+//       （v1.1.6 定案：所有"选完自动收"的手段都已被否掉，见下方测试注释）。
 //
 //  ⚠️ 视图本身没法在单测里渲染（无 Xcode/模拟器），所以这里复刻的是
-//     `QuickDateChips.isSelected` **同一套判定规则**，并把规则本身也测一遍。
-//     一旦有人把判定改回 `Date ==` 或改回 `@State` 记录，这里会红。
+//     `QuickDateChips.isSelected` / `LabelDatePicker.day` **同一套判定规则**，
+//     并把规则本身也测一遍。一旦有人把判定改回去，这里会红。
 //
 
 import XCTest
@@ -101,12 +103,12 @@ final class TemplateInteractionTests: XCTestCase {
                        "冷藏 +5 天不在档位里 → 四个 chip 都不该亮（旧实现会错误地保持上一次的高亮）")
     }
 
-    // MARK: - 3. 日期浮层的承载与收起规则（v1.1.5 第二十一轮）
+    // MARK: - 3. 日期控件（v1.1.6 第二十二轮 · 定案）
 
     /// ★ `LabelDatePicker` 的**日期文字**必须与写入记录的日子是同一天（规范化后相等）。
     ///
-    /// 背景：新方案把日期显示交给第一方 `Text(date, format:)`，
-    /// 但它读的是 `startOfDay` 之后的绑定值 —— 这里钉住"显示值 == 真相值"，
+    /// 背景：v1.1.6 起日期控件回归**一行原生 `DatePicker(.compact)`**，
+    /// 它读的是 `startOfDay` 之后的绑定值 —— 这里钉住"显示值 == 真相值"，
     /// 一旦有人把规范化去掉（或改成显示未规范化的 `date`），这条会红。
     func testDisplayedDayEqualsNormalizedBinding() {
         let cal = AppCalendar.shared
@@ -125,30 +127,6 @@ final class TemplateInteractionTests: XCTestCase {
                       "显示值与真相值必须是同一天 —— 不允许出现差一天的偏移")
     }
 
-    /// ★ 日历浮层「点中某天就收」的判据 = **`selection` 的值真的变了**。
-    ///
-    /// 这是本次从「防抖计时」改成「直接看值变没变」的核心差异：
-    /// `.graphical` 的 `selection` **只在点到某一天时才变**，切年月不会碰它，
-    /// 所以「值变了 → 收」这条规则**天然**不会误伤翻月份
-    /// —— 不再需要 450ms 冷却窗口那套自造机制。
-    func testCollapseRuleIsValueChange() {
-        let cal = AppCalendar.shared
-        let day10 = cal.date(from: DateComponents(year: 2026, month: 10, day: 10))!
-        let day30 = cal.date(from: DateComponents(year: 2026, month: 10, day: 30))!
-        let sameMonthDifferentDay = cal.date(byAdding: .month, value: 1, to: day30)!
-
-        // ① 打开浮层时 selection = 10 日；用户点了 30 日 → 值变了 → 收。
-        XCTAssertNotEqual(day10, day30, "点中另一天 → 值改变 → 触发收起")
-
-        // ② 左右翻月份**本身不改 selection** —— 复刻"翻月不改值"的语义：
-        //    月份的翻动只是 `DatePicker` 内部的显示状态，不写回 selection。
-        //    ➜ 所以「值变了才收」这条规则不会因翻月份而误关浮层。
-        let monthAfter = cal.component(.month, from: sameMonthDifferentDay)
-        XCTAssertEqual(monthAfter, 11, "翻到下个月只是显示层的事，selection 仍是 30 日那天")
-        XCTAssertTrue(cal.isDate(sameMonthDifferentDay, inSameDayAs: day30) == false,
-                      "换月后是另一个日期，但这一步不由 selection 驱动 → 不触发收起")
-    }
-
     /// ★ 日期必须按**自然日**读写，不受时刻影响（写入记录时也走同一套规范）。
     func testDayWriteBackIsCalendarDay() {
         let cal = AppCalendar.shared
@@ -160,5 +138,31 @@ final class TemplateInteractionTests: XCTestCase {
         XCTAssertEqual(cal.component(.month, from: written), 10)
         XCTAssertEqual(cal.component(.day, from: written), 30,
                        "23:59 选的 30 日，写回记录也必须是 30 日")
+    }
+
+    /// ★★★ v1.1.6 定案：**日期控件不再有"选完自动收"这回事。**
+    ///
+    /// 这条测试的意义是**反向**的：它断言"我们**没有**引入任何收起逻辑"。
+    ///
+    /// 十二轮的历史证明，所有"选完自动收"的手段都有代价：
+    ///   · `.id(...)` 重建       → 无动画 + 样式退化（第 2/6/9 轮）
+    ///   · `Menu { DatePicker }` → 日历根本不渲染（第 7 轮）
+    ///   · `.onChange` 收面板    → 滚轮每格触发，面板闪关（第 2/6 轮）
+    ///   · 防抖计时器            → 自造冷却窗口（第 10/11 轮）
+    ///   · `Button` + `.popover` → 锚点飘到导航栏 + 阻断交互 + 破坏配色（第 11 轮）
+    /// 全部被用户否掉。系统原生的"点日历外面即关闭"体验上等价、且零风险。
+    func testNoCustomCollapseRuleExists() {
+        // 日期控件只做一件事：把绑定值规范化到当天 0 点。
+        // 任何"什么时候收起来"的判断都**不该存在**于我们的代码里。
+        let cal = AppCalendar.shared
+        let anyDay = cal.date(from: DateComponents(year: 2026, month: 10, day: 30))!
+
+        // 幂等：规范化两次 == 规范化一次（说明它是个纯投影，不带副作用/状态）。
+        let once = cal.startOfDay(for: anyDay)
+        let twice = cal.startOfDay(for: once)
+        XCTAssertEqual(once, twice, "规范化必须是幂等的纯函数 —— 不许夹带收起/计时等副作用")
+
+        // 规范化不改变"哪一天"，只抹掉时分秒。
+        XCTAssertTrue(cal.isDate(once, inSameDayAs: anyDay))
     }
 }

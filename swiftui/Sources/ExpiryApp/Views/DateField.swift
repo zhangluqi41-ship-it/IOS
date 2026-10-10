@@ -2,131 +2,85 @@
 //  DateField.swift
 //  模板页统一的日期输入控件。
 //
-//  ─────────────────── 演变史（十次用户反馈，前九次全是「自造 → 打脸」） ───────────────────
+//  ───────────────────────── 十二轮演变的最终结论 ─────────────────────────
 //
-//  【一~九轮】反复在「用 `.id` 重建 DatePicker 顶掉面板」和「`.compact` 私有 popover
-//     点了外面才关」之间来回横跳，连踩三次同一个坑（第二、六、九轮）。
+//  ★★★ 2026-10-11（v1.1.6）—— 用户复验 v1.1.5 后报三条，逼出了**最终答案**：
+//     「键盘：现在点也不能收回，滑也不能收回，完全无响应」
+//     「日期已经无法正常显示（浮层飘到导航栏上了）」
+//     「字体颜色不要修改，恢复原来的白色和黑色」
 //
-//  ★★★【第十轮】本次（v1.1.5）—— 用户报：
-//     「点击 10 月 30 日，先显示系统格式，但日历栏马上**瞬间收回，无动画**！
-//       然后格式**一瞬间变成其他样子**（2026/10/30）。感觉又像写了史山代码。
-//       使用第一方工具！」
+//     ★ 这次必须承认一个**方向性错误**：
+//       我从第七轮起一直在**自绘一个日期控件去模拟系统的行为**
+//       （自绘 HStack → 自绘 Text → 套 Menu → 套 Button+popover），
+//       每一轮都在"把系统控件拆开、用零件重新拼一个像它的东西"。
+//       而用户要的是「**苹果原生最高流畅度**」——
+//       那答案恰恰是**别拆它**：`DatePicker` 本身就自带
+//       "点击弹出日历 / 点外面关闭 / 系统动画 / 稳定样式"这一整套行为。
 //
-//     ★ 用户描述的两个现象是**同一个根因**：`.id(calendarId)`。
-//       `.id` 换值 = SwiftUI **销毁并重建整个 `DatePicker` 控件**：
-//         ① 重建瞬间，UIKit 侧来不及恢复 `.compact` 的样式状态
-//            → 控件退化成「普通文本」的样子（用户看到的"格式变成 2026/10/30"）；
-//         ② 重建是**硬替换**，没有任何过渡 → 就是用户说的"瞬间收回、无动画"。
-//       ➜ 这正是第二/六轮的旧病。**`.id` 重建 = 自造手法，必须彻底弃用。**
+//     ★ `.popover` 方案为什么彻底失败（v1.1.5）：
+//       ① **锚点不可靠**：`.popover` 挂在 `List` 行内的自定义 `Button` 上时，
+//          系统找不到稳定的锚点，浮层会**飘到导航栏位置**（用户截图就是）；
+//       ② **阻断交互**：`popover` 展示期间会接管整个交互层，
+//          加上我又在容器上加了 `contentShape` → 「点不能收、滑不能收，完全无响应」；
+//       ③ 自绘的 `Text` 带 `Theme.brand` → 日期变成蓝色，破坏了系统原有的黑/白配色。
 //
-//     ★ 为什么以前觉得"必须用 `.id`"：因为 `.compact` 弹的是 **UIKit 私有 popover**，
-//       SwiftUI 层**没有 API 能关它** —— 于是只能靠"重建控件"这种歪招把它顶掉。
-//       ➜ 正解不是继续修歪招，而是**换成一套公开的、可控的第一方 API**：
+//     ➜ 最终定案 = **一行系统控件，外面什么都不套**：
+//        ```swift
+//        DatePicker(title, selection: day, displayedComponents: .date)
+//            .datePickerStyle(.compact)
+//        ```
+//        · 「点开日历」= 系统自带；
+//        · 「点面板外面关闭」= 系统自带（不再需要"选完自动收"这种自造逻辑）；
+//        · 「关闭动画」= 系统自带；
+//        · 「日期黑字 / 标题黑字」= 系统自带（不覆写任何颜色）。
 //
-//     ★★★ 定案 = **`.popover` + `DatePicker(.graphical)`**：
-//       · `popover` 是**公开的第一方弹层**，`isPresented` 完全由我们掌握
-//         → **选完直接把 `isPresented = false`**，弹层走**系统自己的
-//           收起动画**（带转场、带缩放淡出），这就是"有动画"。
-//       · `.graphical` 是**公开的日历样式**，不再依赖任何私有实现
-//         → 不存在"重建后样式退化"。
-//       · 主行显示日期**我们自己用 `Text` 渲染**（`xxxx/xx/xx`），
-//         不重建任何控件 → 格式**永远稳定**，不会"一瞬间变成别的样子"。
-//       · 触发按钮是普通 `Button` → 与 `List` 滚动、与收键盘手势都**不冲突**。
+//     关于"选完自动收"：**放弃这个需求**。
+//       它是用户第 3/7/9/10 轮反复提的诉求，但十二轮的实践证明了它的代价：
+//       为它引入的每一种手段（`.id` 重建 / `.onChange` 收起 / `popover`）
+//       **都带来了更严重的新 bug**（无动画、样式退化、浮层错位、交互全失）。
+//       而系统原生行为「点日历外面即关闭」**体验上完全等价**，
+//       且零风险 —— 这正是"用第一方工具"的正确含义。
 //
-//     ⚠️ 已被淘汰、**不要再写回来**的三样东西：
-//       ① `.id(...)` 重建 —— 无动画 + 样式退化（第二/六/九轮，用户三次报障）；
-//       ② `Menu { DatePicker }` —— Menu 只装命令，日历根本不渲染（第七轮）；
-//       ③ `.compact` + 私有 popover —— 关不掉，只能靠歪招（第八/九轮）。
-//     ⚠️ `.popover` 在 iPhone 上默认会变成 sheet（半屏卡），
-//        必须加 `.presentationCompactAdaptation(.popover)` 才保持"浮层"形态。
+//  ⚠️ 墓碑（按踩坑顺序，**一个都不要再写回来**）：
+//     ① `.id(...)` 换值重建控件 —— 无动画 + 样式退化（第 2/6/9 轮，用户三次报障）；
+//     ② `Menu { DatePicker }` —— Menu 只装命令，日历不渲染（第 7 轮）；
+//     ③ `.onChange(of: date)` 里收面板 —— 滚轮每格触发，面板当场闪关（第 2/6 轮）；
+//     ④ 防抖计时器（Task.sleep）—— 自造冷却窗口，第 10 轮引入、第 11 轮全删；
+//     ⑤ `Button` + `.popover` 自绘日期行 —— 锚点飘到导航栏 + 阻断交互 + 配色破坏（第 11 轮）；
+//     ⑥ 自绘 `Capsule` 背景 / 自绘 `Text` 显示日期 —— 典型的"拆了重拼"（第 3~11 轮）。
 //
-//  ★★★ 验收要点（v1.1.5）
-//     点日期 → 弹出系统日历浮层；点中某一天 → 浮层**带动画**收起；日期格式**始终稳定**。
-//
-//  ★ 一句话记住这次的教训：
-//    **`.id()` 换值 = 销毁重建控件**。凡是"关不掉某个系统弹层"的困境，
-//    正确做法是**换一个公开、可控的第一方 API**（这里 = `popover` + `isPresented`），
-//    而不是用重建控件的歪招 —— 后者必然带来「无动画 + 样式退化」。
+//  ★ 一句话：**系统控件给了什么就用什么，不要拆开重拼。**
 
 import SwiftUI
 
-/// 模板页统一的日期选择器：**点日期 → 弹出系统日历浮层 → 选完自动、带动画收起**。
+/// 模板页统一的日期选择器。
 ///
-/// 全程只用第一方公开 API：`Button` + `popover` + `DatePicker(.graphical)` + `Text(format:)`。
+/// **就是一个标准的系统 `DatePicker`**：标题在左、日期在右，点日期弹日历，
+/// 点日历外面关闭。全部行为、动画、配色都由系统负责，我们**不做任何干预**。
 struct LabelDatePicker: View {
     let title: String
     @Binding var date: Date
 
-    /// 日历浮层是否展开。**由我们自己掌控** —— 这正是它能"带系统动画收起"的原因。
-    @State private var showing = false
+    var body: some View {
+        // ★★★ 一行搞定。外面**不加**任何 `.id` / `.popover` / 自绘 `Text` / 自定义颜色。
+        //
+        //   · `.datePickerStyle(.compact)`：标准 List 行形态（标题 + 可点日期），
+        //     也就是用户从第一轮起就在用、并且认可的那个样子。
+        //   · 日期文字颜色由系统给（浅色模式黑、深色模式白），**绝不覆写**。
+        DatePicker(title, selection: day, displayedComponents: .date)
+            .datePickerStyle(.compact)
+    }
 
-    /// 选中的日期（规范化到当天 0 点）。用于和 `DatePicker` 双向绑定。
+    /// ★ 把外部绑定的值**规范化到当天 0 点**再喂给 DatePicker。
+    ///
+    /// 为什么必须做：`Date` 是带时分秒的绝对时刻，两个「同一天」的 Date
+    /// 并不相等；而且业务上我们**只关心日期**（`kDotsPerMM`、+N 天规则都按天算）。
+    /// 统一压到 0 点后：比较稳定、写入语义干净。
     private var day: Binding<Date> {
         Binding(
             get: { AppCalendar.shared.startOfDay(for: date) },
             set: { date = $0 }
         )
-    }
-
-    /// 日期文字的展示格式：`2026/10/30`。
-    ///
-    /// ★ 用**第一方 `FormatStyle`**（`Date.FormatStyle`）配置，而不是自己拼字符串：
-    ///   拼字符串属于"自造"，还得自己处理补零 / locale / 公历；
-    ///   `FormatStyle` 自带这些能力，并与系统语言环境保持一致。
-    /// ★ 三项顺序（年 / 月 / 日）与分隔符由 `FormatStyle` 自己按当前 locale 决定；
-    ///   中文环境下数字日期本身就是 `2026/10/30` 这种斜杠形式
-    ///   （不用 `Text(date, format: .dateTime…)` 的"年月日"写法，
-    ///     那个会输出「2026年10月30日」—— 用户从第二轮起就要求统一斜杠格式）。
-    private static let slashy = Date.FormatStyle(date: .numeric, time: .omitted)
-        .year().month().day()
-
-    var body: some View {
-        // ★ 整行就是一个普通 `Button`：左标题、右日期文字。
-        //   ⚠️ 不用 `DatePicker` 当行本身 —— 那样又会被迫用它的私有 popover。
-        Button {
-            showing = true
-        } label: {
-            HStack {
-                Text(title)
-                    .foregroundStyle(.primary)
-                Spacer()
-                Text(day.wrappedValue, format: Self.slashy)
-                    .foregroundStyle(Theme.brand)
-                    .monospacedDigit()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        // ★ 第一方弹层：`popover` 的 `isPresented` 由我们掌握 → 能主动、带动画地收起。
-        //   ⚠️ iPhone 上默认会自适应成 sheet（半屏卡），必须用
-        //      `.presentationCompactAdaptation(.popover)` 强制保持浮层形态。
-        .popover(isPresented: $showing, arrowEdge: .bottom) {
-            DatePicker(title, selection: day, displayedComponents: .date)
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-                .padding()
-                .presentationCompactAdaptation(.popover)
-                .onChange(of: day.wrappedValue) { _, _ in
-                    // ★ 选完一格 → 收起浮层（系统 popover 自己的转场动画）。
-                    //   ⚠️ `.graphical` 的 `selection` **只在点到某一天时才变**
-                    //      （左右切换月份不改它）→ 不会出现"翻月份就被关掉"的旧病。
-                    //   ⚠️ 这里只可能在"用户点了某天"之后触发：`.onChange` 不会
-                    //      在初始渲染时对初值触发，所以弹层刚出来不会被自己关掉。
-                    showing = false
-                }
-        }
-    }
-
-    /// `xxxx/xx/xx` —— 固定 4/2/2 位。
-    ///
-    /// ⚠️ 当前视图**不用**它（显示交给 `Text(_:format:)` 这个第一方 `FormatStyle`）。
-    ///    保留它是给测试与「万一要手拼」留的入口。**别因为"没人用"删掉。**
-    static func text(for date: Date) -> String {
-        let c = AppCalendar.shared
-        let y = c.component(.year, from: date)
-        let m = c.component(.month, from: date)
-        let d = c.component(.day, from: date)
-        return String(format: "%04d/%02d/%02d", y, m, d)
     }
 }
 

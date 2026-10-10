@@ -69,6 +69,9 @@ struct MeatThawView: View {
             } header: {
                 Text("说明")
             }
+
+            // ★ 键盘：点这一行收键盘（行级，不碰 List 容器 → 不影响滚动）。
+            Section { KeyboardDismissRow(focus: $focus) }
         }
         .navigationTitle("肉类 · 解冻")
         .navigationBarTitleDisplayMode(.inline)

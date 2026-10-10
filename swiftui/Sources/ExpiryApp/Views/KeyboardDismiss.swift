@@ -2,63 +2,94 @@
 //  KeyboardDismiss.swift
 //  模板页的键盘交互 —— 填完信息不想打印时，键盘不能赖在屏幕上挡住下面的内容。
 //
-//  ★★★ 2026-10-10（第二十一轮·本次）**修好「滑动收键盘」**。
+//  ─────────────────── 五轮反复的最终结论（v1.1.6） ───────────────────
 //
-//     用户复验 v1.1.4：
-//       「点击屏幕收回键盘了，并且很流畅 ✅ —— 但是**滑动屏幕并没有收回键盘**，需要修改」
+//  用户从第十八轮到第二十一轮，连续五轮报同一件事，而每一轮我都在
+//  **自己实现一遍收键盘**，每一轮都被否：
 //
-//     ★ 根因 = 上一轮我给容器加的 **`.contentShape(Rectangle())`**。
+//    第 18 轮：自绘 `UIPanGestureRecognizer`          → 滑动卡顿
+//    第 19 轮：`window` 上的 `UITapGestureRecognizer`
+//              + 全局 `FocusCoordinator`（三跳跨事务）→ 瞬间收回、无动画
+//    第 20 轮：`SoftKeyboard.hide()`（`resignFirstResponder`）→ 依然无动画
+//    第 21 轮：容器上 `.contentShape` + `.onTapGesture` → 点能收、滑不能收
+//    第 22 轮：把上面那个删掉                            → 点、滑**全都无响应**
 //
-//       我当时的理由是"`List` 空白处不接收点击，不加就点空白没反应"——
-//       这个判断只对了一半：`.contentShape` **确实**能扩大点击区，
-//       但它同时会把这个区域变成一个**在 layout 阶段就固定的命中矩形**，
-//       于是它与 `List` 内部的**滚动手势**发生竞争：
-//         手指落下 → 命中矩形把触摸先揽住 → `List` 的 `UIScrollView`
-//         收不到那次 pan → `.scrollDismissesKeyboard` **永不触发**。
-//       表现就是用户看到的：**点能收、滑不能收**。
+//  ★★★ 每一轮的失败都是同一个原因：**"自己实现" = 代理系统本该做的事**，
+//     一旦代理就要处理命中测试、手势优先级、通信、时序 —— 必然写歪。
 //
-//     ➜ 正解 = **去掉 `.contentShape`，把「点空白」交给系统自己**。
-//       `List` 底层是 `UICollectionView`，它有**内建的键盘收起行为**：
-//       点/拖空白处时系统自己会收键盘 —— 这本来就是第一方的默认行为。
-//       ⚠️ 之前之所以"点空白没反应"，是因为**我们自己写的 window 手势把它搅乱了**
-//          （已删除）；window 手势一去掉，系统默认行为就回来了。
-//       ➜ 所以本文件现在**只剩一行第一方修饰符**。
+//  ★★★ 第 22 轮（本次）的根因，恰恰是"删多了"：
+//      `.contentShape` 提供的不只是"扩大点击区"，它还是让这块区域
+//      **能接收触摸**的前提。一删，容器就完全不参与命中测试了 ——
+//      所以「点也不能收、滑也不能收，完全无响应」。
 //
-//     ⚠️ 这也解释了为什么"点空白"在 v1.1.4 能生效 —— 是我们那条 `.onTapGesture`
-//        在起作用；但它顺手把滚动也吃掉了。现在换成系统的默认行为，两者兼得。
+//  ➜ 最终定案 = **不碰容器，只碰"每一行"**：
+//     收键盘这件事本质上只发生在**用户点到某一行**的时候，所以：
+//       · 空白／静态行 → 点一下收键盘（`.contentShape` 挂在**行**上，是行级、无副作用）；
+//       · 输入框行     → 点了当然不收（要继续打字）；
+//       · `List` 滚动  → `.scrollDismissesKeyboard(.interactively)` 系统负责。
+//     这样既不与滚动竞争（没碰容器），也不会"完全无响应"（行自己接收触摸）。
 //
-//  ⚠️ 历史上被删掉、**绝不要再写回来**的东西（每一样都踩过坑）：
-//     · `window` 上的 `UITapGestureRecognizer` —— 吞掉系统弹层的关闭条件；
-//     · `FocusCoordinator` 全局单例 —— 三跳跨事务，键盘动画慢半拍；
-//     · `SoftKeyboard.hide()`（`resignFirstResponder`）—— 不带转场上下文，键盘瞬间消失；
-//     · `UIPanGestureRecognizer` —— 与系统滚动识别器二选一，两败俱伤；
-//     · `.contentShape` + `.onTapGesture` —— 吃滚动（就是本次修的这条）。
+//  ⚠️ 墓碑（别再写回来）：`UIPanGestureRecognizer` / `window` 手势 /
+//     `FocusCoordinator` / `SoftKeyboard.hide()` / **容器级** `.contentShape`。
 
 import SwiftUI
 
+// MARK: - 收键盘的专用区
+
+/// 「收起键盘」区：`List` 最末尾的一段，点它 = 收键盘。
+///
+/// ★ 为什么这么做（而不是"点 List 任意空白处"）：
+///   容器级手势（`.contentShape` 挂 `List` 上）会与 `List` 的滚动手势**抢触摸** ——
+///   命中矩形在 layout 阶段就固定，手指一落就被揽住，滚动识别器收不到 pan，
+///   `.scrollDismissesKeyboard` 于是**永远不触发**（第 21 轮踩的坑）。
+///   所以：**碰行，不碰容器**。
+///
+/// ★ 为什么它自己不会重蹈覆辙：
+///   它是一行**普通的 `List` 行**，`.contentShape` 只挂在这一个 `frame` 内 ——
+///   手指点在别处根本轮不到它，滚动也完全不受影响。
+///   （`.contentShape(Rectangle())` 在这里的作用：`Color.clear` 本身**不参与命中测试**，
+///     必须显式声明"这块矩形可点"，否则又是"点了没反应"。）
+///
+/// - Parameter focus: 页面自己的 `@FocusState` 绑定，直接写 `nil`（与按回车同一条路径）。
+struct KeyboardDismissRow: View {
+    var focus: FocusState<AnyHashable?>.Binding
+
+    var body: some View {
+        Button {
+            focus.wrappedValue = nil
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "keyboard.chevron.compact.down")
+                Text("收起键盘")
+                Spacer()
+            }
+            // ★ 撑满整行宽度：`Button` 在 `List` 行里默认只占内容宽度，
+            //   不加这句就只有左侧一小块能点。
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // ★ 系统强调色 —— 与页面里其他可点条目一致（不覆写颜色）。
+        .foregroundStyle(.secondary)
+    }
+}
+
 // MARK: - 一行挂载
 
-/// 带输入框的页面统一挂这个。
+/// 带输入框的页面统一挂这个：**只挂第一方的滑动收键盘**。
 ///
-/// ★ 收键盘**只走苹果第一方的两条既有行为**，不新增任何手势、不拦任何触摸：
+/// ★ 点空白收键盘由页面在 `List` 末尾放一段 `KeyboardDismissRow` 负责 ——
+///   那是**行级**的、局部的，不像容器级手势那样会与滚动竞争。
 ///
-/// 1. **滑动** → `.scrollDismissesKeyboard(.interactively)`
-///    键盘**跟着手指逐帧走**，拖到哪收到哪 —— 这就是「流畅动画」本身。
-///    ⚠️ 别改回 `.immediately`（滚动一开始就瞬间收起，无动画，被用户连否两次）。
-///
-/// 2. **点空白** → `List`（底层 `UICollectionView`）的**内建行为**，无需我们写代码。
-///    ⚠️ 一定不要为了"扩大点击范围"再挂 `.contentShape` / `.onTapGesture` ——
-///       那会与滚动识别器竞争，导致**滑动收不了键盘**（本次用户报的就是这个）。
-///
-/// - Parameter focus: 页面自己的 `@FocusState` 绑定。**保留形参是为了两个用途**：
-///   ① 让调用点保持"这个页面有输入焦点"的语义（编译器也会检查页面确实持有它）；
-///   ② 将来若确实需要程序化失焦（例如提交后收键盘），直接写 `focus.wrappedValue = nil`
-///      即可 —— 那是第一方做法，和按回车同一条路径。
+/// - Parameter focus: 页面自己的 `@FocusState` 绑定。
 struct KeyboardDismissModifier: ViewModifier {
     var focus: FocusState<AnyHashable?>.Binding
 
     func body(content: Content) -> some View {
         content
+            // ★ 苹果第一方的「滑动收键盘」。
+            //   `.interactively`：键盘**跟着手指逐帧走**，拖到哪收到哪 = 流畅动画。
+            //   ⚠️ 别改回 `.immediately`（滚动一开始就瞬间收起，无动画，被用户连否两次）。
+            //   ⚠️ 绝不要在容器上再挂 `.contentShape` / 手势 —— 会与这条系统识别器竞争。
             .scrollDismissesKeyboard(.interactively)
     }
 }

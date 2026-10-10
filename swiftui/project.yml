@@ -349,8 +349,36 @@ targets:
         #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
         #   ⚠️ 三条"已淘汰手法"的墓碑（别再写回来）：
         #      `.id()` 重建控件 / `Menu { DatePicker }` / `.compact` 私有 popover 歪招。
-        CURRENT_PROJECT_VERSION: 47
-        MARKETING_VERSION: 1.1.5
+        #
+        # ★★★ 2026-10-11 1.1.6 / build 48（第二十二轮）—— 用户复验 v1.1.5 报三条：
+        #   「① 键盘：现在点也不能收回，滑也不能收回，完全无响应
+        #     ② 日期格式无问题，但排版乱（浮层飘到导航栏，日期无法正常显示）
+        #     ③ 字体颜色不要修改，恢复成原来的白色和黑色」
+        #
+        #   ① 键盘"完全无响应"的根因 = v1.1.5 **删多了**：
+        #      `.contentShape(Rectangle())` 不只是"扩大点击区"，
+        #      它还是**让这块区域能接收触摸**的前提 —— 一删，容器完全不参与命中测试。
+        #      ➜ 定案：**碰行，不碰容器**。
+        #        · 滑动收键盘 → `.scrollDismissesKeyboard(.interactively)`（系统）；
+        #        · 点空白收键盘 → `KeyboardDismissRow`，作为 `List` **末尾的一段**
+        #          （`.contentShape` 只挂在这一行自己的 frame 内 → 不碰 List、不碰滚动）。
+        #
+        #   ② 日期排版乱 + ③ 日期变蓝，同一个病根：**"把系统控件拆开重拼"**。
+        #      `Button` + `.popover` 挂在 `List` 行内时锚点不可靠（浮层飘到导航栏），
+        #      且展示期接管交互层；自绘 `Text` 又带 `Theme.brand`（蓝色）。
+        #      ➜ 定案：`LabelDatePicker` 回归**一行原生 `DatePicker(.compact)`**，
+        #        外面**不加**任何 `.id` / `.popover` / 自绘 Text / 自定义颜色。
+        #        「点开日历 / 点外面关闭 / 系统动画 / 黑白色」全部由系统给。
+        #        ⚠️ "选完自动收"**正式放弃** —— 十二轮实践证明它的每一种手段
+        #           （`.id` 重建 / `.onChange` / 防抖 / `popover`）都带来更严重的 bug，
+        #           而系统原生"点日历外面即关闭"体验等价且零风险。
+        #
+        #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
+        #   ⚠️ 墓碑（**一个都别再写回来**）：`.id()` 重建控件 / `Menu { DatePicker }` /
+        #      `.onChange(of: date)` 收面板 / 防抖计时器 / `Button`+`.popover` 自绘日期行 /
+        #      自绘 `Text` 显示日期 / **容器级** `.contentShape`。
+        CURRENT_PROJECT_VERSION: 48
+        MARKETING_VERSION: 1.1.6
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -402,8 +430,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.5
-        CURRENT_PROJECT_VERSION: 47
+        MARKETING_VERSION: 1.1.6
+        CURRENT_PROJECT_VERSION: 48
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

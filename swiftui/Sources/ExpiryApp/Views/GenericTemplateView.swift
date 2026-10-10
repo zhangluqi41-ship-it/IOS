@@ -38,6 +38,9 @@ struct GenericTemplateView: View {
             } header: {
                 Text("日期")
             }
+
+            // ★ 键盘：点这一行收键盘（行级，不碰 List 容器 → 不影响滚动）。
+            Section { KeyboardDismissRow(focus: $focus) }
         }
         .navigationTitle("通用效期")
         .navigationBarTitleDisplayMode(.inline)

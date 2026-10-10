@@ -66,6 +66,9 @@ struct KombuchaSecondView: View {
             } header: {
                 Text("自动推算")
             }
+
+            // ★ 键盘：点这一行收键盘（行级，不碰 List 容器 → 不影响滚动）。
+            Section { KeyboardDismissRow(focus: $focus) }
         }
         .navigationTitle("康普茶 · 二发")
         .navigationBarTitleDisplayMode(.inline)
