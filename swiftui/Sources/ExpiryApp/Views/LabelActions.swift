@@ -182,7 +182,7 @@ enum LabelReprint {
 
 // MARK: - 动作修饰器
 
-/// 给模板页挂上：底部二级操作条 + 键盘上方的「完成 / 打印」+ 提示弹窗。
+/// 给模板页挂上：底部二级操作条 + 键盘上方的「完成」+ 提示弹窗。
 ///
 /// - Parameter build: 由各页自己实现——校验通过返回 `LabelDraft`，
 ///   校验不过时页面内部弹自己的提示并返回 `nil`。
@@ -192,17 +192,31 @@ enum LabelReprint {
 ///   而键盘自己的 accessory bar（「完成」）也在键盘正上方 ——
 ///   两条 bar 贴在一起、又都是半透明材质，看起来就是「叠在一起」。
 ///
-///   现在的做法：**同一时刻只存在一条 bar**
-///     · 键盘收起 → 底部操作条显示「打印」
-///     · 键盘抬起 → 底部操作条当场收起；「打印」搬到键盘上方的
-///       第一方 accessory bar，与「完成」并排（`ToolbarItemGroup(placement: .keyboard)`）
-///   两边都是系统第一方控件，位置由系统安排，结构上不可能重叠。
-///   收起/展开的动画时长取自键盘通知，和键盘同一条时间线。
+/// ★★★ 2026-10-10（第十八轮）**再修一次，这次是彻底删掉重复入口** ——
+///   上一轮的方案（键盘抬起时把「打印」搬到 accessory bar，与「完成」并排）
+///   在**列表自身的滚动区域**上又出了新问题，用户截图圈出两个红框按钮：
+///     「点击输入框后『打印』框消失，变成这两个红框内的按钮（完成 / 打印），
+///       删除这两个红框按钮，保留底部那个『打印』，
+///       并且该按钮保持当前逻辑、键盘出现后自然跟随键盘上移。」
+///
+///   为什么它会「浮在内容上」：`safeAreaInset(edge: .bottom)` 的 inset 条
+///   会跟着键盘抬起来，而列表**已经有了键盘 inset**，两者叠加 →
+///   这条 bar 被顶到列表内容之上、半透明材质把「最佳使用时间」那行盖住
+///   （截图里"最佳使用时间"被压掉一半就是这个）。
+///
+///   ➜ 正解：**删掉 accessory bar 里的「打印」**，同时**保留底部操作条**
+///     （不再 `if !keyboard.isVisible` 收起）。
+///     · 键盘收起时：底部「打印」照旧；
+///     · 键盘抬起时：**还是同一个**底部「打印」—— 它自己就跟着键盘上移，
+///       没有第二个按钮出现，就不存在重叠/盖内容；
+///     · 键盘上只留系统自带的「完成」（用户明确要保留它，用来收键盘）。
+///
+///   ⚠️ 千万不要把「打印」再挂回 `ToolbarItemGroup(placement: .keyboard)` ——
+///      那正是本轮删掉的东西。
 struct LabelActions: ViewModifier {
     let build: () -> LabelDraft?
 
     @ObservedObject private var printer = PrinterService.shared
-    @ObservedObject private var keyboard = KeyboardWatcher.shared
 
     @AppStorage("printCopies") private var copies: Int = 1
     @AppStorage("printDensity") private var density: Int = 0
@@ -212,17 +226,19 @@ struct LabelActions: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // ★★★ 第十八轮：**不再随键盘收起**。
+            //   它自己是 `safeAreaInset`，键盘弹起时会被系统连同安全区
+            //   一起顶到键盘上方 —— 也就是用户要的「自然跟随键盘上移」，
+            //   同时全页只剩这一个「打印」，不会再和 accessory bar 打架。
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                // 键盘抬起时就地收起，把位置让给键盘自己的 accessory bar。
-                if !keyboard.isVisible {
-                    LabelActionBar(isBusy: printer.isPrinting, onPrint: printNow)
-                }
+                LabelActionBar(isBusy: printer.isPrinting, onPrint: printNow)
             }
             .toolbar {
+                // ★ 键盘上方**只留系统自带的「完成」**（收键盘用）。
+                //   ⚠️ 别再往这里加「打印」—— 见上面的长注释。
                 ToolbarItemGroup(placement: .keyboard) {
                     Button("完成") { SoftKeyboard.hide() }
                     Spacer()
-                    keyboardPrintButton
                 }
             }
             .alert(notice?.title ?? "",
@@ -232,21 +248,6 @@ struct LabelActions: ViewModifier {
             } message: {
                 Text(notice?.body ?? "")
             }
-    }
-
-    /// 键盘上方那个「打印」——和「完成」同一条 accessory bar，永远不会重叠。
-    @ViewBuilder
-    private var keyboardPrintButton: some View {
-        Button {
-            printNow()
-        } label: {
-            if printer.isPrinting {
-                ProgressView().controlSize(.small)
-            } else {
-                Text("打印").fontWeight(.semibold)
-            }
-        }
-        .disabled(printer.isPrinting)
     }
 
     // MARK: 动作

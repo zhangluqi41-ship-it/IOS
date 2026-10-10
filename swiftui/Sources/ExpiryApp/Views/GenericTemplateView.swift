@@ -83,17 +83,32 @@ struct GenericTemplateView: View {
 ///   通用模板里也常要填「开封后 3 天用完」，手点日历太慢。
 ///   四个 chip 在 iPhone 最窄机型上仍能一行放下（约 296pt < 343pt 可用宽度），
 ///   所以不做横向滚动，保持一眼看全。
+///
+/// ★★★ 2026-10-10（第十八轮）用户反馈 ——
+///   「选高亮 +15 天后日期自动变成 +15 天，但**手动改完日期（明显不是 +15 天）后，
+///     +15 天依然高亮**」。
+///
+///   根因：高亮原来存在一个**自己的** `@State selectedLabel` 里 ——
+///   「点 chip」会写它，「点日历改日期」却**没人去清它**，
+///   于是日期早已不是 +15 天了，高亮还赖在 +15 天上。
+///
+///   ➜ 正解：**高亮不再是状态，而是从真实日期现算出来的**（单一数据源）。
+///     某个档位的日期 == 当前选中日期 → 它才高亮；否则一律不高亮。
+///     · 点 chip → 日期变了 → 现算即命中 → 立刻高亮（与原来一样快）；
+///     · 点日历改成别的日子 → 日期变了 → 现算不命中 → **高亮自动消失**（本轮修的）；
+///     · 改成正好等于某个档位 → 那个档位自动亮（顺手白赚的一致性）。
+///
+///   ⚠️ 不要再引入 `@State` 去记「选中的是哪个档」——
+///      那等于把高亮和真相日期的绑定**又**拆开一次（本轮踩的就是这个坑）。
 struct QuickDateChips: View {
     @Binding var selection: Date
-
-    @State private var selectedLabel = ""
 
     var body: some View {
         HStack(spacing: 8) {
             ForEach(presets, id: \.label) { p in
+                let isOn = isSelected(p.date)
                 Button {
                     selection = p.date
-                    selectedLabel = p.label
                 } label: {
                     Text(p.label)
                         .font(.subheadline)
@@ -101,15 +116,25 @@ struct QuickDateChips: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
                         .background(
-                            selectedLabel == p.label ? Theme.brand : Color(.tertiarySystemFill),
+                            isOn ? Theme.brand : Color(.tertiarySystemFill),
                             in: Capsule()
                         )
-                        .foregroundStyle(selectedLabel == p.label ? .white : .primary)
+                        .foregroundStyle(isOn ? .white : .primary)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.top, 6)
+    }
+
+    /// ★ 高亮 = **现算**，不存状态。
+    ///
+    /// ⚠️ 比较必须**按天**做（两边都压到 0 点）—— `Date` 带时分秒，
+    ///    直接用 `==` 几乎永远不成立（这也是「高亮跟不住日期」的隐患来源）。
+    private func isSelected(_ preset: Date) -> Bool {
+        let cal = AppCalendar.shared
+        return cal.isDate(cal.startOfDay(for: selection),
+                          inSameDayAs: cal.startOfDay(for: preset))
     }
 
     private struct Preset {

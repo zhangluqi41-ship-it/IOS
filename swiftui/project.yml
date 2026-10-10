@@ -232,8 +232,34 @@ targets:
         #      只认向下拖（上滚列表不收）→ 更名 `ScrollKeyboardDismisser`，
         #      改为**任意方向**的垂直滚动都收（仅排除纯横向滑动）。
         #   ⚠️ 功能与提醒逻辑依旧未变。
-        CURRENT_PROJECT_VERSION: 43
-        MARKETING_VERSION: 1.1.1
+        # ★ 2026-10-10（第十八轮，v1.1.2）：效期页 4 个交互问题的统一修复 ——
+        #   用户反馈的核心其实是同一件事：**交互状态和真相脱节 + 用了非第一方实现**。
+        #   ① 【问题 1 & 3·滑动收键盘卡顿】删掉自研 `ScrollKeyboardDismisser`
+        #      （window 上的 `UIPanGestureRecognizer`，`.changed` 阶段每次移动都
+        #      跨语言回调 + 两次坐标换算，全跑主线程 → 滚动一顿一顿）。
+        #      ➜ 回归**纯第一方** `.scrollDismissesKeyboard(.immediately)`
+        #        （由 UIKit 滚动识别器一手包办，零 Swift 回调）。
+        #      用户问的「是否未使用苹果第一方协议」—— 答案就是「是，现已改回」。
+        #   ② 【问题 2·选好日期自动收】`LabelDatePicker` 从 `DatePicker(.compact)`
+        #      （UIKit 私有 popover，滚轮没有可靠的「选完了」时机，
+        #        且会吃掉列表滚动）改为 **`Menu { DatePicker(.graphical) }`**：
+        #      · 折叠形态与原来完全一致（系统 `.compact` 那行日期）；
+        #      · 点开 = **整块日历**（第一方），翻月不关、**点中某天立刻关**；
+        #      · 菜单容器由系统托管 → 不吃滚动、不受键盘手势干扰。
+        #      ⚠️ 用户「前期滚轮选年月不要收」的细分要求被自然满足
+        #         （日历里翻月 ≠ 选日）。
+        #   ③ 【问题 4·+15 天高亮不跟手】`QuickDateChips` 删掉 `@State
+        #      selectedLabel`（点日历改日期时**没人清它** → 高亮赖着不走）。
+        #      ➜ 高亮改为**从真实日期现算**（按天比对，单一数据源）。
+        #      手动改成 10/28 后 +15 天立刻失去高亮。
+        #   ④ 【问题 5·键盘弹出时多出「完成 / 打印」两个浮层按钮】删掉
+        #      `ToolbarItemGroup(placement: .keyboard)` 里的「打印」，并让底部
+        #      `safeAreaInset` 操作条**不再随键盘收起** —— 全页只剩一个「打印」，
+        #      键盘抬起时它自己跟着上移（`safeAreaInset` 行为），不再盖住内容。
+        #      键盘上方只留系统自带的「完成」。
+        #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
+        CURRENT_PROJECT_VERSION: 44
+        MARKETING_VERSION: 1.1.2
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -285,8 +311,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.1
-        CURRENT_PROJECT_VERSION: 43
+        MARKETING_VERSION: 1.1.2
+        CURRENT_PROJECT_VERSION: 44
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

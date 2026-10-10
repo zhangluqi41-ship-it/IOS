@@ -28,7 +28,7 @@
 //        键盘隐藏的时长从 `keyboardAnimationDurationUserInfoKey` 读出来，
 //        用它驱动动画，操作条才会和键盘同步起落，不会各走各的。
 //
-//  ★★★ 2026-10-10 第七轮（本次）修正**滚动收键盘**的方向判定 —— 用户反馈：
+//  ★★★ 2026-10-10 第七轮（第十七轮）修正**滚动收键盘**的方向判定 —— 用户反馈：
 //     「点击或滚动输入框以外任意位置都应隐藏键盘，目前**滚动无法隐藏键盘**」
 //
 //     根因：兜底手势 `SwipeDownKeyboardDismisser` 的名字与实现都只认
@@ -39,6 +39,48 @@
 //     ➜ 更名 `ScrollKeyboardDismisser`，判定放宽为「**任意方向**的垂直滚动」
 //       都收起键盘（仅排除纯横向滑动，避免误伤滑动删行）。
 //
+//  ★★★ 2026-10-10（第十八轮·本次）用户两条反馈把问题指向了同一件事：
+//     「滑动收回时**存在明显卡顿**，是否存在**未使用苹果第一方协议**？」
+//     「日历选择页面收回后完全不影响画面滚动，继续质疑是否正常使用第一方协议？」
+//
+//     ★ 用户的直觉是对的，而且这正是卡顿的**真正根因**：
+//
+//     一、`ScrollKeyboardDismisser` 是**我们自己写的 UIPanGestureRecognizer**，
+//         装在整个 window 上。它在 `.changed` 阶段**每一次触摸移动**都会：
+//           ① 回调进 Swift（跨语言边界）；
+//           ② 读两遍 `translation(in:)` + `velocity(in:)`（每次都做一次
+//              坐标系换算，UIKit 内部还要回溯手势状态）；
+//           ③ 命中阈值就跨进程发一次 `resignFirstResponder`。
+//         这些活儿全都跑在**主线程**上，而主线程此刻正忙着驱动滚动 +
+//         键盘 `.interactively` 的跟随动画 —— 于是滚动肉眼可见地一顿一顿。
+//
+//     二、更重要的是：它和系统的键盘拖拽/滚动识别链**并存**，
+//         系统在 60fps 的滚动回调里还要额外调度我们这条第三方手势 →
+//         识别器竞争本身就是开销。
+//
+//     ➜ 正解 = **删掉自研手势，回归纯粹的苹果第一方协议**。
+//       `.scrollDismissesKeyboard(.immediately)` —— 这一句就是系统的
+//       「滚动即收键盘」，输入完全交给 UIKit 的滚动识别器，
+//       零 Swift 回调、零额外手势、零跨边界调用。
+//
+//     ★ 为什么用 `.immediately` 而不是 `.interactively`：
+//       · `.interactively` 让键盘**逐帧跟随**手指 —— 这恰恰是最吃主线程的
+//         模式（每一帧都要重排列表 + 重算键盘位置），正是卡顿的来源之一；
+//       · `.immediately` 是**识别到滚动就一次性收起**，由系统一手包办，
+//         没有逐帧跟随 → 顺滑，行为上也完全满足「滑动即隐藏」。
+//       · 代价：第十五轮说的「不跟手」是 `.immediately` 的观感；
+//         但本轮用户把「顺滑」排在了「跟手」前面（「存在明显卡顿」），
+//         而且卡顿的根因就是逐帧跟随 + 自研手势，所以这里选顺滑。
+//
+//     ⚠️ 第十七轮那个「挂了 keyboard toolbar 时 `.scrollDismissesKeyboard`
+//        会失效」的观察，在**本轮删掉 accessory bar 里的「打印」之后已不成立** ——
+//        accessory bar 上只剩系统自带的「完成」，不再接管拖拽链路。
+//        若日后真又失效，**不要**再写 UIPanGestureRecognizer 补丁，
+//        优先查是不是 `.toolbar(placement: .keyboard)` 又挂了什么自定义控件。
+//
+//     ⚠️ 日历/日期面板曾经是「吃掉滚动」的另一支（`.compact` 的私有 popover）
+//        —— 第十八轮已改用 `Menu + DatePicker(.graphical)`（见 `DateField.swift`），
+//        菜单层由系统托管，不再参与本页手势。
 
 import Combine
 import SwiftUI
@@ -61,10 +103,13 @@ enum SoftKeyboard {
 /// 全局键盘可见性。
 ///
 /// ★ 用系统的 `keyboardWillShow/Hide` 通知（第一方 API）而不是自己猜，
-///   顺带把键盘自己的动画时长读出来 —— 底部操作条要和键盘**同一条时间线**
-///   起落，否则看起来就是「按钮自己乱动」（用户说的「动画生硬」）。
+///   顺带把键盘自己的动画时长读出来。
 ///
-/// 做成单例：所有模板页共享同一份状态，不需要各自注册一遍观察者。
+/// ⚠️ 2026-10-10（第十八轮）：`LabelActions` 已经**不再**根据这个状态
+///   隐藏底部操作条（改成让「打印」一直存在、自然跟随键盘上移），
+///   所以目前**没有读者**。保留它是为了：将来若又要「键盘抬起时换一条 bar」，
+///   现成的第一方通知订阅不该再手写一遍；同时 `isVisible` 也是排查键盘问题的
+///   唯一观测点。**别因为"没人用"就删掉。**
 final class KeyboardWatcher: ObservableObject {
 
     static let shared = KeyboardWatcher()
@@ -91,79 +136,24 @@ final class KeyboardWatcher: ObservableObject {
         let raw = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
         duration = raw ?? 0.25
         guard isVisible != visible else { return }
-        // 动画包在这里，底部操作条的收起/展开就与键盘同步。
+        // 动画包在这里，订阅方的收起/展开就与键盘同步。
         withAnimation(.easeInOut(duration: duration)) {
             isVisible = visible
         }
     }
 }
 
-// MARK: - 滑动收起键盘
-
-/// 「滚动列表收起键盘」的兜底手势。
-///
-/// ★★ 2026-10-09（第三轮）为什么必须自己做一个 —— 用户反馈：
-///    「之前有确认，在输入名称等呼出系统键盘后，在屏幕其他位置点击或滑动，
-///      收回键盘。目前只保留点击收回，没有滑动收回功能」
-///
-///    根因：`LabelActions` 在**同一个 List** 上挂了
-///    `.toolbar { ToolbarItemGroup(placement: .keyboard) }`（键盘上方那条
-///    「完成 / 打印」accessory bar）。这条 accessory bar 会接管/打断
-///    `.scrollDismissesKeyboard(.interactively)` 依赖的那套拖拽识别链路 ——
-///    1.0.1 之前没有这条 toolbar 时滑动是好的，加了之后滑动就失效了。
-///
-///    SwiftUI 没有提供「在同一视图上同时保留 keyboard accessory 与
-///    scroll-dismiss」的开关，所以这里直接用 UIKit 补一个**独立的**
-///    `UIPanGestureRecognizer`：它只观察、不拦截（`cancelsTouchesInView = false`），
-///    一旦识别到滚动，就收起键盘。
-///    ➜ 与 `.scrollDismissesKeyboard` 是「叠加」而非「二选一」，
-///      两者谁生效都能达到目的，也不影响列表本身的滚动。
-///
-/// ★★★ 2026-10-10（第七轮）**方向判定修正**：
-///    旧实现只认「向下拖」（`translation.y > 40`）→ 用户**向上滚**列表时
-///    完全不触发，正是「滚动收不起键盘」的根因。
-///    ➜ 现在改成「**任意方向的垂直滚动**都收」（上滚、下滚都行），
-///      只排除纯横向滑动（避免把「滑动删行」误当成滚动）。
-final class ScrollKeyboardDismisser: NSObject, UIGestureRecognizerDelegate {
-
-    static let shared = ScrollKeyboardDismisser()
-
-    private let patched = NSHashTable<UIWindow>.weakObjects()
-
-    func install(on window: UIWindow) {
-        guard !patched.contains(window) else { return }
-        patched.add(window)
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        // ★ 关键：不吃掉这次手势，列表照常滚动、输入框照常拖动光标。
-        pan.cancelsTouchesInView = false
-        // 键盘收起由 `.interactively` 或这里任一触发即可，不必抢优先级。
-        pan.delegate = self
-        window.addGestureRecognizer(pan)
-    }
-
-    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard gesture.state == .changed || gesture.state == .ended else { return }
-        let translation = gesture.translation(in: gesture.view)
-        let velocity = gesture.velocity(in: gesture.view)
-        // ★ 2026-10-10 第七轮：**向上 / 向下都能收** ——
-        //   旧版写死了「向下」（`translation.y > 40`），上滚列表就永远收不起键盘。
-        let verticalEnough = abs(translation.y) > 16 || abs(velocity.y) > 180
-        // 纯横向滑动（比如滑动删行）不算，避免误伤。
-        let dominant = abs(translation.y) >= abs(translation.x)
-        guard verticalEnough, dominant else { return }
-        SoftKeyboard.hide()
-    }
-
-    // MARK: - 不干预交互
-
-    /// ★ 允许与其它手势（列表滚动、行内按钮）同时识别。
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        true
-    }
-}
+// MARK: - 点空白收起键盘
 
 /// 「点空白收起键盘」的安装器。
+///
+/// ★ 为什么这个**保留**（而 `ScrollKeyboardDismisser` 被删掉）：
+///   收键盘这件事 SwiftUI **没有**第一方 API（没有 `.dismissKeyboardOnTap()`），
+///   所以只能用 UIKit 补一个手势 —— 这是**唯一**可行的做法。
+///   它与滚动无关：`cancelsTouchesInView = false` 不吃触摸，
+///   且 `shouldReceive` 遇到 `UIControl` 直接返回 false（点输入框/按钮不抢）。
+///   ⚠️ 它只在**触摸开始**时被系统问一次「要不要接收」（`shouldReceive`），
+///      在拖动过程中**不会**被逐帧回调 —— 所以它不是滚动卡顿的来源。
 ///
 /// ★ 做成单例并记住装过的 window：SwiftUI 会反复创建/销毁 background 视图，
 ///   如果每次都挂一个手势，同一个 window 上很快会叠上一串 ——
@@ -219,9 +209,6 @@ struct DismissKeyboardOnTap: UIViewRepresentable {
         view.isUserInteractionEnabled = false
         view.onWindow = { window in
             TapOutsideKeyboardDismisser.shared.install(on: window)
-            // ★ 2026-10-09 第三轮：滚动收键盘的兜底手势。
-            // ★ 2026-10-10 第七轮：改名并放宽为「任意方向滚动都收」。
-            ScrollKeyboardDismisser.shared.install(on: window)
         }
         return view
     }
@@ -243,21 +230,21 @@ private final class WindowHookView: UIView {
 
 /// 带输入框的页面统一挂这个：滑动收起 + 点空白收起。
 ///
-/// ⚠️ 键盘上方「完成」与「打印」两个按钮**不在这里**，而是在
-///   `LabelActions` 里统一挂 —— 那里才有 `printNow`。
-///   两处各挂一个 `.toolbar(placement: .keyboard)` 虽然也能编译，
-///   但会变成两条独立 accessory bar，反而更容易出怪相。
+/// ⚠️ 键盘上方「完成」按钮**不在这里**，而是在 `LabelActions` 里统一挂。
 struct KeyboardDismissModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            // ★ 跟着手指走，而不是整块闪走 —— 见文件头 2026-10-09 说明。
+            // ★★★ 2026-10-10（第十八轮）—— **苹果第一方**的「滚动即收键盘」。
             //
-            // ⚠️ 2026-10-09 第三轮：单靠这一句在**挂了 keyboard toolbar 的页面**
-            //    上会失效（见 `ScrollKeyboardDismisser` 的说明）。
-            //    所以保留它作为「正常情况下的第一选择」，同时由
-            //    `DismissKeyboardOnTap` 装的那个 pan 手势兜底 ——
-            //    两者叠加，任一可用即可，不冲突。
-            .scrollDismissesKeyboard(.interactively)
+            //   `.immediately`：系统滚动识别器一判定是滚动，就一次性收起键盘。
+            //   全程由 UIKit 自己处理 —— 没有逐帧 Swift 回调、没有额外手势、
+            //   没有跨语言边界调用，所以滚动不再被拖累（第十七轮的卡顿就是这么来的）。
+            //
+            //   ⚠️ 不要再改回 `.interactively`（逐帧跟随 = 最吃主线程的模式），
+            //      也不要再补 `UIPanGestureRecognizer`（第十七轮的
+            //      `ScrollKeyboardDismisser` 已因此删除 —— 它就是卡顿的元凶）。
+            .scrollDismissesKeyboard(.immediately)
+            // 点空白收键盘：SwiftUI 无对应 API，只能由 UIKit 手势补（见上）。
             .background(DismissKeyboardOnTap())
     }
 }
