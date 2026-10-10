@@ -168,8 +168,22 @@ targets:
         #      把系统那层预留挡在外面，倒计时态也能收到最窄。
         #      ⚠️ 与 `.fixedSize()` 方向相反，别搞混（见 widget 文件头）。
         #   → 1.0.11 / build 37。
-        CURRENT_PROJECT_VERSION: 37
-        MARKETING_VERSION: 1.0.11
+        # ★ 2026-10-10 第十二轮（用户三条）：
+        #   ① 紧凑态倒计时格式 `H:MM:SS` → **`M:SS`**（用户指出「应该是 MM:SS」），
+        #      并把钉死的槽位宽度 46 → **42**（对齐「到点」态的自然宽度 40pt）。
+        #   ② **点灵动岛胶囊不跳页** —— 真正原因找到了：`.widgetURL` 上一轮只加在
+        #      `ActivityConfiguration` 的**锁定屏幕视图**上，**没加到 `DynamicIsland`**；
+        #      灵动岛是另一条渲染路径，拿不到那个 URL。
+        #      Apple 文档里 `DynamicIsland` **自己就带一个 `widgetURL(_:)`**
+        #      （「设置用户轻点实时活动时打开对应 App 的 URL」）→ 本轮补上。
+        #   ③ **有灵动岛胶囊时不弹通知横幅**：命中岛上的那条里程碑，其
+        #      「提前 1 小时 / 提前 10 分钟 / 到点」三档通知改为
+        #      `interruptionLevel = .passive` —— 只进通知中心与锁屏，不弹横幅。
+        #      判据抽成 `ExpiryActivityManager.nearestMilestone`（nonisolated
+        #      纯函数），与 `sync` 共用同一套规则。
+        #   → 1.0.12 / build 38。
+        CURRENT_PROJECT_VERSION: 38
+        MARKETING_VERSION: 1.0.12
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -220,8 +234,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.0.11
-        CURRENT_PROJECT_VERSION: 37
+        MARKETING_VERSION: 1.0.12
+        CURRENT_PROJECT_VERSION: 38
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

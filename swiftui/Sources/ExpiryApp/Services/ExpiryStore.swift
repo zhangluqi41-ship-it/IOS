@@ -30,6 +30,19 @@
 //  ★ 「稍后提醒」的重复提醒（每 5 分钟）是一条 `repeats: true` 的独立通知，
 //    它会在**任何一次 `rescheduleReminders`**（= 记录有增删改）时被一起清掉。
 //
+//  ★★★ 2026-10-10 第十二轮（用户第 3 条）—— **有灵动岛胶囊时不弹横幅**：
+//    用户原话：「如图的通知，仅应存在锁屏和通知中心中，不应存在横幅，
+//    因为横幅应该是灵动岛胶囊。需要更正为：在手机任意 app 界面或主界面状态下，
+//    如果有灵动岛胶囊紧凑态存在，就关闭横幅的消息通知」。
+//
+//    ➜ 规则：若某个里程碑**此刻正挂在灵动岛上**（判据与
+//      `ExpiryActivityManager.nearestMilestone` 同源），它的
+//      「提前 1 小时 / 提前 10 分钟 / 到点」三档通知一律改成
+//      `interruptionLevel = .passive` —— 只进**通知中心与锁屏**，不弹横幅。
+//      「前一天 / 当天 09:00」两档是纯预告，**保留横幅**。
+//    ➜ 没被挂上岛的里程碑（比如 App 超过 8 小时没打开、活动被系统回收）
+//      照旧弹横幅 —— 保证「没有胶囊时不会漏掉提醒」。
+//
 
 import Combine
 import Foundation
@@ -274,9 +287,21 @@ final class ExpiryStore: ObservableObject {
         guard reminderEnabled else { return }
         let now = Date()
 
+        // ★★★【第十二轮·用户第 3 条】先算出「此刻挂在灵动岛上的那个里程碑」。
+        //   命中它的那几档通知要**静默**（只进通知中心 / 锁屏、不弹横幅）——
+        //   因为那一刻屏幕上已经有灵动岛胶囊在显示同一件事，横幅纯属重复。
+        //   ⚠️ 规则与 `ExpiryActivityManager.nearestMilestone` **同源**，
+        //     不会出现「岛上挂 A、判静默用 B」。
+        //   ⚠️ **必须先确认系统实时活动开关是开着的** —— 关掉时岛上根本
+        //     不会有胶囊，此时若还静默通知，用户会两头都收不到。
+        let island = ExpiryActivityManager.liveActivitiesEnabled
+            ? ExpiryActivityManager.nearestMilestone(records: records, now: now)
+            : nil
+
         var candidates: [Candidate] = []
         for record in records where record.usedAt == nil {
-            candidates.append(contentsOf: Self.candidates(for: record, now: now))
+            candidates.append(contentsOf: Self.candidates(for: record, now: now,
+                                                          island: island))
         }
         candidates.sort { $0.fire < $1.fire }
 
@@ -300,7 +325,15 @@ final class ExpiryStore: ObservableObject {
     /// identifier 的下标规则：`slot * 5 + tier` ——
     /// `slot` 是里程碑序号（**顺序不能改**，见 `milestones(of:)`），
     /// `tier` 是上面那 5 档。`cancelNotifications(for:)` 靠同一套规则整组删。
-    private static func candidates(for record: LabelRecord, now: Date) -> [Candidate] {
+    ///
+    /// ★★★【第十二轮】新增 `island` 参数：**此刻挂在灵动岛上的那个里程碑**
+    ///   （由 `ExpiryActivityManager.nearestMilestone` 按同一套规则算出）。
+    ///   命中它的那几档通知会带 `quiet: true` → `interruptionLevel = .passive`
+    ///   → **只进通知中心与锁屏，不弹横幅**（用户第 3 条要求）。
+    private static func candidates(for record: LabelRecord,
+                                   now: Date,
+                                   island: (record: LabelRecord,
+                                            milestone: ExpiryMilestone)?) -> [Candidate] {
         var out: [Candidate] = []
         let ids = ids(for: record)
         let kindLabel = record.kind.label
@@ -308,6 +341,16 @@ final class ExpiryStore: ObservableObject {
         for (slot, milestone) in milestones(of: record).enumerated() {
             let base = slot * tiersPerMilestone
             let day = AppCalendar.shared.startOfDay(for: milestone.date)
+
+            // ★★★【第十二轮】这条里程碑是不是**正挂在灵动岛上**？
+            //   是 → 下面那几档通知一律静默（只进通知中心 / 锁屏）。
+            //   ⚠️ 判据必须是「**同一条记录 + 同一个时刻**」，不能只看
+            //     「岛上有没有东西」—— 多条记录同时临期时，没被挂上去的
+            //     那些必须照旧弹横幅，否则用户会漏掉真正的提醒。
+            let onIsland = island.map {
+                $0.record.id == record.id
+                    && abs($0.milestone.date.timeIntervalSince(milestone.date)) < 1
+            } ?? false
 
             // ①② 前一天 / 当天 09:00（沿用旧行为：把「哪一天」提前一天告诉用户）
             for (offset, tier) in [(-1, 0), (0, 1)] {
@@ -320,7 +363,11 @@ final class ExpiryStore: ObservableObject {
                     body: "\(record.title)（\(kindLabel)）"
                         + (offset < 0 ? milestone.tomorrowBody : milestone.todayBody),
                     record: record, milestone: milestone,
-                    category: categoryNotice, timeSensitive: false)
+                    category: categoryNotice, timeSensitive: false,
+                    // ★【第十二轮】前一天 / 当天 09:00 这两档**永远保留横幅**：
+                    //   它们是「预告」，且 9 点这一刻岛上的倒计时还没进入
+                    //   用户要处理的那个窗口（多数情况下里程碑还在 8 小时之外）。
+                    quiet: false)
                 out.append(Candidate(
                     id: ids[base + tier],
                     fire: fire,
@@ -343,7 +390,11 @@ final class ExpiryStore: ObservableObject {
                         + (isImminent ? milestone.dueBody : milestone.soonBody),
                     record: record, milestone: milestone,
                     category: isImminent ? categoryDue : categoryNotice,
-                    timeSensitive: isImminent)
+                    timeSensitive: isImminent,
+                    // ★【第十二轮】提前 1 小时 / 提前 10 分钟 —— 这两档到点时
+                    //   灵动岛基本一定在显示这条（它就在 8 小时窗口里），
+                    //   所以命中岛上时改走静默。
+                    quiet: onIsland)
                 out.append(Candidate(
                     id: ids[base + tier],
                     fire: fire,
@@ -380,7 +431,14 @@ final class ExpiryStore: ObservableObject {
                     body: "\(record.title)（\(kindLabel)）" + milestone.strengthenBody,
                     record: record, milestone: milestone,
                     category: categoryDue,
-                    timeSensitive: true)
+                    timeSensitive: true,
+                    // ★★★【第十二轮·用户第 3 条的正主】用户截图里那条横幅就是这一档。
+                    //   它响的那一刻，灵动岛上正挂着同一条记录（到点 / 已到时间 + 两个按钮）
+                    //   → 改走静默：只进通知中心与锁屏，不再弹横幅。
+                    //   ⚠️ 若这一刻**岛上没有**它（例如 App 已 8 小时没打开、
+                    //     活动被系统回收），`onIsland` 为 false，横幅照旧 ——
+                    //     这正是用户说的「如果有胶囊存在才关掉横幅」。
+                    quiet: onIsland)
                 out.append(Candidate(
                     id: ids[base + 4],
                     fire: milestone.date,
@@ -393,18 +451,42 @@ final class ExpiryStore: ObservableObject {
         return out
     }
 
+    /// 造一条通知内容。
+    ///
+    /// ★★★【第十二轮·用户第 3 条】新增 `quiet` —— 「有灵动岛胶囊时不弹横幅」。
+    ///
+    ///   做法是把 `interruptionLevel` 设成 **`.passive`**。这是 iOS 上**唯一**
+    ///   能做到「只进通知中心 / 锁屏、不弹横幅、不亮屏、不响铃」的档位 ——
+    ///   Apple 官方原文（UNNotificationInterruptionLevel.passive）：
+    ///     「The system adds the notification to the notification list
+    ///       **without lighting up the screen or playing a sound**.」
+    ///   HIG 里那张表也印证：Passive 不打断用户、不穿透专注模式。
+    ///
+    ///   ⚠️ 它会**连声音一起去掉** —— 这是系统行为，不是我们额外关的；
+    ///      iOS 没有「不弹横幅但保留声音」的档位。
+    ///   ➜ 所以这一刻的「响铃 + 打断」交给**灵动岛那条预定警报**
+    ///     （`ExpiryActivityManager.scheduleAlert` 的 `AlertConfiguration`
+    ///      `sound: .default`）—— 用户要的正是「横幅就是灵动岛胶囊」。
+    ///
+    ///   ⚠️ 顺序很重要：`quiet` 优先于 `timeSensitive`。两者同时设没有意义，
+    ///     `.passive` 的「不打断」会被 `.timeSensitive` 的「穿透专注」抵消。
     private static func makeContent(title: String,
                                     body: String,
                                     record: LabelRecord,
                                     milestone: ExpiryMilestone,
                                     category: String,
-                                    timeSensitive: Bool) -> UNMutableNotificationContent {
+                                    timeSensitive: Bool,
+                                    quiet: Bool = false) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
         content.categoryIdentifier = category
-        if timeSensitive { content.interruptionLevel = .timeSensitive }
+        if quiet {
+            content.interruptionLevel = .passive
+        } else if timeSensitive {
+            content.interruptionLevel = .timeSensitive
+        }
         content.userInfo = [
             Self.userInfoRecordID: record.id.uuidString,
             Self.userInfoDueAt: milestone.date.timeIntervalSince1970,

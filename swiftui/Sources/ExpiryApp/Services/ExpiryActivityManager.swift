@@ -95,21 +95,10 @@ final class ExpiryActivityManager {
         }
 
         let now = Date()
-        var best: (record: LabelRecord, milestone: ExpiryStore.ExpiryMilestone)?
-
-        for record in records where record.usedAt == nil {
-            for milestone in ExpiryStore.milestones(of: record) {
-                let delta = milestone.date.timeIntervalSince(now)
-                // ★ 窗口扩到 `window + graceWindow`（8h + 30min）：
-                //   刚过点半小时内的物料仍然要留在岛上（否则「到时间」那一刻
-                //   活动就自己消失了，用户根本来不及点按钮）。这段时间
-                //   `ContentState.phase` 是 `.due`，岛上显示「已到时间 + 两个按钮」。
-                guard delta > -Self.graceWindow, delta <= Self.window else { continue }
-                if best == nil || milestone.date < best!.milestone.date {
-                    best = (record, milestone)
-                }
-            }
-        }
+        // ★★【第十二轮】挑选逻辑抽成 `nearestMilestone` 纯函数 —— 这样
+        //   `ExpiryStore` 判断「这条通知要不要静默」时用的是**同一份规则**，
+        //   不会出现「岛上挂的是 A、判静默用的是 B」这种错位。
+        let best = Self.nearestMilestone(records: records, now: now)
 
         // ★★★【第十轮】**不要**在「8 小时内没有里程碑」时直接 `endAll()` 返回 ——
         //   那会把预定的「到点警报」一起收掉。8 小时窗口只管**倒计时那条**；
@@ -176,6 +165,54 @@ final class ExpiryActivityManager {
         // ── 活动 B：预定「到点那一刻由系统自动拉起并弹出展开态」──
         // ★★★【第十轮·用户图1/图2 的真正解法】详见 `scheduleAlert` 的长注释。
         await scheduleAlertForNextMilestone(records: records)
+    }
+
+    // MARK: - 纯查询（给 `ExpiryStore` 判断「通知要不要静默」用）
+    //
+    // ★★★【第十二轮·用户第 3 条】用户原话：
+    //   「如图的通知，仅应存在锁屏和通知中心中，不应存在横幅，因为横幅应该是
+    //     灵动岛胶囊。需要更正为：**在手机任意 app 界面或主界面状态下，如果有
+    //     灵动岛胶囊紧凑态存在，就关闭横幅的消息通知**」
+    //
+    //   ➜ 要落地这条，`ExpiryStore` 必须能回答一个问题：
+    //     **「这颗胶囊现在挂的是哪条记录、哪个里程碑？」**
+    //   ➜ 而那个挑选规则原本写死在 `sync` 里。这里把它抽成 `nonisolated static`
+    //     纯函数，`sync` 与 `ExpiryStore.rescheduleReminders` **共用同一份**，
+    //     从根上杜绝两边判断不一致。
+    //   ➜ 标 `nonisolated` 是因为 `ExpiryStore` 不是 `@MainActor`（它自己用
+    //     `onMain {}` 往主线程派活），从它那边同步调用不能要求主线程。
+
+    /// 「此刻该挂在灵动岛上的那个里程碑」—— 纯计算，不碰任何活动状态。
+    ///
+    /// - Returns: 最近的那个里程碑；8 小时窗口内没有就返回 `nil`（= 岛上没东西）。
+    nonisolated static func nearestMilestone(records: [LabelRecord], now: Date)
+        -> (record: LabelRecord, milestone: ExpiryStore.ExpiryMilestone)? {
+        var best: (record: LabelRecord, milestone: ExpiryStore.ExpiryMilestone)?
+        for record in records where record.usedAt == nil {
+            for milestone in ExpiryStore.milestones(of: record) {
+                let delta = milestone.date.timeIntervalSince(now)
+                // ★ 窗口扩到 `window + graceWindow`（8h + 30min）：
+                //   刚过点半小时内的物料仍然要留在岛上（否则「到时间」那一刻
+                //   活动就自己消失了，用户根本来不及点按钮）。这段时间
+                //   `ContentState.phase` 是 `.due`，岛上显示「已到时间 + 两个按钮」。
+                guard delta > -graceWindow, delta <= window else { continue }
+                if best == nil || milestone.date < best!.milestone.date {
+                    best = (record, milestone)
+                }
+            }
+        }
+        return best
+    }
+
+    /// 系统「实时活动」总开关是否允许。
+    ///
+    /// ★★★【第十二轮】必须暴露给 `ExpiryStore`：
+    ///   用户若在「设置 → 面容 ID 与密码 / 通知」里把实时活动关掉，
+    ///   灵动岛上**根本不会有胶囊** —— 这时通知**不能**被静默，
+    ///   否则用户既看不到胶囊、也收不到横幅，等于完全被漏掉。
+    ///   ⚠️ 少了这一条判断，静默规则就会在「实时活动被关闭」时误伤。
+    nonisolated static var liveActivitiesEnabled: Bool {
+        ActivityAuthorizationInfo().areActivitiesEnabled
     }
 
     // MARK: - 预定「到点自动弹出」（第十轮新增）

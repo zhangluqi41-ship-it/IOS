@@ -239,6 +239,28 @@
 //        右侧文字变红色「到点」——用户一眼就知道要长按进来处理。
 //        这是无推送权限下唯一诚实的做法。
 //
+//  ─────────── 2026-10-10 第十二轮（用户三条，本文件改两处） ───────────
+//
+//  ★ 用户原话：
+//    ① 「倒计时是不是应该是 MM:SS，而不是 H:MM:SS，这个你应该是弄错了……
+//        考虑应该是『H：』的问题」
+//    ② 「点击灵动岛紧凑态胶囊，目前依然是正常打开 app，应该直接跳转到
+//        效期管理菜单中」
+//
+//  ★① 倒计时格式 → **固定 `M:SS`**（不再出现小时位），槽位宽度 46 → **42**。
+//    判据：41.6pt 是 `0:00` 在 `.title3` bold monospaced 下的实际宽度，
+//    「到点」两字也只有 40pt —— 42 正好把两者对齐，这是能到的最窄。
+//    ⚠️ 再往下压就没意义了：紧凑槽位有**系统最小宽度**（约 52.33pt），
+//      内容小于它也不会让岛更窄。
+//
+//  ★② **点胶囊不跳页的真正原因**（上一轮我漏了）：
+//    `.widgetURL` 上一轮只加在 `ActivityConfiguration` 的**锁定屏幕视图**上，
+//    而灵动岛是**另一条渲染路径**，拿不到那个 URL。
+//    ✅ Apple 给 `DynamicIsland` 自己留了一个 `widgetURL(_:)`
+//      （「设置用户轻点实时活动时打开对应 App 的 URL」）——
+//      本轮补上，见 `dynamicIsland` 链尾。
+//    ⚠️ **两处都要挂**：锁屏归锁屏、灵动岛归灵动岛，缺一不可。
+//
 
 import ActivityKit
 import AppIntents
@@ -434,6 +456,35 @@ struct ExpiryLiveActivityWidget: Widget {
                     .foregroundStyle(.white)
             }
             .keylineTint(Theme.brand)
+            // ★★★【第十二轮·用户第 2 条】（本轮最关键的发现）
+            //
+            //  用户原话：「点击灵动岛紧凑态胶囊，目前依然是正常打开 app，
+            //  应该直接跳转到效期管理菜单中，也就是说
+            //  **点击灵动岛胶囊 → 打开 app 的效期管理界面**」
+            //
+            //  ⚠️ 上一轮（第十轮）我以为把 `.widgetURL` 加在
+            //     `ActivityConfiguration` 的**锁定屏幕视图**上就够了 —— **不够**。
+            //     那一个 URL 只管**锁屏 / 通知中心**那块卡片；
+            //     灵动岛（紧凑胶囊 / 展开态）走的是**另一条渲染路径**，
+            //     拿不到那个 URL，于是点胶囊只会「按默认行为拉起 App」
+            //     （= 停在上次退出的页面）—— 和用户描述完全一致。
+            //
+            //  ✅ 正解：Apple 给 `DynamicIsland` **自己也开了一个 `widgetURL(_:)`**，
+            //     文档原文（developer.apple.com/documentation/widgetkit/
+            //     dynamicisland/widgeturl(_:)）：
+            //       「设置用户轻点实时活动时打开对应 App 的 URL」
+            //       「通过此函数设置的 URL 会成为每个实时活动视图用于深度链接
+            //         至 App 的默认 URL」
+            //     ➜ 所以必须**在这里**再挂一次。两处并存：
+            //        · 上面 `ActivityConfiguration` 里那一次 → 锁屏卡片；
+            //        · 这里这一次                            → 灵动岛（含紧凑态）。
+            //
+            //  ⚠️ 展开态里两个 `Button(intent:)`（已完成使用 / 稍后提醒）
+            //     是 `LiveActivityIntent`，**优先于**这个默认 URL，不受影响。
+            //  ⚠️ URL scheme `expirymanager` 已在
+            //     `Support/ExpiryManager-Info.plist` 注册；App 侧由
+            //     `RootView.onOpenURL` → `AppRouter` → 切到「效期管理」Tab。
+            .widgetURL(ExpiryDeepLink.record(context.attributes.recordID))
             // ⚠️⚠️ **千万不要再加 `.contentMargins(.horizontal, 0, for: .compact*)`**
             //    上一版就是这么写的，结果把紧凑态内容推到两端、
             //    数字被挤出屏幕（用户反馈「已完全看不到数字」）。
@@ -705,12 +756,23 @@ private struct CompactCountdownText: View {
     ///   ⚠️ **不要**改用 `.fixedSize()` —— 那是**相反**方向：
     ///      它采用「理想宽度」，也就是那个被系统预留的超大值
     ///      （前几轮踩过这个坑，`.fixedSize()` 只会让倒计时永远不缩）。
-    ///   ⚠️ 必须配 `minimumScaleFactor`，否则 `H:MM:SS`（8 字符）
-    ///      在 20pt 下约 84pt，会被硬裁掉。
-    ///   ⚠️ 46pt 是量出来的：`0:00`（3 数字 + 1 冒号）在 `.title3` bold
-    ///      `.monospacedDigit()` 下约 42pt，正好放得下；
-    ///      长倒计时靠 `minimumScaleFactor(0.5)` 收进来。
-    private static let slotWidth: CGFloat = 46
+    ///   ⚠️ 必须配 `minimumScaleFactor`，否则长倒计时会被硬裁掉。
+    ///
+    /// ★★★【第十二轮·用户反馈】46 → **42**。
+    ///
+    ///   用户原话：「现在还是有一点点宽，但是修改是正向的了，考虑应该是
+    ///   『H：』的问题」。查下来是**两件事叠加**：
+    ///     ① 46pt 本身比「到点」态的自然宽度（`到点` = 2 个汉字 = 40pt）更宽；
+    ///     ② 倒计时还带小时位（`H:MM:SS`）→ 字符多，同样的框里字更小。
+    ///   ➜ 本轮两条一起改：
+    ///     · **格式统一成 `M:SS`**（见 `body`，不再出现小时位）；
+    ///     · **框收到 42pt** —— `0:00` 在 `.title3` bold `.monospacedDigit()`
+    ///       下约 41.6pt，正好放得下。
+    ///
+    ///   ⚠️ 若观感仍偏宽，**剩下的余量就不是我们能控的了**：
+    ///      紧凑槽位另有**系统最小宽度**（Apple 规范约 52.33pt），
+    ///      内容再小也压不下去。到那一步就该停手，别再折腾排版。
+    private static let slotWidth: CGFloat = 42
 
     var body: some View {
         // ★★ 双轨绘制（见 `ContentState.countdownInterval` 的长注释）：
@@ -724,13 +786,19 @@ private struct CompactCountdownText: View {
         //       也就不会出现「区间没了但仍渲染 timerInterval → 卡 0:00」。
         Group {
             if let interval = state.countdownInterval {
-                // ★ 以「是否还有 1 小时以上」决定格式：
-                //   < 1h → `M:SS`（`showsHours: false`），窄；
-                //   ≥ 1h → `H:MM:SS`（`showsHours: true`），宽但必要。
-                let needsHours = state.dueAt.timeIntervalSinceNow >= 3600
+                // ★★★【第十二轮·用户反馈】格式**固定 `M:SS`**，不再出现小时位。
+                //
+                //   用户原话：「倒计时是不是应该是 MM:SS，而不是 H:MM:SS，
+                //   这个你应该是弄错了……考虑应该是『H：』的问题」
+                //   —— **他说对了**。槽位宽度虽然已被 `.frame` 钉死，
+                //   但字符数越多、同样的框里字就越小；去掉 `H:` 相当于白赚一档字号。
+                //
+                //   `showsHours: false` → 分钟数累加（1 小时显示 `60:00`，
+                //   8 小时显示 `480:00`），字符数从 8 个降到 ≤6 个。
+                //   ⚠️ 想恢复小时位就把它改回 `true` —— 但字会明显变小。
                 Text(timerInterval: interval,
                      countsDown: true,
-                     showsHours: needsHours)
+                     showsHours: false)
                     .monospacedDigit()
             } else {
                 // 已到点：不再走 timerInterval（否则会卡在 `0:00`），给醒目文字。
@@ -742,12 +810,14 @@ private struct CompactCountdownText: View {
         .font(.title3)
         .fontWeight(.bold)
         .lineLimit(1)
-        // ★★【第十一轮】0.7 → **0.5**：现在宽度被钉死在 46pt，
-        //   长倒计时（`H:MM:SS`）需要更大的收缩余量才不会被裁。
+        // ★★【第十一轮】0.7 → **0.5**：宽度被钉死后，长倒计时需要更大的
+        //   收缩余量才不会被裁。
+        //   ★【第十二轮】格式改成 `M:SS` 后最长只有 6 个字符，
+        //     最坏情况（`480:00`）约 71pt → 收成 42/71 ≈ 0.59，够用。
         .minimumScaleFactor(0.5)
         // ★★★【第十一轮·本轮核心】钉死槽位宽度 —— 见上面 `slotWidth` 的长注释。
         //   ⚠️ 位置必须在 `.font/.minimumScaleFactor` **之后**：
-        //      frame 在外层，向内的提案宽度才是 46pt，
+        //      frame 在外层，向内的提案宽度才是 `slotWidth`，
         //      里面的 timer 文字才会按这个宽度决定要不要缩字。
         .frame(width: Self.slotWidth)
         // ★★ 第七轮：未到点用**苹果运动黄**（图2），到点用红色。
