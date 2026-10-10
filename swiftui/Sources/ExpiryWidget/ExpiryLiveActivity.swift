@@ -103,6 +103,42 @@
 //        `timerInterval` 的分支错开一帧）。`phase` 仅保留作语义别名，
 //        供 `ExpiryActivityBridge` 等非渲染逻辑参考。
 //
+//  ─────────── 2026-10-10 第八轮（用户又发 3 张截图，本文件第三次收敛） ───────────
+//
+//  ★★★ 图1「红框中还是保留大量位置，分析是什么原因导致的？不应该是这样的排版」：
+//    **元凶 = 上一轮（第七轮）我加的两句 `.frame(maxWidth: .infinity, ...)`。**
+//    `.maxWidth: .infinity` 的语义是「我要尽可能宽」→ 紧凑槽位里系统会把内容
+//    **撑到允许的最大宽度** → 整条灵动岛被拉到上限，摄像头两侧各留一大块纯黑。
+//    ✅ **本轮直接删掉这两句**，让内容按自身固有尺寸参与布局 ——
+//       系统会把槽位收到「内容宽度 + 默认内边距」，这是平台允许的**最窄**形态，
+//       也就是苹果运动 App 那个样子。
+//    ⚠️ 代价：系统默认内边距还在，会有一点点「缝」。**这一点无法消除**
+//       （紧凑槽位有系统最小宽度），但它远好过「整岛被撑宽 + 大片黑边」。
+//    ⚠️ 试过的错路，**不要重走**：
+//       · `.contentMargins(.horizontal, 0, for: .compact*)`（第三轮）→
+//         把内容甩到两端、数字被挤出屏幕；
+//       · `.frame(maxWidth: .infinity, ...)`（第五 / 七轮）→ 本轮的元凶；
+//       · `.fixedSize()` → 会把 `Text(timerInterval:)` 宽度**锁死**，
+//         倒计时从 `9:59` 走到 `0:05` 时不收窄。
+//
+//  ★★ 图2（展开态）用户四条：
+//    ① 「篮筐肉类最左边还是有点超出」→ `.padding(.leading, 6)` **加到 10**；
+//    ② 「可以和右侧黄框的时间做对称设计，字体大小相同，位置对称」→
+//       类别字号 `.caption2` → **`.subheadline` + 半粗**，并把**标题移出**
+//       `.leading`，让该区域只剩一行，与右侧一行倒计时**高度对称**；
+//    ③ 「红框可以整合成同一区域的信息，两排文字」→ **标题搬到 `.bottom` 第一行**，
+//       与「里程碑行」紧挨着成为两排（展开态四个区域是固定分区，跨区无法相邻，
+//       所以只能把标题挪过去）；
+//    ④ 「绿框的时间应该平移到红框的日期后面」→ 到期时刻 `HH:mm` 从右上角
+//       移到 `.bottom` 的日期之后，最终呈现形如「原始保质期 2026/10/10 13:37」。
+//    ★ 「上面的标签名称，字体可以适当放大」→ 标题 `.subheadline` → **`.headline`**。
+//
+//  ★★ 图3「灵动岛展开态不能像闹钟一样弹出提醒吗？」—— **不能**，原因见文件头
+//     第 18~35 行（展开只由用户长按 / 系统事件触发，第三方无 API）。
+//     可操作的替代 = 到点那一刻的**本地强化通知**（`timeSensitive` + `sound`，
+//     见 `ExpiryStore` 的 tier 4），它会像普通通知一样在屏幕顶部**弹出 + 响铃**，
+//     这是免费账号能做到的最接近「闹钟弹出」的效果。
+//
 //  ★★ 排版修复（用户说「间距超大、看不到数字」的真正原因）：
 //     上一版为了消掉两侧的默认边距，写了两句
 //        `.contentMargins(.horizontal, 0, for: .compactLeading/.compactTrailing)`
@@ -167,111 +203,124 @@ struct ExpiryLiveActivityWidget: Widget {
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
-                // ── 左上：logo + 类别（第一行），标题（第二行，**完整一行不折行**）──
-                //  ★★【第七轮】图7「左侧超出界面，可以右移」→ 显式加左内边距；
-                //     图7「颜色应该是文字这个颜色」→ 图标/类别提到纯白。
-                //  ★★【第七轮】图8「文字保持完整一行」→ `lineLimit(1)` + 允许缩字。
+                // ── 左上：只有「⏳ + 类别」，**与右上倒计时左右对称** ──
+                //  ★★【第八轮】用户图2 原话：
+                //    「篮筐肉类最左边还是有点超出，可以和右侧黄框的时间做对称设计，
+                //      字体大小相同，位置对称」
+                //
+                //  ✅ 做法：
+                //    ① 类别从 `.caption2` **放大到 `.subheadline` + 半粗**，
+                //       让它与右侧大号倒计时**字号量级相当**、形成左右平衡；
+                //    ② `.padding(.leading, 10)` —— 上一轮只加了 6，仍然贴边，
+                //       这一轮加到 10 彻底离开胶囊圆角；
+                //    ③ **标题从本区域移走**（挪到 `.bottom`，见下）——
+                //       这样本区域只剩一行，与右侧一行倒计时**高度对称**。
                 DynamicIslandExpandedRegion(.leading) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 4) {
-                            // ★★ 2026-10-10：图标在「到点」时换成感叹号警示三角。
-                            //   判据统一用 `countdownInterval == nil`
-                            //   （见本文件「倒计时」一节的长注释），
-                            //   与数字变「已到时间」、变红**同步**。
-                            Image(systemName: context.state.countdownInterval == nil
-                                  ? "exclamationmark.triangle.fill"
-                                  : "hourglass")
-                                .font(.caption2)
-                            Text(context.attributes.kindLabel)
-                                .font(.caption2)
-                        }
-                        // ★ 纯白（原来是 `white.opacity(0.8)`）—— 与标题同色，
-                        //   用户要求「和我的字体一样的颜色」。
-                        .foregroundStyle(.white)
-
-                        Text(context.attributes.title)
+                    HStack(spacing: 4) {
+                        // 判据统一 `countdownInterval == nil`（见「倒计时」一节）。
+                        Image(systemName: context.state.countdownInterval == nil
+                              ? "exclamationmark.triangle.fill"
+                              : "hourglass")
+                            .font(.subheadline)
+                        Text(context.attributes.kindLabel)
                             .font(.subheadline)
                             .fontWeight(.semibold)
-                            // ★ 图8：「直接文字保持完整一行」—— 不折行，宁可缩字。
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.leading, 10)
+                }
+
+                // ── 右上：**只有大号倒计时**（图7「红色数字应为倒计时」）──
+                //  ★ 图2「右侧倒计时和苹果这个黄色一致」→ 苹果运动黄。
+                //  ★★【第八轮】到期时刻（`13:37`）**从这里移到 `.bottom` 的日期后面**
+                //     —— 用户图2 原话「绿框的时间应该平移到红框的日期后面」。
+                //     所以本区域现在只剩一个数字，与左侧一行类别**对称**。
+                DynamicIslandExpandedRegion(.trailing) {
+                    ExpandedCountdownText(state: context.state)
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .foregroundStyle(context.state.countdownInterval == nil
+                                         ? Color.red
+                                         : ExpiryLiveActivityColors.exerciseYellow)
+                        .padding(.trailing, 10)
+                }
+
+                // ── 底部：**「标题 + 里程碑」两排文字整合成一个信息块** ──
+                //  ★★【第八轮】用户图2 原话：
+                //    「红框可以整合成同一区域的信息，两排文字」
+                //    「绿框的时间应该平移到红框的日期后面」
+                //    「上面的标签名称，例如『解冻-猪肉-梅花肉』，字体可以适当放大」
+                //
+                //  ✅ 做法：
+                //    ① **标题从 `.leading` 搬到本区域第一行** —— 这是「整合成
+                //       同一区域两排文字」的唯一办法（`DynamicIslandExpandedRegion`
+                //       是固定分区，跨区就没法相邻）；
+                //    ② 标题字号 `.subheadline` → **`.headline`**（用户要求「适当放大」），
+                //       仍是 `lineLimit(1)` + 缩字，保证完整一行；
+                //    ③ 第二行把「里程碑文案 + `yyyy/MM/dd` + `HH:mm`」**串成一行**
+                //       —— 这就是用户要的「`13:37` 平移到日期的后面」，
+                //       最终呈现形如「原始保质期 2026/10/10 13:37」。
+                DynamicIslandExpandedRegion(.bottom) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        // 第一排：标题（放大）
+                        Text(context.attributes.title)
+                            .font(.headline)
+                            .fontWeight(.semibold)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                             .foregroundStyle(.white)
-                    }
-                    // ★ 图7：左上角被胶囊圆角切掉 → 往右推一点。
-                    //   只加 leading，不动其它方向，避免改变整卡高度。
-                    .padding(.leading, 6)
-                }
 
-                // ── 右上：**倒计时**（图7「红色数字应为倒计时」）+ 到期时刻小字 ──
-                //  ★ 用户参照苹果运动（图2）：「右侧倒计时和苹果这个黄色一致」。
-                //  ★ 布局：大号倒计时在上（黄色/红色），到期时刻在下（小号白字），
-                //    这样「红色数字 = 倒计时」成立，也不会丢掉标签上印的时刻。
-                DynamicIslandExpandedRegion(.trailing) {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        // ① 大号倒计时 —— 这就是用户要的「红色数字」。
-                        //    未到点 → 苹果运动黄；已到点 → 红（危险优先）。
-                        //    ⚠️ 判色用 `countdownInterval == nil`，与
-                        //       `ExpandedCountdownText` 内部的分支**同源**，
-                        //       保证「文字换成『已到时间』」与「变红」同步发生。
-                        ExpandedCountdownText(state: context.state)
-                            .font(.system(size: 26, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                            .foregroundStyle(context.state.countdownInterval == nil
-                                             ? Color.red
-                                             : ExpiryLiveActivityColors.exerciseYellow)
-
-                        // ② 到期时刻（小号白字）—— 与标签上印的时刻逐字一致。
-                        Text(ExpiryDateFormat.time(context.state.dueAt))
-                            .font(.caption2)
-                            .monospacedDigit()
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                    // ★ 图7：右侧同样贴边被切 → 收一点右边距。
-                    .padding(.trailing, 6)
-                }
-
-                DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 8) {
-                        // ★★【第七轮】图8：
-                        //   「时间改为对应的时间模组，比如『最佳使用时间 2026/01/01』」
-                        //   → 这里从「距离到期 + 倒计时」改成**里程碑文案 + 完整日期**。
-                        //   ⚠️ 倒计时已经移到右上角（见 `.trailing`），不再重复。
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        // 第二排：里程碑 + 日期 + 时刻（三合一，紧贴日期之后）
+                        HStack(alignment: .firstTextBaseline, spacing: 5) {
                             Text(context.attributes.milestoneLabel)
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.75))
+                                .lineLimit(1)
                             Text(ExpiryDateFormat.date(context.state.dueAt))
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .monospacedDigit()
                                 .foregroundStyle(.white)
+                                .lineLimit(1)
+                            // ★ 图2「绿框的时间应该平移到红框的日期后面」→ 就是这里。
+                            Text(ExpiryDateFormat.time(context.state.dueAt))
+                                .font(.caption)
+                                .monospacedDigit()
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1)
                             Spacer(minLength: 0)
                         }
+
                         ActionButtons(attributes: context.attributes,
                                       state: context.state)
                     }
                     .padding(.bottom, 2)
                 }
             } compactLeading: {
-                // ★★ 【第五轮修复】「左侧沙漏离中间缝隙依旧很大」。
+                // ★★★【第八轮·本轮核心修复】图1「红框中还是保留大量位置，
+                //    分析是什么原因导致的？不应该是这样的排版」。
                 //
-                //  根因：`compactLeading` / `compactTrailing` 是**系统预留给内容的
-                //  固定槽位**，不是「内容多大就占多大」。内容比槽位小时，
-                //  系统会让它**在槽内居中** → 视觉上就是「离摄像头一大段缝隙」。
+                //  ⚠️ **元凶就是上一轮那两句 `.frame(maxWidth: .infinity, ...)`。**
+                //     `.maxWidth: .infinity` 的语义是「我要尽可能宽」——
+                //     在紧凑槽位里，系统会老老实实把内容**撑到允许的最大宽度**，
+                //     于是整条灵动岛被拉到上限，摄像头两侧各留一大块纯黑
+                //     （= 用户圈的蓝框 + 红框）。
                 //
-                //  ★ 正解：用 `.frame(maxWidth: .infinity, alignment: ...)`
-                //    让内容**撑满槽位**，并把对齐方向**朝向摄像头**：
-                //      · 左槽 → 右对齐（`.trailing`，往中间靠）
-                //      · 右槽 → 左对齐（`.leading`，往中间靠）
-                //    这样「缝隙」和「黑边」都会被推掉，内容紧贴灵动岛中央。
-                //  ⚠️ 不要用负 padding 硬顶 —— 会与系统裁切打架。
+                //  ★ 为什么上一轮会加它：第五轮用户抱怨「沙漏离摄像头有缝隙」，
+                //    当时误判为「内容在槽位里居中」→ 用撑满来消缝。
+                //    **但这条判断是错的**：撑满换来的是「整岛变宽 + 大片黑边」，
+                //    缝隙没消、观感更差。两害相权，宁可留一点系统内边距。
                 //
-                //  ★★【第七轮】图2「左侧图标修改成和我的字体一样的颜色」
-                //    → 未到点时用**纯白**（与标题同色）；到点才用红色示警。
-                //  ★★ 判据统一 `countdownInterval == nil`：与右侧数字
-                //     「变『到点』+ 变红」同步，不会出现「图标还是沙漏但数字已到点」。
+                //  ✅ 正解：**什么都不加**，让内容按**自身固有尺寸**参与布局。
+                //     系统会把槽位收到「内容宽度 + 默认内边距」——
+                //     这是平台允许的**最窄**形态，也就是苹果运动 App（图2 参照）
+                //     那个样子。
+                //  ⚠️ 不要用 `.fixedSize()` 代替：它会把 `Text(timerInterval:)`
+                //     的宽度**锁死**，倒计时从 `9:59` 走到 `0:05` 时不会跟着收窄。
+                //  ⚠️ 也不要加 `.contentMargins(...,0)`（第三轮踩过：会把内容
+                //     甩到两端、数字挤出屏幕）。
                 Image(systemName: context.state.countdownInterval == nil
                       ? "exclamationmark.triangle.fill"
                       : "hourglass")
@@ -279,13 +328,11 @@ struct ExpiryLiveActivityWidget: Widget {
                     .foregroundStyle(context.state.countdownInterval == nil
                                      ? Color.red
                                      : Color.white)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
             } compactTrailing: {
-                // ★ 右侧同理：内容**左对齐**（往摄像头靠），把右侧黑边推掉。
+                // ★ 同上：**不要** `.frame(maxWidth: .infinity)`，按内容自然宽度。
                 //   宽度收敛靠 `CompactCountdownText` 里的 `showsHours` 动态判断。
                 //  ★★【第七轮】图2「右侧倒计时和苹果这个黄色一致」→ 见下组件内部。
                 CompactCountdownText(state: context.state)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             } minimal: {
                 // minimal 只留给一个图标，别放文字。
                 Image(systemName: "hourglass")
