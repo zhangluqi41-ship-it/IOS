@@ -133,11 +133,46 @@
 //       移到 `.bottom` 的日期之后，最终呈现形如「原始保质期 2026/10/10 13:37」。
 //    ★ 「上面的标签名称，字体可以适当放大」→ 标题 `.subheadline` → **`.headline`**。
 //
-//  ★★ 图3「灵动岛展开态不能像闹钟一样弹出提醒吗？」—— **不能**，原因见文件头
-//     第 18~35 行（展开只由用户长按 / 系统事件触发，第三方无 API）。
-//     可操作的替代 = 到点那一刻的**本地强化通知**（`timeSensitive` + `sound`，
-//     见 `ExpiryStore` 的 tier 4），它会像普通通知一样在屏幕顶部**弹出 + 响铃**，
-//     这是免费账号能做到的最接近「闹钟弹出」的效果。
+//  ★★ 图3「灵动岛展开态不能像闹钟一样弹出提醒吗？」：
+//     · **普通 Live Activity 不能** —— 展开只由用户**长按** / 系统事件触发
+//       （Apple HIG 明文：touch and hold → expanded），第三方无 API。
+//     · **但 iOS 26 的 `AlarmKit` 可以** —— 那是专门的「闹钟式提醒」框架：
+//       到点自动弹出、穿透专注模式与静音、系统模板 UI。
+//       需要 `NSAlarmKitUsageDescription` + `AlarmManager.requestAuthorization()`。
+//       （已告知用户，等确认是否接入；参考
+//        developer.apple.com/documentation/alarmkit/scheduling-an-alarm-with-alarmkit）
+//
+//  ─────────── 2026-10-10 第九轮（用户仍不满意紧凑态宽度，本文件第四次收敛） ───────────
+//
+//  ★★★ 用户的观察与疑问（图1）：
+//    「现在还是整个灵动岛紧凑版-撑宽样式，而且我发现这个宽度和放大版灵动岛
+//      是一样宽的。问题会不会是这个原因呢？紧凑版和放大版这俩个灵动岛应该
+//      没有关系，继续检查问题是在哪里」
+//
+//  ★★★ 查证结论 —— **紧凑态的尺寸是系统写死的常量，App 改不了**：
+//    Apple 官方尺寸规范（HIG / ActivityKit）：
+//      · Compact leading  槽位：62.33 × 36.67 pt（Pro Max）/ 52.33 × 36.67（Pro）
+//      · Compact trailing 槽位：同上（**左右对称**本身就是设计规范）
+//      · 灵动岛总宽 = 摄像头模组 + 左槽 + 右槽 → **全部由系统决定**
+//      · Expanded 宽度：371 pt（Pro）/ 408 pt（Pro Max）
+//    ➜ **紧凑态与展开态是两条独立渲染路径，宽度互不影响**。用户看到「一样宽」
+//      是因为**两端留白把紧凑态视觉上拉长了** —— 两者实际差 100pt 以上。
+//
+//  ★★ 「两端黑块」的正解：
+//    它不是黑块，而是**系统给内容的固定画布**减去内容宽度后的空白：
+//      · 左槽只有一个小沙漏（约 12pt）→ 空出约 40pt；
+//      · 右槽 `1:13`（约 30pt）        → 空出约 22pt。
+//    ➜ **唯一能改善观感的动作 = 把内容放大到填满槽位**（用户也这么要求了）。
+//
+//  ★★★【不要重走的错路】以下三条**都改不了灵动岛宽度**（因为它是系统常量）：
+//    | 做法 | 结果 |
+//    |---|---|
+//    | `.frame(maxWidth: .infinity, alignment:)` | 第七轮加、第八轮删 —— 仅让内容贴边 |
+//    | `.contentMargins(...,0, for: .compact*)`  | 第三轮 —— 内容甩到两端、数字挤出屏幕 |
+//    | `.fixedSize()`                            | 锁死 `Text(timerInterval:)` 宽度 |
+//
+//  ★ 本轮动作（只有两处）：紧凑态图标 `.imageScale(.small)` → **`.title3`**；
+//    紧凑态倒计时 `.caption` → **`.title3`**。让内容填满固定画布、减少留白。
 //
 //  ★★ 排版修复（用户说「间距超大、看不到数字」的真正原因）：
 //     上一版为了消掉两侧的默认边距，写了两句
@@ -321,22 +356,55 @@ struct ExpiryLiveActivityWidget: Widget {
                 //     的宽度**锁死**，倒计时从 `9:59` 走到 `0:05` 时不会跟着收窄。
                 //  ⚠️ 也不要加 `.contentMargins(...,0)`（第三轮踩过：会把内容
                 //     甩到两端、数字挤出屏幕）。
+                // ★★★【第九轮·本轮】用户追问：
+                //    「现在还是整个灵动岛紧凑版-撑宽样式，而且我发现这个宽度和
+                //      放大版灵动岛是一样宽的。问题会不会是这个原因呢？
+                //      紧凑版和放大版这俩个灵动岛应该没有关系，继续检查问题是在哪里」
+                //
+                //  ★ 查证结论（Apple 官方 HIG + ActivityKit 文档）：
+                //    **紧凑态槽位的尺寸是系统写死的常量 —— App 改不了。**
+                //      · Compact leading  槽位：62.33 × 36.67 pt（Pro Max）
+                //                              52.33 × 36.67 pt（Pro）
+                //      · Compact trailing 槽位：同上（**左右对称**，这是设计规范）
+                //      · 灵动岛总宽 = 摄像头模组 + 左槽 + 右槽，**全由系统决定**
+                //      · Expanded 宽度：371 pt（Pro）/ 408 pt（Pro Max）
+                //    ➜ **紧凑态和展开态的宽度都是系统常量，两者互不影响。**
+                //      同一时刻灵动岛只呈现其中一种形态；两者实际差 100pt 以上，
+                //      看起来"一样宽"是因为**两端留白把紧凑态视觉上拉长了**。
+                //
+                //  ★ 两端那两块黑 = 「槽位固定宽度 − 内容实际宽度」：
+                //      · 左槽只有一个小沙漏（约 12pt）→ 空出约 40pt；
+                //      · 右槽 `1:13`（约 30pt）        → 空出约 22pt。
+                //    **这是系统留给内容的固定画布，不是我们画上去的黑块。**
+                //    唯一能改善观感的做法 = **把内容放大到填满槽位**（用户也要求了）。
+                //
+                //  ★★★【本轮结论·不要再试】以下三条**都改不了灵动岛宽度**
+                //     （宽度是系统常量），试了只会更糟：
+                //      · `.frame(maxWidth: .infinity)` → 内容撑满槽位，整岛不变宽，
+                //        只是内容贴边（第八轮已删）；
+                //      · `.contentMargins(...,0)`（第三轮）→ 内容被甩到槽位两端、
+                //        数字挤出屏幕；
+                //      · `.fixedSize()` → 锁死 `Text(timerInterval:)` 宽度，倒计时不缩。
+                //    ➜ **本轮唯一动作 = 放大内容**（见下两处 `.font(.title3)`）。
                 Image(systemName: context.state.countdownInterval == nil
                       ? "exclamationmark.triangle.fill"
                       : "hourglass")
-                    .imageScale(.small)
+                    // ★★【第九轮】`.imageScale(.small)` → **`.title3` 字号**（20pt）：
+                    //   紧凑槽位高 36.67pt，20pt 的图标能明显填满画布。
+                    .font(.title3)
+                    .fontWeight(.semibold)
                     .foregroundStyle(context.state.countdownInterval == nil
                                      ? Color.red
                                      : Color.white)
             } compactTrailing: {
-                // ★ 同上：**不要** `.frame(maxWidth: .infinity)`，按内容自然宽度。
-                //   宽度收敛靠 `CompactCountdownText` 里的 `showsHours` 动态判断。
-                //  ★★【第七轮】图2「右侧倒计时和苹果这个黄色一致」→ 见下组件内部。
+                // ★ 不加任何 frame / contentMargins（理由见上）。
+                //  ★★【第九轮】文字同步放大到 `.title3` → 见 `CompactCountdownText`。
                 CompactCountdownText(state: context.state)
             } minimal: {
                 // minimal 只留给一个图标，别放文字。
+                // ★ 同步放大（多活动并存时的形态，保持一致）。
                 Image(systemName: "hourglass")
-                    .imageScale(.small)
+                    .font(.body)
                     .foregroundStyle(.white)
             }
             .keylineTint(Theme.brand)
@@ -611,10 +679,15 @@ private struct CompactCountdownText: View {
                 Text("到点")
             }
         }
-        .font(.caption)
+        // ★★【第九轮】`.caption`（12pt）→ **`.title3`（20pt）** ——
+        //   用户要求「左右图标文字适当放大一些」。
+        //   这也是唯一能减少「槽位空白」的手段：槽位是系统固定 52~62pt 画布，
+        //   内容越小、两端留白越多（见 `compactLeading` 的长注释）。
+        //   ⚠️ `H:MM:SS`（8 字符）在 20pt 下约 75pt，会超过槽位宽度 →
+        //      靠下面的 `minimumScaleFactor(0.7)` 收到约 52pt，刚好放得下。
+        .font(.title3)
         .fontWeight(.bold)
         .lineLimit(1)
-        // ★ 长时长（如 `1:23:45`）自动缩，而不是把容器撑宽把数字挤出屏幕。
         .minimumScaleFactor(0.7)
         // ★★ 第七轮：未到点用**苹果运动黄**（图2），到点用红色。
         .foregroundStyle(state.countdownInterval == nil

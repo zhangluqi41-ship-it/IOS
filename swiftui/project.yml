@@ -106,8 +106,21 @@ targets:
         #      **移到日期之后**（「原始保质期 2026/10/10 13:37」）。
         #   ③ 左/右内边距 6 → **10**（图2「肉类最左边还是有点超出」）。
         #   → 1.0.8 / build 34。
-        CURRENT_PROJECT_VERSION: 34
-        MARKETING_VERSION: 1.0.8
+        # ★ 2026-10-10 第九轮（用户仍问「为什么紧凑态这么宽，是不是和展开态有关」）：
+        #   ① **查证结论：紧凑态尺寸是系统常量，App 改不了。**
+        #      Apple 官方规范：compact leading / trailing 槽位各约
+        #      52~62 × 36.67 pt，灵动岛总宽 = 摄像头 + 左槽 + 右槽；
+        #      Expanded 宽度 371 pt（Pro）/ 408 pt（Pro Max）。
+        #      「两端黑块」= **槽位固定宽度 − 内容实际宽度**，不是我们画的。
+        #      紧凑态与展开态**互不影响**（两条独立渲染路径）。
+        #   ② 唯一改善手段 = **放大内容**（用户也要求「左右图标文字适当放大」）：
+        #      紧凑态图标 `.imageScale(.small)` → **`.title3`**；
+        #      紧凑态倒计时 `.caption` → **`.title3`**。
+        #   ③ 不要再试 `maxWidth: .infinity` / `contentMargins(...,0)` / `fixedSize()`
+        #      —— 三者都改不了宽度，只会更糟（详见 `ExpiryLiveActivity.swift` 头注释）。
+        #   → 1.0.9 / build 35。
+        CURRENT_PROJECT_VERSION: 35
+        MARKETING_VERSION: 1.0.9
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -158,8 +171,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.0.8
-        CURRENT_PROJECT_VERSION: 34
+        MARKETING_VERSION: 1.0.9
+        CURRENT_PROJECT_VERSION: 35
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
