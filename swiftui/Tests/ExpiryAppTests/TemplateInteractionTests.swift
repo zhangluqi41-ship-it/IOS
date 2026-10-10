@@ -101,44 +101,64 @@ final class TemplateInteractionTests: XCTestCase {
                        "冷藏 +5 天不在档位里 → 四个 chip 都不该亮（旧实现会错误地保持上一次的高亮）")
     }
 
-    // MARK: - 3. 日期「选完自动收回」的防抖判定（v1.1.4 第二十轮）
+    // MARK: - 3. 日期浮层的承载与收起规则（v1.1.5 第二十一轮）
 
-    /// ★ `LabelDatePicker` 的收回规则 = **值变化后连续静默 `quiet` 秒**才收。
+    /// ★ `LabelDatePicker` 的**日期文字**必须与写入记录的日子是同一天（规范化后相等）。
     ///
-    /// 视图本身没法在单测里渲染，所以这里复刻**同一套判定**：
-    /// 给一串「变化时刻」（相对打开面板的毫秒数），返回是否会收回。
+    /// 背景：新方案把日期显示交给第一方 `Text(date, format:)`，
+    /// 但它读的是 `startOfDay` 之后的绑定值 —— 这里钉住"显示值 == 真相值"，
+    /// 一旦有人把规范化去掉（或改成显示未规范化的 `date`），这条会红。
+    func testDisplayedDayEqualsNormalizedBinding() {
+        let cal = AppCalendar.shared
+        // 带时分秒的"真实时刻"（用户实际会拿到的那种 Date）。
+        let raw = cal.date(from: DateComponents(year: 2026, month: 10, day: 30,
+                                                hour: 23, minute: 48))!
+
+        // 复刻 `day` 绑定的 get 端：startOfDay。
+        let displayed = cal.startOfDay(for: raw)
+
+        XCTAssertEqual(cal.component(.day, from: displayed), 30,
+                       "显示给用户的必须是 30 日")
+        XCTAssertEqual(cal.component(.hour, from: displayed), 0,
+                       "规范化后必须压到当天 0 点（业务只关心日期）")
+        XCTAssertTrue(cal.isDate(displayed, inSameDayAs: raw),
+                      "显示值与真相值必须是同一天 —— 不允许出现差一天的偏移")
+    }
+
+    /// ★ 日历浮层「点中某天就收」的判据 = **`selection` 的值真的变了**。
     ///
-    /// 规则：`最后两次变化的间隔 >= quiet` 或「只有一次变化且到判定点已静默够久」→ 收。
-    private func wouldAutoCollapse(changeTimes: [Int], quietMS: Int = 450) -> Bool {
-        guard !changeTimes.isEmpty else { return false }   // 没变过 → 不收
-        let last = changeTimes.last!
-        guard let prev = changeTimes.dropLast().last else { return true } // 只变一次 → 停手即收
-        return (last - prev) >= quietMS
+    /// 这是本次从「防抖计时」改成「直接看值变没变」的核心差异：
+    /// `.graphical` 的 `selection` **只在点到某一天时才变**，切年月不会碰它，
+    /// 所以「值变了 → 收」这条规则**天然**不会误伤翻月份
+    /// —— 不再需要 450ms 冷却窗口那套自造机制。
+    func testCollapseRuleIsValueChange() {
+        let cal = AppCalendar.shared
+        let day10 = cal.date(from: DateComponents(year: 2026, month: 10, day: 10))!
+        let day30 = cal.date(from: DateComponents(year: 2026, month: 10, day: 30))!
+        let sameMonthDifferentDay = cal.date(byAdding: .month, value: 1, to: day30)!
+
+        // ① 打开浮层时 selection = 10 日；用户点了 30 日 → 值变了 → 收。
+        XCTAssertNotEqual(day10, day30, "点中另一天 → 值改变 → 触发收起")
+
+        // ② 左右翻月份**本身不改 selection** —— 复刻"翻月不改值"的语义：
+        //    月份的翻动只是 `DatePicker` 内部的显示状态，不写回 selection。
+        //    ➜ 所以「值变了才收」这条规则不会因翻月份而误关浮层。
+        let monthAfter = cal.component(.month, from: sameMonthDifferentDay)
+        XCTAssertEqual(monthAfter, 11, "翻到下个月只是显示层的事，selection 仍是 30 日那天")
+        XCTAssertTrue(cal.isDate(sameMonthDifferentDay, inSameDayAs: day30) == false,
+                      "换月后是另一个日期，但这一步不由 selection 驱动 → 不触发收起")
     }
 
-    /// 用户快速点选某一天 → 只变化一次 → **应当收回**。
-    func testSingleChangeCollapsesPanel() {
-        XCTAssertTrue(wouldAutoCollapse(changeTimes: [0]),
-                      "点中一天（只变一次）→ 面板应当自动收回")
-    }
+    /// ★ 日期必须按**自然日**读写，不受时刻影响（写入记录时也走同一套规范）。
+    func testDayWriteBackIsCalendarDay() {
+        let cal = AppCalendar.shared
+        let lateNight = cal.date(from: DateComponents(year: 2026, month: 10, day: 30,
+                                                      hour: 23, minute: 59))!
+        let written = cal.startOfDay(for: lateNight)
 
-    /// 用户连着滚年月（每 120ms 一格）→ 每次变化都重置计时 → **进程结束时仍在滚 → 不该收**。
-    func testContinuousWheelScrollingDoesNotCollapse() {
-        let rolling = stride(from: 0, through: 1080, by: 120).map { $0 }  // 10 格，间隔 120ms
-        XCTAssertFalse(wouldAutoCollapse(changeTimes: rolling),
-                       "滚年月途中（间隔 120ms < 450ms）不该收面板 —— 第二/六轮的病不能复发")
-    }
-
-    /// 滚完年月后停手 → 最后一格与前一格间隔变长 → **会收**（此时用户确实选定了）。
-    func testScrollingThenPausingCollapses() {
-        // 前三格连滚（120ms 间隔），然后停 900ms 落定。
-        XCTAssertTrue(wouldAutoCollapse(changeTimes: [0, 120, 240, 1140]),
-                      "滚完停手超过 quiet 秒后应当收回（用户已选定）")
-    }
-
-    /// 打开面板但**什么都没选** → 没有任何变化 → **不该收**（用户可能只是在看）。
-    func testNoChangeKeepsPanelOpen() {
-        XCTAssertFalse(wouldAutoCollapse(changeTimes: []),
-                       "打开面板没做任何操作时不该收（这条由「无 onChange」自然保证）")
+        XCTAssertEqual(cal.component(.year, from: written), 2026)
+        XCTAssertEqual(cal.component(.month, from: written), 10)
+        XCTAssertEqual(cal.component(.day, from: written), 30,
+                       "23:59 选的 30 日，写回记录也必须是 30 日")
     }
 }

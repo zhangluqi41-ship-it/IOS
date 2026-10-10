@@ -84,8 +84,6 @@ struct GenericTemplateView: View {
 ///
 /// ★ 2026-10-09 用户要求增加「+3 天」—— 奶制品最推荐档就是 +3 天，
 ///   通用模板里也常要填「开封后 3 天用完」，手点日历太慢。
-///   四个 chip 在 iPhone 最窄机型上仍能一行放下（约 296pt < 343pt 可用宽度），
-///   所以不做横向滚动，保持一眼看全。
 ///
 /// ★★★ 2026-10-10（第十八轮）用户反馈 ——
 ///   「选高亮 +15 天后日期自动变成 +15 天，但**手动改完日期（明显不是 +15 天）后，
@@ -103,28 +101,36 @@ struct GenericTemplateView: View {
 ///
 ///   ⚠️ 不要再引入 `@State` 去记「选中的是哪个档」——
 ///      那等于把高亮和真相日期的绑定**又**拆开一次（本轮踩的就是这个坑）。
+///
+/// ★★★ 2026-10-10（第二十一轮）改走**第一方 `Button` 样式**：
+///   之前手写 `Capsule()` 背景 + 手调 padding（典型的"安卓味自绘"），
+///   现在用系统自带的 **`.buttonStyle(.bordered)` / `.borderedProminent`**
+///   —— 圆角、材质、按压反馈、深色模式、无障碍全部由系统给，
+///   不用我们自己猜数值，也是用户要的「最高苹果流畅度」。
 struct QuickDateChips: View {
     @Binding var selection: Date
 
     var body: some View {
         HStack(spacing: 8) {
             ForEach(presets, id: \.label) { p in
-                let isOn = isSelected(p.date)
-                Button {
-                    selection = p.date
-                } label: {
-                    Text(p.label)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(
-                            isOn ? Theme.brand : Color(.tertiarySystemFill),
-                            in: Capsule()
-                        )
-                        .foregroundStyle(isOn ? .white : .primary)
+                // ★ 第一方按钮样式：选中态用 `.borderedProminent`（系统高亮色），
+                //   未选中用 `.bordered`（系统描边）。按压有系统自带的高光反馈。
+                //   ⚠️ 分支必须各自返回**同一个具体类型**的修饰视图 ——
+                //      写成 `.buttonStyle(cond ? .borderedProminent : .bordered)`
+                //      会因两个分支类型不同而编译失败。
+                if isSelected(p.date) {
+                    Button(p.label) { selection = p.date }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.small)
+                        .tint(Theme.brand)
+                } else {
+                    Button(p.label) { selection = p.date }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.small)
+                        .tint(Theme.brand)
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.top, 6)

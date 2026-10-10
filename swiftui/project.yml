@@ -318,8 +318,39 @@ targets:
         #   ⚠️ 别再往 window 挂任何手势（会吞掉 DatePicker 弹层的关闭条件）。
         #   ⚠️ 别再引入 UIPanGestureRecognizer 收键盘（会与系统识别器二选一）。
         #   ⚠️ `.scrollDismissesKeyboard` 别改回 `.immediately`（= 瞬间、无动画）。
-        CURRENT_PROJECT_VERSION: 46
-        MARKETING_VERSION: 1.1.4
+        #
+        # ★★★ 2026-10-10 1.1.5 / build 47（第二十一轮）—— 用户复验 v1.1.4 后又报两条，
+        #   并升级了要求：「这里面还有其他的可用 iOS 原生工具替换的功能都可以进行修改，
+        #   因为最开始就是让 AI 从安卓硬转成 iOS 的。我希望全部都用 iOS 原生工具，
+        #   要求最高的苹果流畅度，像刚才遇到的冗余代码、使用了 windows、安卓工具、
+        #   自造工具的，全部优化成 iOS 第一方的。」
+        #
+        #   ① 「滑动屏幕并没有收回键盘」← v1.1.4 引入的 `.contentShape(Rectangle())` 所致：
+        #      它把命中矩形固定在 layout 阶段，与 List（UIScrollView）的滚动手势竞争，
+        #      手指落下就被命中矩形揽住 → 滚动识别器收不到 pan → 滑动收不了键盘。
+        #      ➜ 删除 `.contentShape` + `.onTapGesture`，改回**系统内建行为**
+        #        （List/UICollectionView 本来就会在点/拖空白时收键盘）。
+        #        ➜ `KeyboardDismiss.swift` 现在只剩一行 `.scrollDismissesKeyboard`。
+        #
+        #   ② 「点 10/30 → 日历瞬间收回无动画 → 格式一瞬间变成 2026/10/30」← `.id(calendarId)`：
+        #      `.id` 换值 = 销毁重建整个 DatePicker 控件 → 无过渡（无动画）
+        #      + UIKit 侧来不及恢复 `.compact` 样式状态（格式退化）。第二/六轮的旧病第三次复发。
+        #      ➜ 弃用"重建控件"歪招，改用**公开可控的第一方 API**：
+        #        `Button`（自绘日期文字）+ `.popover(isPresented:)` + `DatePicker(.graphical)`
+        #        + `.presentationCompactAdaptation(.popover)`。
+        #        选完直接 `isPresented = false` → 走**系统 popover 自己的收起转场动画**；
+        #        日期文字用第一方 `Text(date, format:)` 渲染 → **永不重建控件、格式永远稳定**。
+        #        ⚠️ `.graphical` 的 selection 只在"点到某天"时才变 → 翻月份不会误收（无需防抖）。
+        #
+        #   ③ 顺手去安卓味：`QuickDateChips` 的手写 `Capsule()` 背景 + 手调 padding
+        #      → 改用第一方 `.buttonStyle(.bordered / .borderedProminent)`
+        #      + `.buttonBorderShape(.capsule)`（圆角/材质/按压反馈/深色模式全由系统给）。
+        #
+        #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
+        #   ⚠️ 三条"已淘汰手法"的墓碑（别再写回来）：
+        #      `.id()` 重建控件 / `Menu { DatePicker }` / `.compact` 私有 popover 歪招。
+        CURRENT_PROJECT_VERSION: 47
+        MARKETING_VERSION: 1.1.5
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -371,8 +402,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.4
-        CURRENT_PROJECT_VERSION: 46
+        MARKETING_VERSION: 1.1.5
+        CURRENT_PROJECT_VERSION: 47
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
