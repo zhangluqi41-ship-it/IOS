@@ -142,17 +142,18 @@ struct RootView: View {
             syncLiveActivity()
         }
         .onChange(of: scenePhase) { _, phase in
-            // ★★ 只有回到前台才可能启动 Live Activity —— 这是 ActivityKit 的硬限制
-            //    （本地通知 / 后台都拉不起它，见 `ExpiryActivityManager` 顶部说明）。
-            //    所以每次用户打开 App 都重算一次：把「8 小时内会到期」的那个
-            //    里程碑挂到灵动岛上。
+            // ★ 回到前台时重算一次：
+            //   · 把「8 小时内会到期」的那个里程碑挂成**倒计时**活动；
+            //   · 并把「下一个到点的里程碑」**预定**成系统托管的**警报**活动
+            //     （第十轮新增，到点那一刻由系统自己拉起，不需要 App 在运行 ——
+            //      见 `ExpiryActivityManager.scheduleAlert`）。
             guard phase == .active else { return }
             syncLiveActivity()
         }
         // ★★★【第十轮·用户图5】把外部 entry 送进来的「要去哪」落到实处。
         //
         //  来源有二：
-        //    ① λ 锁定屏幕卡片 / 灵动岛卡片上的 `widgetURL(expirymanager://…)`
+        //    ① 锁定屏幕卡片 / 灵动岛卡片上的 `widgetURL(expirymanager://…)`
         //       → 系统以 URL 形式拉起 App → 走 `onOpenURL`；
         //    ② 用户点通知横幅本体（不是上面的按钮）
         //       → `NotificationPresenter.didReceive` 直接往 `AppRouter` 投递。
