@@ -88,6 +88,8 @@ struct RootView: View {
     @State private var printerPath = NavigationPath()
 
     @ObservedObject private var store = ExpiryStore.shared
+    /// ★★★【第十轮·用户图5】外部入口（通知 / 灵动岛卡片）→ App 页面的路由信箱。
+    @ObservedObject private var router = AppRouter.shared
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -146,6 +148,23 @@ struct RootView: View {
             //    里程碑挂到灵动岛上。
             guard phase == .active else { return }
             syncLiveActivity()
+        }
+        // ★★★【第十轮·用户图5】把外部 entry 送进来的「要去哪」落到实处。
+        //
+        //  来源有二：
+        //    ① λ 锁定屏幕卡片 / 灵动岛卡片上的 `widgetURL(expirymanager://…)`
+        //       → 系统以 URL 形式拉起 App → 走 `onOpenURL`；
+        //    ② 用户点通知横幅本体（不是上面的按钮）
+        //       → `NotificationPresenter.didReceive` 直接往 `AppRouter` 投递。
+        //
+        //  ⚠️ 必须**消费后清空**（`takeTab()` 内部会置 nil）——
+        //     否则用户手动切走之后，任意一次重绘都会把他拽回效期管理。
+        .onOpenURL { url in
+            router.handle(url)
+        }
+        .onChange(of: router.pendingTab) { _, newValue in
+            guard newValue != nil, let tab = router.takeTab() else { return }
+            nav.selection = tab
         }
     }
 

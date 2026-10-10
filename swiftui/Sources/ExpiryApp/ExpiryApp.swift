@@ -53,6 +53,24 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
                                didReceive response: UNNotificationResponse)
     async {
         let content = response.notification.request.content
+        let recordID = content.userInfo[ExpiryStore.userInfoRecordID] as? String
+
+        // ★★★【第十轮·用户图5】用户点的是**通知横幅本体**（不是上面的按钮）时，
+        //   把 App 送到「效期管理」。
+        //
+        //   用户原话：「点击灵动岛的消息后会自动跳到 app 中，但是打开的画面是
+        //   上次退出时的画面。逻辑应该改为：点击灵动岛 -> 进入 APP 的效期管理界面」
+        //
+        //   ⚠️ 这条分支以前是**完全缺失**的 —— 默认点击只让系统把 App 拉起来，
+        //     停在用户上次退出的那个页面（他截图里是「扫码」页）。
+        //   ⚠️ 只在**默认点击**时路由；两个动作按钮（已完成使用 / 稍后提醒）
+        //     继续走 `handleNotificationResponse`，不要顺手弹页面。
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            await MainActor.run {
+                AppRouter.shared.goToExpiry(recordID: recordID)
+            }
+        }
+
         ExpiryStore.shared.handleNotificationResponse(
             actionIdentifier: response.actionIdentifier,
             userInfo: content.userInfo)

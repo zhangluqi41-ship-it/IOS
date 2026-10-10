@@ -27,10 +27,17 @@
 //    所以只能「用户最后一次打开 App 时，把 8 小时内会到期的那个里程碑先挂上去」。
 //
 //  ★★ 但这只限制「起点」，不限制「之后」：
-//    活动一旦起来了，它的**倒计时和阶段切换都是系统自己算的** ——
-//    `Text(timerInterval:)` 每秒刷新，`ContentState.phase` 按 `Date()` 现算。
-//    所以在 `dueAt` 那一刻，紧凑态会自己渲染成「已到时间 + 两个按钮」，
-//    不需要 App 在后台做任何事（见 `ContentState.phase` 的注释）。
+//    活动一旦起来了，它的**倒计时**是系统自己算的 —— `Text(timerInterval:)`
+//    每秒刷新，不需要 App 在后台做任何事。
+//
+//  ⚠️⚠️ 2026-10-10（第十轮）重要更正：**不要**指望「`Date()` 越过 `dueAt` 时
+//    系统会自动把紧凑态翻成『到点』」—— 实测不可靠（用户图1：归零后长期卡
+//    `0:00`）。原因是 `Text(timerInterval:)` 只在区间未走完时刷新，
+//    而「翻分支」需要一次**状态更新**，纯本地活动在 App 不在前台时又做不到。
+//    ➜ 正解是**再预定一条由系统托管的「到点警报」活动**
+//      （`Activity.request(..., alertConfiguration:, start: dueAt)`），
+//      见 `ExpiryActivityManager.scheduleAlert`。它带的就是
+//      `countdownInterval == nil` 的状态，所以一出现就渲染成「到点 + 两个按钮」。
 //
 //  ★ 「稍后提醒」的 5 分钟循环：
 //    活动起来之后也没法从后台重置倒计时 → 用一条 `repeats: true` 的本地通知
@@ -186,6 +193,54 @@ struct ExpirySnoozeIntent: LiveActivityIntent {
         ExpiryActivityBridge.snooze(recordID: recordID, dueAt: dueAt)
         #endif
         return .result()
+    }
+}
+
+// MARK: - 点击跳转（deep link）
+
+/// 灵动岛 / 锁定屏幕卡片 / 通知 被点击后跳进 App 的地址。
+///
+/// ★★★【第十轮·用户图5 修复】
+///   用户原话：「点击灵动岛的消息后会自动跳到 app 中，但是打开的画面是
+///   上次退出时的画面。逻辑应该改为：点击灵动岛 -> 进入 APP 的效期管理界面」
+///
+///   查证结论：整个工程里**原本一个 `widgetURL` / `onOpenURL` 都没有** ——
+///   也就是说「点了之后去哪」这件事**从来就没有实现过**，系统只能按默认行为
+///   把 App 拉起来（= 停在用户上次退出的那个页面，所以是「扫码」页）。
+///
+///   修法：这里给出 URL 约定（**放 Shared**，因为 App 与 Widget 扩展都要用），
+///   由
+///     · Widget 侧 `.widgetURL(...)` 挂到卡片上；
+///     · App 侧 `RootView.onOpenURL` 接住并切到「效期管理」Tab；
+///     · `Info.plist` 的 `CFBundleURLTypes` 注册 `expirymanager://` 这个 scheme。
+///   ⚠️ 三者缺一不可 —— 少了 scheme 注册，系统不会把 URL 路由给本 App。
+enum ExpiryDeepLink {
+
+    /// URL scheme（必须与 `Support/ExpiryManager-Info.plist` 里的 `CFBundleURLSchemes` 一致）。
+    static let scheme = "expirymanager"
+
+    /// 打开「效期管理」一级页。
+    static let expiry = URL(string: "expirymanager://expiry")!
+
+    /// 打开「效期管理」并弹出某条记录的详情。
+    static func record(_ id: String) -> URL {
+        URL(string: "expirymanager://record/\(id)")!
+    }
+
+    /// 解析一条 deep link；返回 `nil` 表示不是我们认识的地址。
+    ///
+    /// - Returns: `(要不要去效期管理, 要高亮的记录 id)`
+    static func parse(_ url: URL) -> (expiry: Bool, recordID: String?)? {
+        guard url.scheme == scheme else { return nil }
+        switch url.host {
+        case "expiry":
+            return (true, nil)
+        case "record":
+            let id = url.pathComponents.count > 1 ? url.pathComponents[1] : nil
+            return (true, id)
+        default:
+            return (true, nil)
+        }
     }
 }
 

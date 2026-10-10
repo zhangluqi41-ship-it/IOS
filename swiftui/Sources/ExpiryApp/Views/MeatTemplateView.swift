@@ -5,6 +5,11 @@
 //  ★ 结构对齐奶制品：上面选品类、中间填日期、下面填操作人。
 //    区别只是多了一层「部位」，以及两个日期都按「保存类型」算偏移。
 //
+//  ★★ 2026-10-10（第十轮）用户图6 修复：
+//    「选择完肉类后部位信息全不见了」——
+//    根因是「部位」Picker 没有 `nil` 占位项，`cut == nil` 时渲染成空白。
+//    现在改成「换肉类 → 自动选中该肉类第一个部位」（见 `onChange(of: animal)`）。
+//
 //  ★ 冷冻标签打印后，**再扫它的二维码就会进「解冻」流程**
 //    （不是从模板入口进 —— 用户要求「不作为可选模板，只有扫描二维码才能出来」），
 //    见 `MeatThawView`。
@@ -111,13 +116,33 @@ struct MeatTemplateView: View {
         .navigationBarTitleDisplayMode(.inline)
         .keyboardDismissible()
         .modifier(LabelActions(build: buildDraft))
-        .onChange(of: animal) { _, _ in
-            // 换了肉类，原来的部位就不属于它了 —— 必须清掉，
-            // 否则会印出「猪肉-鸡腿」这种不存在的组合。
-            cut = nil
+        // ★★★【第十轮·用户图6 修复】「选择完肉类后部位信息全不见了」
+        //
+        //  原写法是 `cut = nil`（理由是「换了肉类，旧部位就不属于它了」），
+        //  这个理由本身没错，但它撞上了一个 SwiftUI 的渲染陷阱：
+        //
+        //    「部位」Picker 里**没有 tag 为 `nil` 的选项**
+        //    （2026-10-09 按用户要求删掉了「请选择」占位项），
+        //    所以当 `selection == nil` 时，Picker **找不到任何匹配项**，
+        //    右侧的值区就渲染成**一片空白** —— 用户看到的就是「部位信息全不见了」。
+        //
+        //  ➜ 正解：换肉类时**自动选中该肉类的第一个部位**，而不是清成 nil。
+        //    · 永远不会出现空白；
+        //    · `buildDraft()` 的 `guard let c = cut` 立刻可通过；
+        //    · 「按推荐填日期」按钮的显示条件（`cut != nil`）也立刻满足。
+        //  ⚠️ 不要改回 `cut = nil`，也不要给 Picker 加回「请选择」占位项
+        //     （那是用户明确要求删掉的）。
+        .onChange(of: animal) { _, value in
+            guard let value else {
+                // 肉类被清空（理论上不会发生）→ 部位一并清空。
+                cut = nil
+                return
+            }
+            cut = value.cuts.first
+            if let s = storage { applyRule(s) }
         }
         .onChange(of: storage) { _, value in
-            guard let value, animal != nil, cut != nil else { return }
+            guard let value, cut != nil else { return }
             applyRule(value)
         }
         .alert(alertText, isPresented: $showAlert) {

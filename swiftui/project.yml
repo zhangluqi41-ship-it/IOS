@@ -46,6 +46,15 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager
         PRODUCT_NAME: ExpiryManager
         GENERATE_INFOPLIST_FILE: YES
+        # ★ 2026-10-10（第十轮）主 App 也要一份自己的 Info.plist ——
+        #   为了注册 `CFBundleURLTypes`（deep link scheme `expirymanager`，
+        #   用户图5「点击灵动岛 → 进入效期管理」靠它才能把 URL 路由进来）。
+        #   ⚠️ `INFOPLIST_KEY_*` 只支持平铺标量键，写不了嵌套数组，
+        #     所以必须落到文件里。
+        #   ⚠️ 与上面的 `GENERATE_INFOPLIST_FILE: YES` **并存**：
+        #      Xcode 以本文件为底，再把所有 `INFOPLIST_KEY_*` 合并进来。
+        #   ⚠️ 该文件里同时显式写了 `NSSupportsLiveActivities = YES`。
+        INFOPLIST_FILE: Support/ExpiryManager-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # ★ 2026-10-08：优化清单做完，正式投入使用，版本号从 1.6.15 重置为 1.0.0。
         #   ⚠️ `CURRENT_PROJECT_VERSION`（build）**必须只增不减** ——
@@ -119,8 +128,32 @@ targets:
         #   ③ 不要再试 `maxWidth: .infinity` / `contentMargins(...,0)` / `fixedSize()`
         #      —— 三者都改不了宽度，只会更糟（详见 `ExpiryLiveActivity.swift` 头注释）。
         #   → 1.0.9 / build 35。
-        CURRENT_PROJECT_VERSION: 35
-        MARKETING_VERSION: 1.0.9
+        # ★ 2026-10-10 第十轮（用户发 6 张截图，说「问题一直没有得到修改，
+        #   已经重复几遍了，相同的问题一直得不到解决」）—— 本轮**一次修 3 件事**：
+        #   ① 【图6】肉类模板「选择完肉类后部位信息全不见了」：
+        #      `onChange(of: animal)` 把 `cut = nil`，而「部位」Picker 没有
+        #      tag 为 nil 的占位项 → SwiftUI 找不到匹配项，整个值区渲染成空白。
+        #      → 改成**换肉类时自动选中该肉类第一个部位**。
+        #   ② 【图5】点灵动岛 / 通知跳错页：工程里**从来没有**
+        #      `widgetURL` / `onOpenURL` / 任何路由层，系统只能按默认行为把
+        #      App 拉起来（= 停在用户上次退出的页面）。
+        #      → 新增 `AppRouter`（路由信箱）+ `ExpiryDeepLink`（共享 URL 约定），
+        #        注册 `expirymanager://` scheme（新增
+        #        `Support/ExpiryManager-Info.plist` + `INFOPLIST_FILE`），
+        #        接上 `onOpenURL` + 通知默认点击 + 锁定屏幕卡片 `widgetURL`。
+        #   ③ 【图1/图2】到期后灵动岛只有紧凑态 + 本地通知，**不自动弹展开态**：
+        #      根因是我们调的是 `activity.update(content)` —— **没带
+        #      `alertConfiguration`**。Apple 文档原文：带 alertConfiguration 的更新
+        #      「the system shows the expanded Live Activity in the Dynamic Island」。
+        #      但 App 不在前台时根本调不到 update，所以真正解法是**预定式活动**：
+        #        `Activity.request(…, style: .standard,
+        #                          alertConfiguration: …, start: dueAt)`
+        #      Apple 原文：「The system starts the Live Activity at the specified
+        #      date, **even if the app is in the background**.」
+        #      → 由系统在到点那一刻自动拉起并弹出展开态，**不需要 App 在运行**。
+        #   → 1.0.10 / build 36。
+        CURRENT_PROJECT_VERSION: 36
+        MARKETING_VERSION: 1.0.10
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -171,8 +204,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.0.9
-        CURRENT_PROJECT_VERSION: 35
+        MARKETING_VERSION: 1.0.10
+        CURRENT_PROJECT_VERSION: 36
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

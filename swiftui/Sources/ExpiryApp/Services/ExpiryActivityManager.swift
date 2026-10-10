@@ -2,22 +2,32 @@
 //  ExpiryActivityManager.swift
 //  灵动岛（Live Activity）的起 / 更 / 收 —— **只属于主 App 目标**。
 //
-//  ★★ 为什么逻辑长这样（平台硬限制，别试图「优化」）：
-//    Live Activity **只能由处于前台的 App 调 `Activity.request()` 启动**。
-//    · 本地通知拉不起它（iOS 没有这个能力）；
-//    · 后台 / 被杀时只能靠服务端 APNs **push-to-start**（iOS 17.2+），
-//      而免费开发者账号根本没有推送能力。
-//    所以现实可行的做法只有一条：
-//      「用户最后一次打开 App 时，把**最近的、8 小时内会到期**的那个里程碑
-//        先挂到灵动岛上」，让它带着系统自己走的倒计时在那里待着。
-//    用户打开一次 App → 灵动岛就出现在那个里程碑前最多 8 小时。
+//  ★★ 为什么逻辑长这样（平台硬限制 + 第十轮的关键更正，别试图「优化」）：
 //
-//  ★ 为什么窗口取 8 小时：免费账号只能用 `pushType: nil`（纯本地更新）起活动，
-//    这种活动**最长活 8 小时**，再长系统也会收掉。取 8 小时正好用满。
+//    【旧结论（第九轮之前）】Live Activity 只能由处在**前台**的 App 调
+//      `Activity.request()` 启动 → 所以只能「用户最后一次打开 App 时，
+//      把最近的、8 小时内会到期的那个里程碑先挂到岛上」。
+//      ➜ 这套做法的死穴：App 不在前台时**没有任何办法更新活动**，
+//        于是「到点自动弹出展开态」**物理上做不到**，
+//        用户看到的永远是「卡在 0:00 的紧凑态 + 一条普通通知横幅」。
+//
+//    【第十轮更正】iOS 26 的 `Activity.request` 多了一个重载：
+//        request(attributes:content:pushType:style:alertConfiguration:start:)
+//      Apple 原文：「The system starts the Live Activity at the specified date,
+//      **even if the app is in the background**.」
+//      ➜ 于是本项目现在跑**两条活动**：
+//        · **A = 倒计时**（现在的老路子，`pushType: nil`，最多 8 小时）
+//          —— 负责「还有多久」的实时倒计时；
+//        · **B = 到点警报**（`start: dueAt` + `alertConfiguration`）
+//          —— 由**系统托管**，到点那一刻自动拉起并弹出展开态，
+//             App 完全不需要在运行。见 `scheduleAlert` 的详细注释。
+//      ⚠️ A 和 B 是**两条独立活动**，所以清理时必须区分：
+//        · `endCountdownOnly()` —— 换目标时只清 A；
+//        · `endAll()`           —— 彻底不要灵动岛时才连 B 一起清。
+//        用错会把刚弹出的到点警报一起收掉。
 //
 //  ★ 倒计时不需要我们管：`Text(timerInterval:countsDown:)` 由系统每秒自己刷，
-//    不需要 App 在后台推状态 —— 这正是本地模式下唯一能做出「像快递一样」
-//    倒计时的原因。
+//    不需要 App 在后台推状态。
 //
 //  ★ 两个按钮的行为不依赖 `ContentState.phase`：
 //    `ExpiryMarkDoneIntent` / `ExpirySnoozeIntent` 是 `LiveActivityIntent`，
@@ -48,6 +58,18 @@ final class ExpiryActivityManager {
     private var activity: Activity<ExpiryActivityAttributes>?
     /// 当前这条活动对应的「记录 + 里程碑」。
     private var currentKey: String?
+
+    // MARK: 预定式「到点警报」活动的持久化钥匙
+
+    /// ★★★【第十轮】预定式（`start:`）活动是**系统托管**的 —— App 被杀也照样生效。
+    ///   但也正因为它是系统托管的，`activity` 这个内存变量在冷启动后是 nil，
+    ///   只有把 id 落到 UserDefaults，下次 `sync` 才找得到它，
+    ///   才能做到「先撤旧的、再预定新的」而不是在岛上挂两条。
+    private static let scheduledAlertIDKey = "expiry.scheduledAlertID"
+    /// 预定警报对应的记录 id（点「已完成使用」时用来判断要不要一起收掉）。
+    private static let scheduledAlertRecordKey = "expiry.scheduledAlertRecord"
+    /// 预定警报的目标时刻 —— 用来判断它**有没有已经开响**（见 `scheduleAlert`）。
+    private static let scheduledAlertDueKey = "expiry.scheduledAlertDue"
 
     /// 「稍后提醒」设下的新目标时刻（recordID → 时刻）。
     ///
@@ -89,8 +111,12 @@ final class ExpiryActivityManager {
             }
         }
 
+        // ★★★【第十轮】**不要**在「8 小时内没有里程碑」时直接 `endAll()` 返回 ——
+        //   那会把预定的「到点警报」一起收掉。8 小时窗口只管**倒计时那条**；
+        //   预定的警报活动不受它限制（它是 `pending` 状态，到点才开始计时）。
         guard let best else {
-            await endAll()
+            await endCountdownOnly()
+            await scheduleAlertForNextMilestone(records: records)
             return
         }
 
@@ -127,26 +153,169 @@ final class ExpiryActivityManager {
         let content = ActivityContent(state: state,
                                       staleDate: dueAt.addingTimeInterval(Self.graceWindow))
 
-        // 还是同一个目标：只刷新一下状态
+        // ── 活动 A：倒计时。同一个目标就只刷新状态；换目标才重建 ──
         //（比如刚打开 App、用户点过「稍后提醒」要把区间换新）。
         if currentKey == key, let activity {
             await activity.update(content)
+        } else {
+            // 换目标了：先把**倒计时**那条收干净。
+            // ⚠️ 这里**不能**用 `endAll()` —— 它会把预定的到点警报一起收掉。
+            await endCountdownOnly()
+            do {
+                activity = try Activity.request(attributes: attrs,
+                                                content: content,
+                                                pushType: nil)
+                currentKey = key
+            } catch {
+                NSLog("ExpiryActivityManager: 灵动岛启动失败 \(error.localizedDescription)")
+                activity = nil
+                currentKey = nil
+            }
+        }
+
+        // ── 活动 B：预定「到点那一刻由系统自动拉起并弹出展开态」──
+        // ★★★【第十轮·用户图1/图2 的真正解法】详见 `scheduleAlert` 的长注释。
+        await scheduleAlertForNextMilestone(records: records)
+    }
+
+    // MARK: - 预定「到点自动弹出」（第十轮新增）
+
+    /// 找出「下一个会到点的里程碑」，为它预定一条由系统托管的警报活动。
+    ///
+    /// ★ 与 `sync` 里那个 8 小时窗口**无关**：这里是「将来任意时刻」的第一个
+    ///   里程碑 —— 因为预定式活动在 `start` 之前只是 `pending`，
+    ///   不占「8 小时寿命」（寿命从它真正开始那一刻才起算）。
+    private func scheduleAlertForNextMilestone(records: [LabelRecord]) async {
+        let now = Date()
+        var next: (record: LabelRecord, milestone: ExpiryStore.ExpiryMilestone)?
+
+        for record in records where record.usedAt == nil {
+            for milestone in ExpiryStore.milestones(of: record) where milestone.date > now {
+                if next == nil || milestone.date < next!.milestone.date {
+                    next = (record, milestone)
+                }
+            }
+        }
+
+        guard let next else {
+            await cancelScheduledAlert()
             return
         }
 
-        // 换目标了：先把旧的收干净，避免岛上同时挂两条。
-        await endAll()
+        // 用户点过「稍后提醒」→ 警报目标跟着那个 5 分钟目标走。
+        let target = snoozedUntil(recordID: next.record.id.uuidString) ?? next.milestone.date
+        let attrs = ExpiryActivityAttributes(
+            recordID: next.record.id.uuidString,
+            title: next.record.title,
+            kindLabel: next.record.kind.label,
+            milestoneLabel: next.milestone.label)
+        await scheduleAlert(attrs: attrs, dueAt: target)
+    }
+
+    /// 预定一条「到点那一刻由系统自动拉起并弹出」的活动。
+    ///
+    /// ★★★【第十轮·用户图1/图2 的真正解法】
+    ///
+    ///  用户原话：
+    ///    · 图1：「到期后依然是灵动岛紧凑态加消息通知，没有完成到期后灵动岛展开态」
+    ///    · 图2b：「这个才是我想要的到时间后的灵动岛展开态样式，**而且需要她自己弹出**」
+    ///
+    ///  ⚠️ 为什么之前那套做法**注定做不到**（不管排版怎么调）：
+    ///    本项目用的是 `pushType: nil` 的**纯本地** Live Activity，唯一的更新入口
+    ///    是 App 自己调 `activity.update(...)` —— 而 App 不在前台时根本调不到。
+    ///    所以「到点自动弹」在旧架构里**物理上不可能**。
+    ///
+    ///  ✅ 正解 = **预定式 Live Activity**（iOS 26 新增的重载）：
+    ///       Activity.request(attributes:content:pushType:style:
+    ///                        alertConfiguration:start:)
+    ///     Apple 文档原文：
+    ///       · 「The system starts the Live Activity at the specified date,
+    ///          **even if the app is in the background**.」
+    ///       · 「On iPhone and iPad with the Dynamic Island, the system shows
+    ///          **the expanded Live Activity in the Dynamic Island**.」
+    ///     ➜ 系统在 `start`（= `dueAt`）那一刻自己把活动拉起来并提示，
+    ///       **完全不需要 App 在运行**。这正是用户要的「她自己弹出」。
+    ///
+    ///  ★ 为什么内容跟倒计时那条不一样：这里 `startedAt == dueAt` →
+    ///    `ContentState.countdownInterval == nil` → 岛上直接渲染
+    ///    「到点 / 已到时间」+ 两个按钮（就是用户图2b 圈出来的那个展开态）。
+    ///
+    ///  ⚠️ `alertConfiguration` 是**必填**的（Apple 明确要求）：它保证
+    ///     「系统开始这条活动时会告诉用户」—— 也就是弹出展开态那一刻的提示。
+    ///
+    ///  ⚠️ 预定式活动**算进系统的活动数量上限**，所以务必先撤旧的再预定新的。
+    private func scheduleAlert(attrs: ExpiryActivityAttributes, dueAt: Date) async {
+        let defaults = UserDefaults.standard
+
+        // 上一条已经**开响**（目标时刻已过、但还在宽限期内）→ 别动它。
+        // 那一刻岛上正是用户要看的「到点展开态」，重排会把它粗暴收掉。
+        if let fired = defaults.object(forKey: Self.scheduledAlertDueKey) as? Date,
+           fired <= Date(),
+           fired > Date().addingTimeInterval(-Self.graceWindow) {
+            return
+        }
+
+        // 先撤掉上一次预定的（避免岛上挂两条 / 避免超出活动数量上限）。
+        await cancelScheduledAlert()
+
+        // 已经过点（或就在此刻）→ 交给倒计时那条现算的「到点」即可，
+        // 不值得再预定一个马上要开始的活动。
+        guard dueAt > Date().addingTimeInterval(1) else { return }
+
+        let state = ExpiryActivityAttributes.ContentState(startedAt: dueAt, dueAt: dueAt)
+        let content = ActivityContent(state: state,
+                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow))
+        let alert = AlertConfiguration(
+            title: "\(attrs.title)",
+            body: "\(attrs.milestoneLabel)已到，请在灵动岛上点「已完成使用」或「稍后提醒」。",
+            sound: .default)
 
         do {
-            activity = try Activity.request(attributes: attrs,
-                                            content: content,
-                                            pushType: nil)
-            currentKey = key
+            let scheduled = try Activity.request(attributes: attrs,
+                                                 content: content,
+                                                 pushType: nil,
+                                                 style: .standard,
+                                                 alertConfiguration: alert,
+                                                 start: dueAt)
+            defaults.set(scheduled.id, forKey: Self.scheduledAlertIDKey)
+            defaults.set(attrs.recordID, forKey: Self.scheduledAlertRecordKey)
+            defaults.set(dueAt, forKey: Self.scheduledAlertDueKey)
+            NSLog("ExpiryActivityManager: 已预定到点警报 \(attrs.title) @ \(dueAt)")
         } catch {
-            NSLog("ExpiryActivityManager: 灵动岛启动失败 \(error.localizedDescription)")
-            activity = nil
-            currentKey = nil
+            NSLog("ExpiryActivityManager: 到点警报预定失败 \(error.localizedDescription)")
         }
+    }
+
+    /// 撤掉预定的到点警报（不影响倒计时那条）。
+    private func cancelScheduledAlert() async {
+        let defaults = UserDefaults.standard
+        guard let id = defaults.string(forKey: Self.scheduledAlertIDKey) else { return }
+        for item in Activity<ExpiryActivityAttributes>.activities where item.id == id {
+            await item.end(nil, dismissalPolicy: .immediate)
+        }
+        defaults.removeObject(forKey: Self.scheduledAlertIDKey)
+        defaults.removeObject(forKey: Self.scheduledAlertRecordKey)
+        defaults.removeObject(forKey: Self.scheduledAlertDueKey)
+    }
+
+    /// **只**收掉倒计时那条活动，保留预定的到点警报。
+    ///
+    /// ★ 为什么不能直接用 `endAll()`：`endAll()` 会把 `Activity.activities` 里
+    ///   每一条都收掉 —— 包括系统托管的那条警报。而「换目标时清理」这个场景
+    ///   只需要清倒计时那条。
+    ///
+    /// ★ 兜底那一段（按 `scheduledAlertIDKey` 过滤）是为了覆盖「App 重启后
+    ///   `activity` 内存变量是 nil、但岛上还挂着上次启动留下的活动」。
+    private func endCountdownOnly() async {
+        if let activity {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        let scheduledID = UserDefaults.standard.string(forKey: Self.scheduledAlertIDKey)
+        for item in Activity<ExpiryActivityAttributes>.activities where item.id != scheduledID {
+            await item.end(nil, dismissalPolicy: .immediate)
+        }
+        activity = nil
+        currentKey = nil
     }
 
     /// 把灵动岛的倒计时重置成「从现在起 5 分钟」。
@@ -166,10 +335,10 @@ final class ExpiryActivityManager {
         snoozeTargets[recordID] = dueAt
 
         // 手上没有活动（缓存丢了）→ 让调用方之后走正常的 sync 重建。
-        guard let activity else {
-            await endAll()
-            return
-        }
+        // ★【第十轮】这里**不能再 `endAll()`** —— 用户点的很可能正是刚刚
+        //   自己弹出来的「到点警报」，`endAll()` 会把那条也收掉，
+        //   而且它是一个刚刚才被用户看到的提示，收掉等于白弹。
+        guard let activity else { return }
         let attrs = activity.attributes
         let state = ExpiryActivityAttributes.ContentState(startedAt: Date(), dueAt: dueAt)
         // ★ 同 `sync`：`staleDate` 延后到宽限期结束（别让刚设的 5 分钟倒计时就变灰）。
@@ -188,6 +357,16 @@ final class ExpiryActivityManager {
         } catch {
             NSLog("ExpiryActivityManager: 稍后提醒重起失败 \(error.localizedDescription)")
         }
+
+        // ★★★【第十轮】「稍后提醒」= 每 5 分钟再来一次。
+        //   所以预定的到点警报也要挪到新的目标时刻 —— 否则它已经响过一次，
+        //   就再也不会响了（用户原话：「每 5 分钟提醒一次」）。
+        //   ⚠️ `scheduleAlert` 内部会因为「上一条已开响」而直接返回，
+        //     所以这里先显式把旧的撤掉再排新的。
+        if dueAt > Date() {
+            await cancelScheduledAlert()
+            await scheduleAlert(attrs: attrs, dueAt: dueAt)
+        }
     }
 
     /// 「稍后提醒」设下的新目标时刻（如果用户点过）。
@@ -201,21 +380,39 @@ final class ExpiryActivityManager {
     /// 收掉某条记录对应的灵动岛（点了「已完成使用」时用）。
     func end(recordID: String) async {
         snoozeTargets.removeValue(forKey: recordID)
+
+        // ★★★【第十轮】预定的到点警报如果也属于这条记录，必须一起撤掉 ——
+        //   否则用户已经点了「已完成使用」，到点那一刻它还会再弹一次，
+        //   而且会一直挂在岛上。
+        //   ⚠️ 这一步对**已经开响**的那条同样有效（它就是用户此刻在点的东西），
+        //     所以清除时机正好。
+        if UserDefaults.standard.string(forKey: Self.scheduledAlertRecordKey) == recordID {
+            await cancelScheduledAlert()
+        }
+
         guard let activity, currentKey?.hasPrefix(recordID) == true else { return }
         await activity.end(nil, dismissalPolicy: .immediate)
         self.activity = nil
         currentKey = nil
     }
 
-    /// 收掉本 App 的**全部**灵动岛。
+    /// 收掉本 App 的**全部**灵动岛（含预定的到点警报）。
     ///
     /// ★ 用系统的 `Activity.activities` 而不是只看自己手里那条：
     ///   App 重启后 `activity` 是 nil，但岛上可能还挂着上一次启动时留下的活动。
+    ///
+    /// ⚠️ 只在「彻底不要灵动岛了」（关掉到期提醒、清空记录）时才用。
+    ///   只想清倒计时那条时请用 `endCountdownOnly()` —— 否则会把预定的警报
+    ///   一起收掉（见该函数的注释）。
     func endAll() async {
         for item in Activity<ExpiryActivityAttributes>.activities {
             await item.end(nil, dismissalPolicy: .immediate)
         }
         activity = nil
         currentKey = nil
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: Self.scheduledAlertIDKey)
+        defaults.removeObject(forKey: Self.scheduledAlertRecordKey)
+        defaults.removeObject(forKey: Self.scheduledAlertDueKey)
     }
 }

@@ -236,6 +236,16 @@ struct ExpiryLiveActivityWidget: Widget {
             LockScreenView(context: context)
                 .activityBackgroundTint(Color.black.opacity(0.35))
                 .activitySystemActionForegroundColor(.white)
+                // ★★★【第十轮·用户图5】点锁定屏幕卡片 / 通知上的实时活动区域
+                //   → 带 URL 拉起 App → `RootView.onOpenURL` → 切到「效期管理」
+                //     并弹出这条记录的详情。
+                //
+                //  ⚠️ 以前这里**什么都没有**，所以系统只能按默认行为把 App 拉起来
+                //     （停在用户上次退出的页面 —— 他截图里正是「扫码」页）。
+                //  ⚠️ 这个 URL 的 scheme（`expirymanager`）必须在主 App 的
+                //     `Info.plist` 里注册 `CFBundleURLTypes`，否则系统不会把
+                //     URL 路由给本 App（见 `Support/ExpiryManager-Info.plist`）。
+                .widgetURL(ExpiryDeepLink.record(context.attributes.recordID))
         } dynamicIsland: { context in
             DynamicIsland {
                 // ── 左上：只有「⏳ + 类别」，**与右上倒计时左右对称** ──
