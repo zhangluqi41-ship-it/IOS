@@ -329,7 +329,7 @@ extension QRScannerModel: AVCaptureMetadataOutputObjectsDelegate {
 
 // MARK: - 相机预览
 
-/// 注意：名字不要叫 `PreviewView` —— 那个名字已被标签预览页占用。
+/// 相机预览层（标签预览页 `PreviewView` 已删除，本名字无冲突顾虑）。
 struct ScannerCameraView: UIViewRepresentable {
     let session: AVCaptureSession
 

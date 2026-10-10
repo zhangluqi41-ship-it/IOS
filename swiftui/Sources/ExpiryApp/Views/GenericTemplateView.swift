@@ -20,8 +20,7 @@ struct GenericTemplateView: View {
             Section {
                 field(icon: "tag", placeholder: "输入物料名称", text: $title,
                       limit: LabelTemplate.maxTitleLength)
-                field(icon: "person", placeholder: "输入操作人", text: $maker,
-                      limit: LabelTemplate.maxNameLength)
+                MakerField(maker: $maker)
             } footer: {
                 Text("会记住上次填写的操作人")
             }
@@ -64,9 +63,7 @@ struct GenericTemplateView: View {
             showTitleAlert = true
             return nil
         }
-        let makerValue = LabelTemplate.clamp(maker, LabelTemplate.maxNameLength)
-        let makerFinal = makerValue.isEmpty ? "未署名" : makerValue
-        Prefs.lastMaker = makerValue
+        let makerFinal = MakerField.finalize(maker)
 
         let now = Date()
         let data = LabelTemplate.buildGeneric(title: name, now: now,

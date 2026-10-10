@@ -46,9 +46,10 @@ struct PrinterMenuView: View {
                 ScanDevicesSheet()
             }
             .onAppear { printer.startMonitoring() }
-            // ★ 这里**故意不 stopMonitoring** —— 轮询现在由 `RootView` 在 App 启动时
+            // ★ 这里**故意不停轮询** —— 轮询由 `RootView` 在 App 启动时
             //   拉起、整场常驻（自动连接要靠它等蓝牙就绪）。在这里停掉会让
             //   离开本页后就再也不自动连接了。
+            //   （曾经的 `stopMonitoring()` 因零调用已于第十四轮删除。）
             .alert("提示", isPresented: toastBinding) {
                 Button("好", role: .cancel) {}
             } message: {
@@ -293,7 +294,7 @@ struct PrinterMenuView: View {
             if ok {
                 testResult = "测试页已发送到打印机。\n请确认走纸、边距与浓度是否合适。"
             } else {
-                testResult = message?.isEmpty == false ? message! : "打印失败"
+                testResult = message.orFallback("打印失败")
             }
         }
     }

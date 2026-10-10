@@ -168,10 +168,17 @@ enum LabelTemplate {
         return weekEn[w]
     }
 
-    // MARK: 通用效期
+    // MARK: 通用效期 / 奶制品 / 肉类（同一版式）
 
-    static func buildGeneric(title: String, now: Date, expireDate: Date,
-                             bestBefore: Date, maker: String) -> LabelData {
+    /// 标签页脚「制作人：xxx」（统一收紧到 `maxNameLength`，全模板共用）。
+    private static func makerFooter(_ maker: String) -> String {
+        "制作人：\(clamp(maker, maxNameLength))"
+    }
+
+    /// 「开封时间 / 原始保质期 / 最佳使用时间」三行版式 ——
+    /// 通用 / 奶制品 / 肉类共用，只有标题的来源不同（见下面三个入口）。
+    private static func buildOpenedLabel(title: String, now: Date, expireDate: Date,
+                                         bestBefore: Date, maker: String) -> LabelData {
         LabelData(
             title: clamp(title),
             rows: [
@@ -182,47 +189,30 @@ enum LabelTemplate {
             weekdayCn: weekdayCn(now),
             weekdayEn: weekdayEn(now),
             rightText: fmtTime(now),
-            maker: "制作人：\(clamp(maker, maxNameLength))"
+            maker: makerFooter(maker)
         )
     }
 
-    // MARK: 奶制品
+    static func buildGeneric(title: String, now: Date, expireDate: Date,
+                             bestBefore: Date, maker: String) -> LabelData {
+        buildOpenedLabel(title: title, now: now, expireDate: expireDate,
+                         bestBefore: bestBefore, maker: maker)
+    }
 
     static func buildDairy(kindLabel: String, now: Date, expireDate: Date,
                            bestBefore: Date, maker: String) -> LabelData {
-        LabelData(
-            title: clamp(kindLabel),
-            rows: [
-                LabelRow(label: "开封时间：", value: fmtDateTime(now)),
-                LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, expireDate)),
-                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, bestBefore)),
-            ],
-            weekdayCn: weekdayCn(now),
-            weekdayEn: weekdayEn(now),
-            rightText: fmtTime(now),
-            maker: "制作人：\(clamp(maker, maxNameLength))"
-        )
+        buildOpenedLabel(title: kindLabel, now: now, expireDate: expireDate,
+                         bestBefore: bestBefore, maker: maker)
     }
-
-    // MARK: 肉类
 
     /// 肉类标签。版式与奶制品**完全一致**（开封时间 / 原始保质期 / 最佳使用时间），
     /// 只有标题里多带了保存类型 —— 见 `Meat.swift` 顶部说明。
     static func buildMeat(animal: MeatAnimal, cut: String, storage: MeatStorage,
                           now: Date, expireDate: Date, bestBefore: Date,
                           maker: String) -> LabelData {
-        LabelData(
-            title: clamp(MeatRule.title(storage: storage, animal: animal, cut: cut)),
-            rows: [
-                LabelRow(label: "开封时间：", value: fmtDateTime(now)),
-                LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, expireDate)),
-                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, bestBefore)),
-            ],
-            weekdayCn: weekdayCn(now),
-            weekdayEn: weekdayEn(now),
-            rightText: fmtTime(now),
-            maker: "制作人：\(clamp(maker, maxNameLength))"
-        )
+        buildOpenedLabel(title: MeatRule.title(storage: storage, animal: animal, cut: cut),
+                         now: now, expireDate: expireDate,
+                         bestBefore: bestBefore, maker: maker)
     }
 
     /// 解冻标签（扫冷冻标签的二维码后生成）。
@@ -244,7 +234,7 @@ enum LabelTemplate {
             weekdayCn: weekdayCn(now),
             weekdayEn: weekdayEn(now),
             rightText: fmtTime(now),
-            maker: "制作人：\(clamp(maker, maxNameLength))"
+            maker: makerFooter(maker)
         )
     }
 
@@ -268,7 +258,7 @@ enum LabelTemplate {
             weekdayCn: weekdayCn(now),
             weekdayEn: weekdayEn(now),
             rightText: fmtTime(now),
-            maker: "制作人：\(clamp(maker, maxNameLength))"
+            maker: makerFooter(maker)
         )
     }
 
@@ -308,7 +298,7 @@ enum LabelTemplate {
             weekdayCn: weekdayCn(now),
             weekdayEn: weekdayEn(now),
             rightText: fmtTime(now),
-            maker: "制作人：\(clamp(maker, maxNameLength))"
+            maker: makerFooter(maker)
         )
     }
 
@@ -390,7 +380,7 @@ enum LabelTemplate {
             weekdayCn: weekdayCn(now),
             weekdayEn: weekdayEn(now),
             rightText: fmtTime(now),
-            maker: "制作人：\(clamp(record.maker, maxNameLength))"
+            maker: makerFooter(record.maker)
         )
     }
 

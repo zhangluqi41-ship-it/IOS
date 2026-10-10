@@ -28,7 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)printerDidFindDeviceUUID:(NSString *)uuid name:(NSString *)name;
 /// 连接成功。
 - (void)printerDidConnectUUID:(NSString *)uuid name:(NSString *)name;
-/// 连接失败（含 15 秒超时）。
+/// 连接失败（含 20 秒超时，见 .m 的 `kConnectTimeoutSeconds`）。
 - (void)printerDidFailToConnect;
 /// 连接断开。
 - (void)printerDidDisconnect;

@@ -89,8 +89,15 @@
 //
 //  ★★ 到点后紧凑态显示 `0:00` 的问题（图1 / 图3 / 图4 都是 `0:00`）：
 //     `Text(timerInterval:)` 只在**区间未走完**时由系统每秒刷新；
-//     一旦归零，系统做**最后一次重绘**，此时必须靠「双轨绘制」切到静态文字
-//     —— 否则它就永久卡在 `0:00`（且 `staleDate` 只让它变灰、**不触发重绘**）。
+//     归零后它**停在 `0:00` 且不再触发 body 重估**（第七轮以为「系统会做最后
+//     一次重绘」，实测并不可靠 —— 这正是第七~十三轮卡 `0:00` 的直接原因）。
+//
+//     ✅ 真正的翻页触发器 = **`staleDate = dueAt`**（第十四轮查证，Nalu Timers
+//        文档原话："staleDate makes the system re-render the widget when the
+//        instant passes — no app code runs"）。到点那一刻系统重绘本视图，
+//        `countdownInterval` 因 `Date() >= dueAt` 返回 nil，双轨绘制翻成静态
+//        「已到时间」。⚠️ 第七轮曾把 staleDate 推迟 30 分钟 = 亲手拆掉了触发器，
+//        **不要再推迟它**（变灰是可接受的代价，见 Manager 侧注释）。
 //
 //     ✅ 本轮统一判据为 **`countdownInterval == nil`**（全文件 6 处：
 //        紧凑态图标 / 紧凑态数字 / 展开态图标 / 展开态大数字 / 展开态按钮 /
@@ -99,9 +106,8 @@
 //          · 为 nil ⟺ 必须渲染静态文字。
 //        「图标 / 数字 / 颜色 / 按钮」全部由**同一个表达式**决定，
 //        保证它们在同一次重绘里**同时**切换，不会各自漂移。
-//     ⚠️ 因此**不要再单独用 `state.phase` 去判这些呈现**（容易与
-//        `timerInterval` 的分支错开一帧）。`phase` 仅保留作语义别名，
-//        供 `ExpiryActivityBridge` 等非渲染逻辑参考。
+//     ⚠️ 不要用任何第二个判据（曾经的 `state.phase` 已于第十四轮删除，
+//        零读者）—— 判据一多就容易与 `timerInterval` 的分支错开一帧。
 //
 //  ─────────── 2026-10-10 第八轮（用户又发 3 张截图，本文件第三次收敛） ───────────
 //
@@ -671,9 +677,8 @@ enum ExpiryLiveActivityColors {
 ///    上一版那里放的是 `ExpiryDateFormat.time(dueAt)`（到期时刻 `06:09`），
 ///    所以用户觉得「红数字不是倒计时」。现在改成一个**真正的倒计时**。
 ///
-/// ★ 与 `CountdownText` 的区别：
-///    · `CountdownText` —— 已无引用（保留作参照），带「已到时间」兜底；
-///    · **本组件** —— 展开态专用，到点显示「已到时间」，未到点走 `timerInterval`。
+/// ★ 本组件是展开态专用：到点显示「已到时间」，未到点走 `timerInterval`。
+///   （旧的对照组件 `CountdownText` 已于第十四轮删除，零引用。）
 private struct ExpandedCountdownText: View {
     let state: ExpiryActivityAttributes.ContentState
 
@@ -688,28 +693,6 @@ private struct ExpandedCountdownText: View {
                 .monospacedDigit()
         } else {
             // 到点：区间已走完 → 静态文字（这一步就是「不再卡 `0:00`」的关键）。
-            Text("已到时间")
-        }
-    }
-}
-
-/// 展开态 / 锁屏用的倒计时（**已无引用**）。
-///
-/// ★ `Text(timerInterval:)` 的区间必须「下界 < 上界」，否则会崩。
-///   到点之后区间已经走完，系统会停在 `0:00`；这里额外兜一层，
-///   显示「已到时间」比 `0:00` 更清楚。
-///
-/// ⚠️ 2026-10-10：展开态底部改成「里程碑 + 日期」后，本组件不再被调用。
-///    **保留**（不要因为「没人用」就删）—— 它是 `ExpandedCountdownText`
-///    的对照写法，将来若要恢复底部倒计时可直接复用。
-private struct CountdownText: View {
-    let state: ExpiryActivityAttributes.ContentState
-
-    var body: some View {
-        if let interval = state.countdownInterval {
-            Text(timerInterval: interval, countsDown: true, showsHours: true)
-                .monospacedDigit()
-        } else {
             Text("已到时间")
         }
     }

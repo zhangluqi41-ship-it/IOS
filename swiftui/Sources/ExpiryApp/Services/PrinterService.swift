@@ -5,7 +5,7 @@
 //  真正的蓝牙跑在 ObjC 封装 `ExpiryPrinterSDK` 里（硕方 SDK 是 ObjC 框架，
 //  且没有 modulemap，Swift 不能直接 import）。本类只做四件事：
 //   1. 把 delegate 回调翻译成 SwiftUI 可观察的状态（@Published）；
-//   2. 维护「已添加的打印机」持久化（与 Flutter 版共用同一 UserDefaults suite）；
+//   2. 维护「已添加的打印机」持久化（UserDefaults，含重装后按名字回退匹配）；
 //   3. 给视图层提供 connect / print / testPage 这类语义化接口；
 //   4. 兜住「回调没来但实际已连上」的情况（轮询 SDK 的连接状态）。
 //
@@ -232,11 +232,6 @@ final class PrinterService: NSObject, ObservableObject {
             self.refreshBluetooth()
             self.autoConnectIfNeeded()
         }
-    }
-
-    func stopMonitoring() {
-        lifecycleTimer?.invalidate()
-        lifecycleTimer = nil
     }
 
     /// 跳系统设置（蓝牙/隐私）。
@@ -768,7 +763,11 @@ extension PrinterService: ExpiryPrinterSDKDelegate {
             record.printedAt = record.printedAt ?? Date()
             ExpiryStore.shared.add(record)
         } else if !success {
-            toast = message?.isEmpty == false ? "打印失败：\(message!)" : "打印失败"
+            if let message, !message.isEmpty {
+                toast = "打印失败：\(message)"
+            } else {
+                toast = "打印失败"
+            }
         }
     }
 }

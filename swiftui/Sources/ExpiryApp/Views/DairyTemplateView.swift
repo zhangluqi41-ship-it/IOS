@@ -52,17 +52,7 @@ struct DairyTemplateView: View {
             }
 
             Section {
-                HStack(spacing: 12) {
-                    Image(systemName: "person")
-                        .foregroundStyle(Theme.brand)
-                        .frame(width: 22)
-                    TextField("输入操作人", text: $maker)
-                        .onChange(of: maker) { _, value in
-                            if value.count > LabelTemplate.maxNameLength {
-                                maker = String(value.prefix(LabelTemplate.maxNameLength))
-                            }
-                        }
-                }
+                MakerField(maker: $maker)
             } footer: {
                 Text("会记住上次填写的操作人")
             }
@@ -88,9 +78,7 @@ struct DairyTemplateView: View {
             showKindAlert = true
             return nil
         }
-        let makerValue = LabelTemplate.clamp(maker, LabelTemplate.maxNameLength)
-        let makerFinal = makerValue.isEmpty ? "未署名" : makerValue
-        Prefs.lastMaker = makerValue
+        let makerFinal = MakerField.finalize(maker)
 
         let now = Date()
         let data = LabelTemplate.buildDairy(kindLabel: k.label, now: now,

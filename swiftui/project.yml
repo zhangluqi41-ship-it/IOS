@@ -191,8 +191,25 @@ targets:
         #     「下方代替上方 / 同一个模块的不同形态」。
         #   · `restart`（稍后提醒）在 A 已被收掉时用落盘属性重建 A。
         #   ⚠️ 提醒（通知）的 4 档时机与 passive 静默判据**一律未动**。
-        CURRENT_PROJECT_VERSION: 39
-        MARKETING_VERSION: 1.0.13
+        # ★★★ 2026-10-10（第十四轮）：全工程梳理优化（用户：「功能不变，
+        #   优化全部工程」+「锁屏还是两张卡，去查资料做无缝衔接」）。
+        #   ① **无缝衔接根因修复**：A 的 `staleDate` 从 `dueAt + graceWindow`
+        #      改回 `dueAt` —— staleDate 是系统重绘这条活动的触发器
+        #      （App 被杀也触发），重绘时 `countdownInterval` 翻 nil，
+        #      双轨分支从 `Text(timerInterval:)` 翻成静态「已到时间」。
+        #      第七轮把触发器推迟 30 分钟 = 分支加了却永远不执行，
+        #      这就是第七~十三轮锁屏卡 `0:00` 的顽疾根因。
+        #      B（到点警报）的 staleDate 维持 `dueAt + graceWindow` 不变。
+        #   ② 清理死代码（净 −415 行）：PreviewView/PreviewPayload/ShareSheet
+        #     （预览功能 10-07 已取消，零入口）、`Phase`/`phase`（零读者）、
+        #      `CountdownText`、`canReprint`、`stopMonitoring`、Prefs 两个死键。
+        #   ③ 收敛重复：`orFallback`（杀 4 处 `message!`）、`MakerField`
+        #     （5+1 个模板页共用）、`buildOpenedLabel`（通用/奶制品/肉类同版式）、
+        #      `makerFooter`、`LabelReprint.printNoticing`（列表/详情两入口）。
+        #   ④ 修正过期注释与用户可见文案（使用流程第 3 步、提醒页脚补第 5 档）。
+        #   ⚠️ 功能与提醒逻辑一律未变；所有 builder 公开签名保持不变（单测不动）。
+        CURRENT_PROJECT_VERSION: 40
+        MARKETING_VERSION: 1.0.14
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -243,8 +260,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.0.13
-        CURRENT_PROJECT_VERSION: 39
+        MARKETING_VERSION: 1.0.14
+        CURRENT_PROJECT_VERSION: 40
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

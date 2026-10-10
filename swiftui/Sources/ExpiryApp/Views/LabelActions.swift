@@ -1,7 +1,7 @@
 //
 //  LabelActions.swift
-//  标签动作的公共装配 —— 四个模板页（通用 / 康普茶一发 / 康普茶二发 / 奶制品）
-//  共用同一套「打印」动作与提示，避免四处复制。
+//  标签动作的公共装配 —— 五个模板页（通用 / 康普茶一发 / 康普茶二发 / 奶制品 / 肉类）
+//  共用同一套「打印」动作与提示，避免五处复制。
 //
 //  ★ 为什么不用 `.toolbar(placement: .bottomBar)`：
 //    试过了 —— 在 TabView 里的二级页上，bottom bar 会和底部的 Tab 栏抢位置，
@@ -12,10 +12,10 @@
 //
 //  ★ 2026-10-07：用户要求**取消「预览标签」功能**，二级条只留「打印」。
 //    随之一起去掉的还有预览页上的「保存到手机」「分享」。
-//    `PreviewView` / `PreviewPayload` / `PDFRasterizer` 的源码保留在仓库里
-//    （没有入口，不再被引用），万一要恢复，加回下面那个按钮 +
-//    `.fullScreenCover(item:)` 即可 —— 那里面记录的 PDFKit/ScrollView 缩放坑
-//    别再踩第二遍。
+//    ★ 2026-10-10（第十四轮·全工程优化）：`PreviewView` / `PreviewPayload` /
+//    `ShareSheet` 的源码已**删除**（确认零入口；如需恢复查 git 历史，
+//    那里面记录的 PDFKit/ScrollView 缩放坑别再踩第二遍）。
+//    `PDFRasterizer` **保留** —— 单测与 `QRCodeGenerator` 的 `GrayBuffer` 仍在用。
 //
 //  ★ 2026-10-09：键盘抬起时底部操作条收起，改为在键盘上方的第一方
 //    accessory bar 里与「完成」并排 —— 详见 `LabelActions` 的文档注释。
@@ -31,10 +31,19 @@ struct Notice: Identifiable {
     let body: String
 }
 
+extension Optional where Wrapped == String {
+    /// 打印回调带的失败原因：nil 或空串时回退到兜底文案。
+    /// （避免每个调用点各写一遍 `message?.isEmpty == false ? message! : …`）
+    func orFallback(_ fallback: String) -> String {
+        if let self, !self.isEmpty { return self }
+        return fallback
+    }
+}
+
 // MARK: - 一张待输出的标签
 
 /// 模板页把「标签数据 + 待入库记录」打包成 draft，
-/// 预览与打印都从同一个 draft 出发生成 PDF，保证两边内容完全一致。
+/// 打印从 draft 出发生成 PDF，保证内容与入库记录完全一致。
 struct LabelDraft {
     let data: LabelData
     let record: LabelRecord
@@ -49,14 +58,6 @@ struct LabelDraft {
                                 regular: FontProvider.regular(12),
                                 bold: FontProvider.bold(12))
     }
-}
-
-/// 预览页的载荷。
-struct PreviewPayload: Identifiable {
-    let id = UUID()
-    let pdfData: Data
-    let fileName: String
-    let draft: LabelDraft
 }
 
 // MARK: - 二级操作条
@@ -89,6 +90,37 @@ struct LabelActionBar: View {
     }
 }
 
+// MARK: - 「操作人」输入行（五个模板页共用）
+
+/// 「操作人」输入行：图标 + 限长 TextField。
+/// 五个模板页（通用 / 康普茶一发 / 康普茶二发 / 奶制品 / 肉类）共用，
+/// 别在各页里再手抄一遍 HStack。
+struct MakerField: View {
+    @Binding var maker: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person")
+                .foregroundStyle(Theme.brand)
+                .frame(width: 22)
+            TextField("输入操作人", text: $maker)
+                .onChange(of: maker) { _, value in
+                    if value.count > LabelTemplate.maxNameLength {
+                        maker = String(value.prefix(LabelTemplate.maxNameLength))
+                    }
+                }
+        }
+    }
+
+    /// 打印前的「制作人」收尾：裁剪 → 记住这次填的 → 空则「未署名」。
+    /// 返回值可直接写进标签与入库记录（五个模板页的 buildDraft 共用）。
+    static func finalize(_ raw: String) -> String {
+        let value = LabelTemplate.clamp(raw, LabelTemplate.maxNameLength)
+        Prefs.lastMaker = value
+        return value.isEmpty ? "未署名" : value
+    }
+}
+
 // MARK: - 重新打印
 
 /// 「效期管理」里对一条已有记录重新出标签。
@@ -97,11 +129,6 @@ struct LabelActionBar: View {
 /// `record:` 参数），所以重打之后记录不会翻倍 ——
 /// `LabelRecord.qrText` 与原来完全相同，`ExpiryStore.add` 会按它去重合并。
 enum LabelReprint {
-
-    /// 一条记录能不能重打（不是所有记录都来自我们自己的模板）。
-    static func canReprint(_ record: LabelRecord) -> Bool {
-        !record.title.isEmpty
-    }
 
     /// 重打。连接状态由调用方先行判断并给出提示。
     static func print(_ record: LabelRecord,
@@ -129,6 +156,27 @@ enum LabelReprint {
                            paperType: Prefs.paperType,
                            record: fresh,
                            completion: completion)
+    }
+
+    /// 重打 + 把结果直接翻成提示（连接检查也在里面）。
+    /// 两个入口（效期管理列表行 / 详情页）共用；
+    /// 成功时的正文由调用方给（两处文案**刻意不同**，别合并）。
+    static func printNoticing(_ record: LabelRecord,
+                              successBody: String,
+                              setNotice: (Notice?) -> Void) {
+        guard PrinterService.shared.isConnected else {
+            setNotice(Notice(title: "还没有连接打印机",
+                             body: "请到「打印机」标签页连接硕方 T50 Pro，再回来重打。"))
+            return
+        }
+        Self.print(record) { ok, message in
+            if ok {
+                setNotice(Notice(title: "已发送到打印机", body: successBody))
+            } else {
+                setNotice(Notice(title: "打印失败",
+                                 body: message.orFallback("请检查打印机状态后重试。")))
+            }
+        }
     }
 }
 
@@ -222,7 +270,7 @@ struct LabelActions: ViewModifier {
                                 body: "\(draft.data.title)\n份数 \(copies) · 浓度 \(density == 0 ? "自动" : "\(density)")")
             } else {
                 notice = Notice(title: "打印失败",
-                                body: message?.isEmpty == false ? message! : "请检查打印机状态后重试。")
+                                body: message.orFallback("请检查打印机状态后重试。"))
             }
         }
     }

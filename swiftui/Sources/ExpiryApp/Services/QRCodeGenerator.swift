@@ -54,7 +54,7 @@ enum QRCodeGenerator {
     /// 读出「深色 = 模块」的布尔矩阵；结构不合法时返回 nil（宁可不画，也不画错的）。
     static func matrix(for text: String) -> QRMatrix? {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty, message.utf8.count <= 1200 else { return nil }
+        guard !message.isEmpty, message.utf8.count <= LabelTemplate.maxQrBytes else { return nil }
 
         guard let gen = CIFilter(name: "CIQRCodeGenerator") else { return nil }
         gen.setValue(Data(message.utf8), forKey: "inputMessage")

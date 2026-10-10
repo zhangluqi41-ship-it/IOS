@@ -439,7 +439,7 @@ static UIImage *SFBuildTestPage(int widthMm,
 - (void)stopScan {
   // ★★ 连接进行中绝不真的去停扫描 —— 见 `connecting` 属性的注释。
   //    真停下去会把刚发起的 BLE 连接掐掉（v1.6.7 的「完全无法连接」就是这么来的）。
-  //    改成就地**推迟 5 秒再收尾**：连接超时是 15 秒，最多推迟三四次；
+  //    改成就地**推迟 5 秒再收尾**：连接超时是 20 秒，最多推迟四五次；
   //    连接一旦有结果（成功/失败都会调 finishConnectWithPeripheral:）就放行，
   //    不会让扫描无限期跑下去。
   if (self.connecting) {

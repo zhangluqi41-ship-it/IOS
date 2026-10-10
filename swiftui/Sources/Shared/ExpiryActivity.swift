@@ -54,19 +54,6 @@ import Foundation
 
 struct ExpiryActivityAttributes: ActivityAttributes {
 
-    /// 这条活动处于哪个阶段。
-    ///
-    /// ★ 只影响文案（「还有」/「已到时间」）。**功能行为不依赖它** ——
-    ///   「稍后提醒」到底该不该重复提醒，是按钮被执行的那一刻在主 App 进程里
-    ///   用 `Date() >= dueAt` 现判的（见 `ExpiryActivityBridge.snooze`）。
-    ///   这样即使活动是很久以前挂上的、`phase` 已经过期，行为仍然正确。
-    enum Phase: String, Codable, Hashable, Sendable {
-        /// 尚未到期（含「提前 10 分钟」那段窗口）。
-        case soon
-        /// 已经到时间（或已过）。
-        case due
-    }
-
     struct ContentState: Codable, Hashable, Sendable {
         /// 倒计时区间的下界 —— 也就是活动启动那一刻。
         ///
@@ -77,26 +64,7 @@ struct ExpiryActivityAttributes: ActivityAttributes {
         /// 到期时刻（= 里程碑时间）。
         var dueAt: Date
 
-        // MARK: 派生属性（**不要存 phase**）
-
-        /// 当前处于哪个阶段。
-        ///
-        /// ★★ 为什么不把 `phase` 存进 `ContentState`：
-        ///    存下来的值只有在「我们主动 update 活动」时才会变 ——
-        ///    而这正是免费账号做不到的事（没有 APNs，App 在后台不能更新活动）。
-        ///    所以**改成按当前时刻现算**：系统每秒刷新倒计时的时候会一起重绘，
-        ///    `Date()` 越过 `dueAt` 的那一刻，它自然就从 `.soon` 翻成 `.due`。
-        ///
-        /// ⚠️⚠️ 2026-10-10（第七轮）重要更正：
-        ///    **本属性不再作为界面渲染的判据。** 界面（图标 / 数字 / 颜色 /
-        ///    按钮）一律改用 `countdownInterval == nil` 判断（原因见该属性
-        ///    的长注释：「双轨绘制」必须与 `Text(timerInterval:)` 同源，
-        ///    否则到点后灵动岛会卡在 `0:00`）。
-        ///    `phase` 保留为**语义别名**，供非渲染逻辑（如
-        ///    `ExpiryActivityBridge` 的行为判定）参考。
-        var phase: Phase {
-            Date() >= dueAt ? .due : .soon
-        }
+        // MARK: 派生属性
 
         /// 倒计时的渲染区间；`nil` 表示已经到时间（别再画负数倒计时）。
         ///

@@ -15,7 +15,6 @@ struct ExpiryListView: View {
     @Binding var path: NavigationPath
 
     @ObservedObject private var store = ExpiryStore.shared
-    @ObservedObject private var printer = PrinterService.shared
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var showUsed = false
@@ -134,7 +133,7 @@ struct ExpiryListView: View {
             }
         } footer: {
             Text("开启后，「最佳使用时间」和「原始保质期」各自会在**前一天上午 9:00、"
-                 + "当天上午 9:00、提前 1 小时、提前 10 分钟**提醒。"
+                 + "当天上午 9:00、提前 1 小时、提前 10 分钟、到时间**提醒。"
                  + "**到时间那一刻，灵动岛会自动弹出展开态**（由系统定时拉起，"
                  + "不需要 App 开着），直接在岛上点「已完成使用」或「稍后提醒」"
                  + "（稍后提醒每隔 5 分钟再来一次）。"
@@ -211,21 +210,9 @@ struct ExpiryListView: View {
 
     /// 重新打印一条已有记录的标签（内容与原标签逐字一致）。
     private func reprint(_ record: LabelRecord) {
-        guard printer.isConnected else {
-            notice = Notice(title: "还没有连接打印机",
-                            body: "请到「打印机」标签页连接硕方 T50 Pro，再回来重打。")
-            return
-        }
-        LabelReprint.print(record) { ok, message in
-            if ok {
-                notice = Notice(title: "已发送到打印机",
-                                body: "\(record.title)\n份数 \(Prefs.printCopies) · 浓度 "
-                                    + "\(Prefs.printDensity == 0 ? "自动" : "\(Prefs.printDensity)")")
-            } else {
-                notice = Notice(title: "打印失败",
-                                body: message?.isEmpty == false ? message! : "请检查打印机状态后重试。")
-            }
-        }
+        LabelReprint.printNoticing(record,
+            successBody: "\(record.title)\n份数 \(Prefs.printCopies) · 浓度 "
+                + "\(Prefs.printDensity == 0 ? "自动" : "\(Prefs.printDensity)")") { notice = $0 }
     }
 
     private func refresh() {
@@ -356,19 +343,7 @@ struct ExpiryDetailSheet: View {
     }
 
     private func reprint() {
-        guard printer.isConnected else {
-            notice = Notice(title: "还没有连接打印机",
-                            body: "请到「打印机」标签页连接硕方 T50 Pro，再回来重打。")
-            return
-        }
-        LabelReprint.print(record) { ok, message in
-            if ok {
-                notice = Notice(title: "已发送到打印机", body: record.title)
-            } else {
-                notice = Notice(title: "打印失败",
-                                body: message?.isEmpty == false ? message! : "请检查打印机状态后重试。")
-            }
-        }
+        LabelReprint.printNoticing(record, successBody: record.title) { notice = $0 }
     }
 }
 

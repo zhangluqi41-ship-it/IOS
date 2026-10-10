@@ -108,7 +108,7 @@ struct TemplatesTab: View {
                 Divider()
                 step(2, "填写信息", "物料名称、操作人与日期")
                 Divider()
-                step(3, "预览并打印", "底部工具栏左边预览、右边直接打印")
+                step(3, "打印标签", "底部「打印」一键出纸")
             }
             .padding(.horizontal, 16)
             .background(Color(.secondarySystemGroupedBackground),

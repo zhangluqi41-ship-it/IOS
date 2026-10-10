@@ -57,11 +57,11 @@
 //  ★ 倒计时不需要我们管：`Text(timerInterval:countsDown:)` 由系统每秒自己刷，
 //    不需要 App 在后台推状态。
 //
-//  ★ 两个按钮的行为不依赖 `ContentState.phase`：
+//  ★ 两个按钮的行为不依赖任何「阶段」字段：
 //    `ExpiryMarkDoneIntent` / `ExpirySnoozeIntent` 是 `LiveActivityIntent`，
 //    由**主 App 进程**执行，它们在那个时刻用 `Date()` 现判
-//    （见 `ExpiryActivityBridge`）—— 所以哪怕活动是几小时前挂的、`phase`
-//    已经不准，功能仍然是对的。
+//    （见 `ExpiryActivityBridge`）—— 所以哪怕活动是几小时前挂的，
+//    功能仍然是对的。
 //
 
 import ActivityKit
@@ -213,21 +213,28 @@ final class ExpiryActivityManager {
             dueAt: dueAt)
 
         let key = "\(best.record.id.uuidString)#\(best.milestone.label)"
-        // ★★ 2026-10-10（第七轮）：`staleDate` 从 `dueAt` **延后到宽限期结束**。
+        // ★★★ 2026-10-10（第十四轮·无缝衔接根因修复）：`staleDate` **改回 `dueAt`**。
         //
-        //   为什么改：`staleDate` 一到，系统会把整块内容**降饱和 / 变灰**
-        //   （表示「这个数据可能过期了」）。但我们的场景里，`dueAt` 那一刻
-        //   恰恰是**最需要用户看清**的时刻（红色「到点」+ 两个按钮）。
-        //   若在 `dueAt` 就变灰，等于把最强的提示压暗了。
+        //   第七轮曾把它从 `dueAt` 延后到 `dueAt + graceWindow`（怕到点变灰
+        //   压暗提示）—— 但当时没意识到：`staleDate` 不只是「变灰标记」，
+        //   它还是**系统重绘这条活动的触发器**（App 被杀也会触发；
+        //   见 Nalu Timers 文档："staleDate makes the system re-render the
+        //   widget when the instant passes — no app code runs"）。
         //
-        //   ➜ 改成 `dueAt + graceWindow`（30 分钟）：这期间内容保持满色，
-        //     用户有充裕时间看清并处理；过了宽限期才让系统标记为陈旧，
-        //     与 `sync` 里「超过宽限期就收掉活动」的窗口**对齐**。
-        //   ⚠️ 单位是秒，`graceWindow` 是 `TimeInterval`，直接相加即可。
+        //   重绘时 `countdownInterval`（计算属性）因 `Date() >= dueAt` 返回 nil，
+        //   渲染层 6 处双轨分支才会从 `Text(timerInterval:)` 翻成静态
+        //   「已到时间 + 两个按钮」。第七轮把触发器推迟了 30 分钟 =
+        //   分支加了却永远不执行 → 锁屏上 A 一直卡在 `0:00`（第七~十三轮的顽疾）。
+        //
+        //   代价（已确认可接受）：到点后 A 被系统标 stale **变灰**，
+        //   但此刻灵动岛已由高分的 B 接管（`alertRelevance` > `countdownRelevance`），
+        //   锁屏上变灰的 A 会在下一次前台 `sync` 被「A 退场」分支收掉。
+        //   ⚠️ `staleDate` 最小值 ≈ 活动开始后 2 分钟（Apple 论坛，未写进文档）：
+        //      倒计时短于此的系统会自行 clamp，最多晚一会儿翻页，无大碍。
         // ★★★【第十三轮】带上**低**优先级 —— 见 `countdownRelevance` 的注释：
         //   这样到点那一刻，后启动但分更高的到点警报（B）会立刻顶掉它。
         let content = ActivityContent(state: state,
-                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow),
+                                      staleDate: dueAt,
                                       relevanceScore: Self.countdownRelevance)
 
         // ── 活动 A：倒计时。同一个目标就只刷新状态；换目标才重建 ──
@@ -282,7 +289,7 @@ final class ExpiryActivityManager {
                 // ★ 窗口扩到 `window + graceWindow`（8h + 30min）：
                 //   刚过点半小时内的物料仍然要留在岛上（否则「到时间」那一刻
                 //   活动就自己消失了，用户根本来不及点按钮）。这段时间
-                //   `ContentState.phase` 是 `.due`，岛上显示「已到时间 + 两个按钮」。
+                //   `countdownInterval == nil`，岛上显示「已到时间 + 两个按钮」。
                 guard delta > -graceWindow, delta <= window else { continue }
                 if best == nil || milestone.date < best!.milestone.date {
                     best = (record, milestone)
@@ -489,11 +496,13 @@ final class ExpiryActivityManager {
         Self.saveAttributes(attrs)
 
         let state = ExpiryActivityAttributes.ContentState(startedAt: Date(), dueAt: dueAt)
-        // ★ 同 `sync`：`staleDate` 延后到宽限期结束（别让刚设的 5 分钟倒计时就变灰）。
+        // ★ 同 `sync`（第十四轮）：`staleDate = dueAt` —— 5 分钟走完那一刻
+        //   系统重绘，`countdownInterval` 翻 nil，卡片从倒计时翻成「已到时间」。
+        //   （5 分钟 > 2 分钟的 staleDate 最小值，不受 clamp 影响。）
         // ★ 优先级同样取「倒计时」这一档（低）—— 这样下一次到点时，
         //   到点警报还能像第一次那样顶掉它。
         let content = ActivityContent(state: state,
-                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow),
+                                      staleDate: dueAt,
                                       relevanceScore: Self.countdownRelevance)
 
         do {
