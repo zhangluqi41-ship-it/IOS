@@ -45,8 +45,8 @@ struct DairyTemplateView: View {
             }
 
             Section {
-                AutoCloseDatePicker(title: "原始保质期（开封后）", date: $expireDate)
-                AutoCloseDatePicker(title: "最佳使用时间", date: $bestDate)
+                LabelDatePicker(title: "原始保质期（开封后）", date: $expireDate)
+                LabelDatePicker(title: "最佳使用时间", date: $bestDate)
             } header: {
                 Text("日期")
             }

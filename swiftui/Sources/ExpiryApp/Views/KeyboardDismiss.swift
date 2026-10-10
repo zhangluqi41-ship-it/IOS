@@ -28,6 +28,17 @@
 //        键盘隐藏的时长从 `keyboardAnimationDurationUserInfoKey` 读出来，
 //        用它驱动动画，操作条才会和键盘同步起落，不会各走各的。
 //
+//  ★★★ 2026-10-10 第七轮（本次）修正**滚动收键盘**的方向判定 —— 用户反馈：
+//     「点击或滚动输入框以外任意位置都应隐藏键盘，目前**滚动无法隐藏键盘**」
+//
+//     根因：兜底手势 `SwipeDownKeyboardDismisser` 的名字与实现都只认
+//     「**向下**」主导的拖动（`translation.y > 40`）—— 用户**向上滚动**列表时
+//     完全不触发；再加上 `.scrollDismissesKeyboard(.interactively)` 在挂了
+//     keyboard toolbar 的页面上本就失效 → 表现为「怎么滚都收不起键盘」。
+//
+//     ➜ 更名 `ScrollKeyboardDismisser`，判定放宽为「**任意方向**的垂直滚动」
+//       都收起键盘（仅排除纯横向滑动，避免误伤滑动删行）。
+//
 
 import Combine
 import SwiftUI
@@ -89,7 +100,7 @@ final class KeyboardWatcher: ObservableObject {
 
 // MARK: - 滑动收起键盘
 
-/// 「往下拖列表收起键盘」的兜底手势。
+/// 「滚动列表收起键盘」的兜底手势。
 ///
 /// ★★ 2026-10-09（第三轮）为什么必须自己做一个 —— 用户反馈：
 ///    「之前有确认，在输入名称等呼出系统键盘后，在屏幕其他位置点击或滑动，
@@ -104,12 +115,18 @@ final class KeyboardWatcher: ObservableObject {
 ///    SwiftUI 没有提供「在同一视图上同时保留 keyboard accessory 与
 ///    scroll-dismiss」的开关，所以这里直接用 UIKit 补一个**独立的**
 ///    `UIPanGestureRecognizer`：它只观察、不拦截（`cancelsTouchesInView = false`），
-///    一旦识别到「手指主要向下拖动」，就收起键盘。
+///    一旦识别到滚动，就收起键盘。
 ///    ➜ 与 `.scrollDismissesKeyboard` 是「叠加」而非「二选一」，
 ///      两者谁生效都能达到目的，也不影响列表本身的滚动。
-final class SwipeDownKeyboardDismisser: NSObject, UIGestureRecognizerDelegate {
+///
+/// ★★★ 2026-10-10（第七轮）**方向判定修正**：
+///    旧实现只认「向下拖」（`translation.y > 40`）→ 用户**向上滚**列表时
+///    完全不触发，正是「滚动收不起键盘」的根因。
+///    ➜ 现在改成「**任意方向的垂直滚动**都收」（上滚、下滚都行），
+///      只排除纯横向滑动（避免把「滑动删行」误当成滚动）。
+final class ScrollKeyboardDismisser: NSObject, UIGestureRecognizerDelegate {
 
-    static let shared = SwipeDownKeyboardDismisser()
+    static let shared = ScrollKeyboardDismisser()
 
     private let patched = NSHashTable<UIWindow>.weakObjects()
 
@@ -125,14 +142,15 @@ final class SwipeDownKeyboardDismisser: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard gesture.state == .ended || gesture.state == .changed else { return }
+        guard gesture.state == .changed || gesture.state == .ended else { return }
         let translation = gesture.translation(in: gesture.view)
         let velocity = gesture.velocity(in: gesture.view)
-        // 判据：「向下」的位移或速度占绝对主导，才认为是「往下拖收键盘」。
-        // 横向滑动（比如滑动删行）、轻微斜拖不触发，避免误伤。
-        let downward = translation.y > 40 || velocity.y > 600
-        let dominant = abs(translation.y) > abs(translation.x)
-        guard downward, dominant else { return }
+        // ★ 2026-10-10 第七轮：**向上 / 向下都能收** ——
+        //   旧版写死了「向下」（`translation.y > 40`），上滚列表就永远收不起键盘。
+        let verticalEnough = abs(translation.y) > 16 || abs(velocity.y) > 180
+        // 纯横向滑动（比如滑动删行）不算，避免误伤。
+        let dominant = abs(translation.y) >= abs(translation.x)
+        guard verticalEnough, dominant else { return }
         SoftKeyboard.hide()
     }
 
@@ -201,8 +219,9 @@ struct DismissKeyboardOnTap: UIViewRepresentable {
         view.isUserInteractionEnabled = false
         view.onWindow = { window in
             TapOutsideKeyboardDismisser.shared.install(on: window)
-            // ★ 2026-10-09 第三轮：滑动收键盘的兜底手势。
-            SwipeDownKeyboardDismisser.shared.install(on: window)
+            // ★ 2026-10-09 第三轮：滚动收键盘的兜底手势。
+            // ★ 2026-10-10 第七轮：改名并放宽为「任意方向滚动都收」。
+            ScrollKeyboardDismisser.shared.install(on: window)
         }
         return view
     }
@@ -234,7 +253,7 @@ struct KeyboardDismissModifier: ViewModifier {
             // ★ 跟着手指走，而不是整块闪走 —— 见文件头 2026-10-09 说明。
             //
             // ⚠️ 2026-10-09 第三轮：单靠这一句在**挂了 keyboard toolbar 的页面**
-            //    上会失效（见 `SwipeDownKeyboardDismisser` 的说明）。
+            //    上会失效（见 `ScrollKeyboardDismisser` 的说明）。
             //    所以保留它作为「正常情况下的第一选择」，同时由
             //    `DismissKeyboardOnTap` 装的那个 pan 手势兜底 ——
             //    两者叠加，任一可用即可，不冲突。

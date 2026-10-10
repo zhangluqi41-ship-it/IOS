@@ -26,10 +26,10 @@ struct GenericTemplateView: View {
             }
 
             Section {
-                AutoCloseDatePicker(title: "原始保质期", date: $expireDate)
+                LabelDatePicker(title: "原始保质期", date: $expireDate)
                 QuickDateChips(selection: $expireDate)
 
-                AutoCloseDatePicker(title: "最佳使用时间", date: $bestDate)
+                LabelDatePicker(title: "最佳使用时间", date: $bestDate)
                 QuickDateChips(selection: $bestDate)
             } header: {
                 Text("日期")
