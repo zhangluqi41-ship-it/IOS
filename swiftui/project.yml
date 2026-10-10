@@ -208,8 +208,16 @@ targets:
         #      `makerFooter`、`LabelReprint.printNoticing`（列表/详情两入口）。
         #   ④ 修正过期注释与用户可见文案（使用流程第 3 步、提醒页脚补第 5 档）。
         #   ⚠️ 功能与提醒逻辑一律未变；所有 builder 公开签名保持不变（单测不动）。
-        CURRENT_PROJECT_VERSION: 40
-        MARKETING_VERSION: 1.0.14
+        # ★ 2026-10-10（第十五轮）：用户验收后两问拍板 ——
+        #   ① 锁屏两张卡：**保持现状**（平台无「定时结束活动」API，
+        #     A 无法定时自杀；1.0.14 起 A 到点翻「已到时间」变灰 = 视觉衔接）。
+        #   ② 「倒计时归零 → B 弹出」有 1~2 秒系统调度延迟 →
+        #     **B 的预定时刻提前 3 秒**（`alertFireLead`，施加在
+        #     `scheduleAlertForNextMilestone` 的 target 上，
+        #     `scheduledAlertDueKey` 与真实启动时刻对齐）。
+        #   用户预案：这版有问题就回退 1.0.14。
+        CURRENT_PROJECT_VERSION: 41
+        MARKETING_VERSION: 1.0.15
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -260,8 +268,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.0.14
-        CURRENT_PROJECT_VERSION: 40
+        MARKETING_VERSION: 1.0.15
+        CURRENT_PROJECT_VERSION: 41
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

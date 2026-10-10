@@ -96,6 +96,20 @@ final class ExpiryActivityManager {
     ///    这段时间岛上显示「已到时间 + 两个按钮」。
     static let graceWindow: TimeInterval = 30 * 60
 
+    /// 到点警报的**提前量**（第十五轮，用户拍板 3 秒）。
+    ///
+    /// ★ 为什么需要：系统对预定式活动（`start:`）的触发精度是**秒级** ——
+    ///   为省电会合并定时器，实测「倒计时归零 → 警报弹出」有 1~2 秒延迟。
+    ///   提前 3 秒预定，让肉眼看到弹出的时刻落回真实到点附近。
+    ///   代价：偶尔警报比真实到点早 ~3 秒响 —— 效期场景无感（用户已确认）。
+    ///
+    /// ⚠️ 提前量施加在 `scheduleAlertForNextMilestone` 的 target 上 ——
+    ///    也就是说 `scheduledAlertDueKey` 存的是**提前后**的时刻，
+    ///    `scheduleAlert` 里「已开响就别动它」的短路因此与真实启动时刻对齐；
+    ///    别把提前量挪进 `scheduleAlert` 内部（那会让短路判断错位 3 秒，
+    ///    在到点前 3 秒的窗口里把刚启动的警报撤掉重排 → 响两次）。
+    static let alertFireLead: TimeInterval = 3
+
     private var activity: Activity<ExpiryActivityAttributes>?
     /// 当前这条活动对应的「记录 + 里程碑」。
     private var currentKey: String?
@@ -335,7 +349,10 @@ final class ExpiryActivityManager {
         }
 
         // 用户点过「稍后提醒」→ 警报目标跟着那个 5 分钟目标走。
-        let target = snoozedUntil(recordID: next.record.id.uuidString) ?? next.milestone.date
+        // ★【第十五轮】统一减 `alertFireLead`（3 秒）—— 抵消系统触发延迟，
+        //   理由与注意事项见该常量的注释。
+        let target = (snoozedUntil(recordID: next.record.id.uuidString) ?? next.milestone.date)
+            .addingTimeInterval(-Self.alertFireLead)
         let attrs = ExpiryActivityAttributes(
             recordID: next.record.id.uuidString,
             title: next.record.title,
