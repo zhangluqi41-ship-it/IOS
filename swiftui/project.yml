@@ -152,8 +152,24 @@ targets:
         #      date, **even if the app is in the background**.」
         #      → 由系统在到点那一刻自动拉起并弹出展开态，**不需要 App 在运行**。
         #   → 1.0.10 / build 36。
-        CURRENT_PROJECT_VERSION: 36
-        MARKETING_VERSION: 1.0.10
+        # ★ 2026-10-10 第十一轮（用户拿两张**同为紧凑态**的截图对比，指出
+        #   「明明图二是做到了的，对比代码！」）：
+        #   ① **重大更正**：前面几轮说的「紧凑态槽位是系统常量、改不了宽度」
+        #      **只对了一半**。真正规律是：
+        #      · 图1 = **倒计时**状态（`Text(timerInterval:)`）→ 岛**很宽**；
+        #      · 图2 = **到点**状态（静态 `Text("到点")`）→ 岛**很窄**。
+        #      同一个 App、同一套字体内边距，唯一差别就是「是不是系统 timer 文字」。
+        #      ➜ 根因：`Text(timerInterval:)` 由系统托管，数字每秒变而宽度不能抖
+        #        → 系统按**最长可能值预留**宽度且**不参与收缩** → 槽位被撑到上限。
+        #        普通 `Text` 按自身尺寸布局 → 槽位收到最窄。
+        #      ➜ 宽度**是可以控的**。
+        #   ② 修法：给 `CompactCountdownText` 整个 Group **显式钉死宽度**
+        #      （`slotWidth = 46`pt）+ `minimumScaleFactor` 0.7 → 0.5，
+        #      把系统那层预留挡在外面，倒计时态也能收到最窄。
+        #      ⚠️ 与 `.fixedSize()` 方向相反，别搞混（见 widget 文件头）。
+        #   → 1.0.11 / build 37。
+        CURRENT_PROJECT_VERSION: 37
+        MARKETING_VERSION: 1.0.11
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -204,8 +220,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.0.10
-        CURRENT_PROJECT_VERSION: 36
+        MARKETING_VERSION: 1.0.11
+        CURRENT_PROJECT_VERSION: 37
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
