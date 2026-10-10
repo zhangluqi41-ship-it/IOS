@@ -26,6 +26,34 @@
 //        · `endAll()`           —— 彻底不要灵动岛时才连 B 一起清。
 //        用错会把刚弹出的到点警报一起收掉。
 //
+//    【第十三轮更正·用户「两个灵动岛同时存在 / 关掉横幅才切换」】
+//      用户原话：
+//        · 「到时间后，我将横幅通知关闭后才会变成展开态灵动岛，
+//           否则将一直保持 0:00 那个形态」
+//        · 「锁屏界面能同时看到两个灵动岛，逻辑应该是下方代替上方，
+//           是同一个模块的不同形态」
+//        · 「灵动岛和横幅通知应该是并行进程，但显然现在是线性进程」
+//
+//      ⚠️ 根因不是排版，是**两条活动的优先级没设**。Apple 文档
+//        (`Displaying live data with Live Activities`) 原文：
+//          「If you don't provide a relevance score or if Live Activities have
+//            the same relevance score, the system shows **the first Live
+//            Activity you started** in the Dynamic Island.」
+//          「If you use different relevance scores, the system shows the Live
+//            Activity with **the highest relevance score** in the Dynamic Island.」
+//        A 先启动、B 后启动、两者 `relevanceScore` 都是默认 0
+//        ➜ 灵动岛永远只显示 A，B 排在后面 —— 用户必须人为打断才轮到 B。
+//
+//      ✅ 本轮两条修正：
+//        ① **分级**：A = `countdownRelevance`(50)、B = `alertRelevance`(100)。
+//           到点那一刻 B 一出现，因为它分最高，灵动岛**立刻**换成它
+//           —— 这就是用户要的「并行」而非「线性」。
+//        ② **到点后 A 退场**：`sync` 里判定「已过点 + B 已开响」时收掉 A，
+//           让灵动岛与锁屏只剩「已到时间」那一张 —— 即用户的
+//           「下方代替上方 / 同一个模块的不同形态」。
+//        ⚠️ 提醒（通知）逻辑**一律没动**：4 档时机、passive 静默判据
+//           全部保持原样，本轮只改「灵动岛活动怎么排、怎么退场」。
+//
 //  ★ 倒计时不需要我们管：`Text(timerInterval:countsDown:)` 由系统每秒自己刷，
 //    不需要 App 在后台推状态。
 //
@@ -46,6 +74,19 @@ final class ExpiryActivityManager {
 
     /// 提前多久就把灵动岛挂上去（见文件头）。
     static let window: TimeInterval = 8 * 60 * 60
+
+    // MARK: 两条活动的灵动岛优先级（见文件头第十三轮说明）
+
+    /// 倒计时活动（A）的优先级 —— **低**。
+    static let countdownRelevance: Double = 50
+
+    /// 到点警报活动（B）的优先级 —— **高**。
+    ///
+    /// ★★★ 只要它高于 `countdownRelevance`，到点那一刻 B 就会**立刻**
+    ///   顶掉岛上的 A（Apple 规则：分高者显示在灵动岛）。
+    ///   ⚠️ 两个值都必须是**明确的非零差**；都给默认 0 就会退回
+    ///     「显示先启动的那条」，也就是用户截图里的错位现象。
+    static let alertRelevance: Double = 100
 
     /// 「已经到点」之后还允许挂多久。
     ///
@@ -70,6 +111,20 @@ final class ExpiryActivityManager {
     private static let scheduledAlertRecordKey = "expiry.scheduledAlertRecord"
     /// 预定警报的目标时刻 —— 用来判断它**有没有已经开响**（见 `scheduleAlert`）。
     private static let scheduledAlertDueKey = "expiry.scheduledAlertDue"
+
+    // MARK: 「最后一次倒计时活动」的属性缓存（第十三轮新增）
+
+    /// ★★★ 为什么要把活动属性存进 UserDefaults：
+    ///   第十三轮起，`sync` 会在「已过点且到点警报已开响」时**主动收掉 A**
+    ///   （为了让灵动岛/锁屏只剩「已到时间」那一张）。
+    ///   但用户随后仍可能点灵动岛上的「稍后提醒」—— 那一刻 A 已经不在了，
+    ///   而 `restart` 需要一份属性（标题/类别/里程碑名）才能重起 5 分钟倒计时。
+    ///   ➜ 于是在每次建/更 A 时顺手把属性落盘，`restart` 时兜底取用。
+    ///   ⚠️ 四个字段必须**成套**写入、成套读出；缺一个就当作没有缓存。
+    private static let lastAttrsRecordKey = "expiry.lastAttrs.record"
+    private static let lastAttrsTitleKey = "expiry.lastAttrs.title"
+    private static let lastAttrsKindKey = "expiry.lastAttrs.kind"
+    private static let lastAttrsMilestoneKey = "expiry.lastAttrs.milestone"
 
     /// 「稍后提醒」设下的新目标时刻（recordID → 时刻）。
     ///
@@ -115,6 +170,36 @@ final class ExpiryActivityManager {
             kindLabel: best.record.kind.label,
             milestoneLabel: best.milestone.label)
 
+        // ★★★【第十三轮·用户「两个灵动岛并存」的修复】
+        //   「已经过点」+ 用户**没点过**稍后提醒 + 到点警报 B 已经在岛上
+        //   → 收掉倒计时那条 A。
+        //
+        //   此刻 B 正在显示「已到时间 + 两个按钮」，A 留在场上只会让锁屏
+        //   多出一张「卡在 0:00」的重复卡片 —— 正是用户图3 绿框里的现象。
+        //   收掉之后就是用户要的「下方代替上方 / 同一个模块的不同形态」。
+        //
+        //   ⚠️ 三个条件缺一不可：
+        //     · `best.milestone.date <= now` —— 只有「已过点」才收 A；
+        //       到点前 A 是唯一的倒计时来源，绝不能收。
+        //     · `snoozedUntil(...) == nil` —— 用户点过稍后提醒时，
+        //       A 本身就是那个新的 5 分钟倒计时，必须留着。
+        //     · `scheduledAlertIsLive()` —— B 确实在岛上才收；
+        //       否则收了 A 等于岛上什么都不剩。
+        if best.milestone.date <= now,
+           snoozedUntil(recordID: best.record.id.uuidString) == nil,
+           scheduledAlertIsLive() {
+            await endCountdownOnly()
+            // ⚠️ **不要**在这里调 `scheduleAlertForNextMilestone` ——
+            //   它在「已经没有下一个里程碑」时会 `cancelScheduledAlert()`，
+            //   把**正在响的这条 B** 一起收掉（用户就再也看不到「已到时间」了）。
+            //   此刻正确的动作只有一个：让 A 退场、原样保留 B。
+            //   「下一条」的预定交给下一次 `sync`（记录变化 / 下次冷启动）。
+            return
+        }
+
+        // 缓存活动属性 —— 供 `restart`（稍后提醒）在 A 已被收掉时重建。
+        Self.saveAttributes(attrs)
+
         // ★★ 「已经到点」的两条岔路：
         //    ① 用户点过「稍后提醒」（`snoozedUntil` 是未来时刻）
         //       → 倒计时用那个未来时刻，`phase` 现算仍为 `.soon`，
@@ -139,8 +224,11 @@ final class ExpiryActivityManager {
         //     用户有充裕时间看清并处理；过了宽限期才让系统标记为陈旧，
         //     与 `sync` 里「超过宽限期就收掉活动」的窗口**对齐**。
         //   ⚠️ 单位是秒，`graceWindow` 是 `TimeInterval`，直接相加即可。
+        // ★★★【第十三轮】带上**低**优先级 —— 见 `countdownRelevance` 的注释：
+        //   这样到点那一刻，后启动但分更高的到点警报（B）会立刻顶掉它。
         let content = ActivityContent(state: state,
-                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow))
+                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow),
+                                      relevanceScore: Self.countdownRelevance)
 
         // ── 活动 A：倒计时。同一个目标就只刷新状态；换目标才重建 ──
         //（比如刚打开 App、用户点过「稍后提醒」要把区间换新）。
@@ -300,8 +388,11 @@ final class ExpiryActivityManager {
         guard dueAt > Date().addingTimeInterval(1) else { return }
 
         let state = ExpiryActivityAttributes.ContentState(startedAt: dueAt, dueAt: dueAt)
+        // ★★★【第十三轮】带上**高**优先级 —— 它必须高于倒计时那条，
+        //   系统才会在 B 启动的瞬间把灵动岛从 A 切到 B。
         let content = ActivityContent(state: state,
-                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow))
+                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow),
+                                      relevanceScore: Self.alertRelevance)
         let alert = AlertConfiguration(
             title: "\(attrs.title)",
             body: "\(attrs.milestoneLabel)已到，请在灵动岛上点「已完成使用」或「稍后提醒」。",
@@ -371,20 +462,39 @@ final class ExpiryActivityManager {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         snoozeTargets[recordID] = dueAt
 
-        // 手上没有活动（缓存丢了）→ 让调用方之后走正常的 sync 重建。
+        // ★★★【第十三轮】A 可能已经被 `sync` 收掉了（到点后「A 退场」那一步）。
+        //   所以这里**不能**只认内存里的 `activity`：
+        //     ① 手上还有 → 用它的属性；
+        //     ② 手上没有 → 用 `saveAttributes` 落盘的缓存重建（必须是同一条记录）；
+        //     ③ 都没有   → 放弃重起。`snoozeTargets` 已记下目标，
+        //                  App 下次回到前台时 `sync` 会把倒计时区间接回来。
         // ★【第十轮】这里**不能再 `endAll()`** —— 用户点的很可能正是刚刚
         //   自己弹出来的「到点警报」，`endAll()` 会把那条也收掉，
         //   而且它是一个刚刚才被用户看到的提示，收掉等于白弹。
-        guard let activity else { return }
-        let attrs = activity.attributes
+        let attrs: ExpiryActivityAttributes
+        if let activity {
+            attrs = activity.attributes
+        } else if let saved = Self.savedAttributes(), saved.recordID == recordID {
+            attrs = saved
+        } else {
+            return
+        }
+
+        if let activity {
+            await activity.end(nil, dismissalPolicy: .immediate)
+            self.activity = nil
+            currentKey = nil
+        }
+
+        Self.saveAttributes(attrs)
+
         let state = ExpiryActivityAttributes.ContentState(startedAt: Date(), dueAt: dueAt)
         // ★ 同 `sync`：`staleDate` 延后到宽限期结束（别让刚设的 5 分钟倒计时就变灰）。
+        // ★ 优先级同样取「倒计时」这一档（低）—— 这样下一次到点时，
+        //   到点警报还能像第一次那样顶掉它。
         let content = ActivityContent(state: state,
-                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow))
-
-        await activity.end(nil, dismissalPolicy: .immediate)
-        self.activity = nil
-        currentKey = nil
+                                      staleDate: dueAt.addingTimeInterval(Self.graceWindow),
+                                      relevanceScore: Self.countdownRelevance)
 
         do {
             self.activity = try Activity.request(attributes: attrs,
@@ -427,10 +537,19 @@ final class ExpiryActivityManager {
             await cancelScheduledAlert()
         }
 
-        guard let activity, currentKey?.hasPrefix(recordID) == true else { return }
-        await activity.end(nil, dismissalPolicy: .immediate)
-        self.activity = nil
-        currentKey = nil
+        // ★★★【第十三轮】改成「按 recordID 遍历系统里的全部活动」再收。
+        //   原因：A 可能已被 `sync` 收掉，而 `Activity.activities` 里还可能留着
+        //   孤儿（App 重启后内存变量 `activity` 是 nil，只收它会漏掉）。
+        //   ⚠️ 与 `endCountdownOnly()` 的区别：那里是「按 id 排除掉 B」，
+        //      这里是「按记录的 recordID 精确命中」，两者互不干扰。
+        for item in Activity<ExpiryActivityAttributes>.activities
+        where item.attributes.recordID == recordID {
+            await item.end(nil, dismissalPolicy: .immediate)
+        }
+        if currentKey?.hasPrefix(recordID) == true {
+            self.activity = nil
+            currentKey = nil
+        }
     }
 
     /// 收掉本 App 的**全部**灵动岛（含预定的到点警报）。
@@ -451,5 +570,47 @@ final class ExpiryActivityManager {
         defaults.removeObject(forKey: Self.scheduledAlertIDKey)
         defaults.removeObject(forKey: Self.scheduledAlertRecordKey)
         defaults.removeObject(forKey: Self.scheduledAlertDueKey)
+    }
+
+    // MARK: - 辅助（第十三轮新增）
+
+    /// 预定的「到点警报」（B）此刻是否**真的挂在岛上**。
+    ///
+    /// ★ 用途：`sync` 判断「A 能不能退场」时用。只有 B 确实在场才收 A，
+    ///   否则（B 还没开响 / 被系统拒绝 / 还在 `pending`）收了 A
+    ///   就等于岛上什么都不剩。
+    /// ⚠️ 判据用 `activityState` 而**不是**「UserDefaults 里有没有 id」——
+    ///   后者只代表「预定过」，活动可能还在 `pending`（尚未显示）。
+    private func scheduledAlertIsLive() -> Bool {
+        guard let id = UserDefaults.standard.string(forKey: Self.scheduledAlertIDKey) else {
+            return false
+        }
+        return Activity<ExpiryActivityAttributes>.activities.contains { item in
+            item.id == id && (item.activityState == .active || item.activityState == .stale)
+        }
+    }
+
+    /// 把一条活动的属性落盘，供 `restart`（稍后提醒）在 A 已被收掉时重建。
+    private static func saveAttributes(_ attrs: ExpiryActivityAttributes) {
+        let defaults = UserDefaults.standard
+        defaults.set(attrs.recordID, forKey: lastAttrsRecordKey)
+        defaults.set(attrs.title, forKey: lastAttrsTitleKey)
+        defaults.set(attrs.kindLabel, forKey: lastAttrsKindKey)
+        defaults.set(attrs.milestoneLabel, forKey: lastAttrsMilestoneKey)
+    }
+
+    /// 读回上次落盘的活动属性；四个字段缺任何一个都当作「没有缓存」。
+    private static func savedAttributes() -> ExpiryActivityAttributes? {
+        let defaults = UserDefaults.standard
+        guard let record = defaults.string(forKey: lastAttrsRecordKey),
+              let title = defaults.string(forKey: lastAttrsTitleKey),
+              let kind = defaults.string(forKey: lastAttrsKindKey),
+              let milestone = defaults.string(forKey: lastAttrsMilestoneKey) else {
+            return nil
+        }
+        return ExpiryActivityAttributes(recordID: record,
+                                        title: title,
+                                        kindLabel: kind,
+                                        milestoneLabel: milestone)
     }
 }

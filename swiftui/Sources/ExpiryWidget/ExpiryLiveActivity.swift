@@ -261,6 +261,20 @@
 //      本轮补上，见 `dynamicIsland` 链尾。
 //    ⚠️ **两处都要挂**：锁屏归锁屏、灵动岛归灵动岛，缺一不可。
 //
+//  ★★★【第十三轮·用户「两个灵动岛同时存在 / 要关横幅才切换」】
+//    ⚠️ 平台机制（Apple 文档 `Displaying live data with Live Activities` 原文）：
+//       · 一个 App 可以同时有多条 Live Activity；**锁屏会把它们堆叠显示**，
+//         而**灵动岛同一时刻只显示一条**；
+//       · 显示哪一条由 `ActivityContent.relevanceScore` 决定 ——
+//         「分最高者显示在灵动岛；都不给分或同分 → 显示**先启动**的那条」。
+//
+//    ➜ 本 App 有两条活动（A 倒计时 / B 到点警报，见 `ExpiryActivityManager`）。
+//      **B 必须比 A 分高**（100 vs 50），否则灵动岛永远只认先启动的 A，
+//      用户就得「关掉横幅、等系统重挑」才看得到「已到时间」——
+//      即用户描述的「线性进程」现象。
+//    ➜ 因此**渲染层不用做任何区分**：A、B 共用同一个 `ContentState` 与同一套视图，
+//      谁上岛由分数决定，内容形态天然就是「同一个模块的不同状态」。
+//
 
 import ActivityKit
 import AppIntents
