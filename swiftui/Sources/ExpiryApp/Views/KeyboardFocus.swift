@@ -1,26 +1,32 @@
 //
 //  KeyboardFocus.swift
-//  第一方收键盘的「一行挂载」入口（2026-10-10 第十九轮）。
+//  收键盘的「一行挂载」入口（2026-10-10 第二十轮重写）。
 //
-//  ★ 为什么单独一个文件：
-//     `@FocusState` 的类型会传染 —— 只要 `MakerField` 收一个焦点绑定，
-//     所有想用它、又想支持收键盘的页面都必须持有 `@FocusState`。
-//     把这个「一行挂载」方法单独放，比塞进 `KeyboardDismiss.swift`
-//     （那里全是 UIKit 手势）更好找。
+//  ★★★ 为什么这个文件变得这么短 —— 因为中间层被拆了。
 //
-//  ⚠️ 没有「不带 focus 的简版」—— 所有七个模板页都必须传 `focus:`。
-//     提供简版会诱使人误用回「UIKit 瞬间收起、没动画」的老路（用户否定过三次）。
+//     上一轮（v1.1.3）这里还有个 `onChange(of: focus.wrappedValue)`，
+//     作用是把页面焦点**抄给全局的 `FocusCoordinator`**，
+//     好让挂在 window 上的 UIKit 手势能反过来驱动页面焦点。
+//
+//     ★ 那条链路是**三跳、跨事务**的（手势 → 全局值 → 抄回页面 → 收键盘），
+//       键盘动画因此总要等触摸结束后的下一轮更新才起步 → 用户看到的「不流畅」。
+//       而按回车时 UIKit 是**直接**改 SwiftUI 焦点的，同一次事务内完成 → 丝滑。
+//
+//     ➜ 现在**没有任何中转**：`.onTapGesture { focus = nil }` 直接写页面自己的
+//       `@FocusState`，一步到位，和回车同路。
+//     ⚠️ `FocusCoordinator` 已随本条链路一并删除，别再引入任何等价物
+//        （用户明确要求「不要增加冗余代码」）。
+//
+//  ⚠️ 没有「不带 focus 的简版」—— 所有模板页都必须传 `focus:`。
+//     收键盘必须知道"该清哪个焦点"，没有别的办法拿到它。
 //
 
 import SwiftUI
 
 extension View {
-    /// 给模板页挂上完整的键盘收起交互（**第一方焦点版**）。
+    /// 给模板页挂上完整的键盘收起交互（**纯第一方，无中转层**）。
     ///
-    /// - Parameter focus: 页面的 `@FocusState<AnyHashable?>` 绑定。
-    ///   本方法把它的当前值同步进 `FocusCoordinator`，之后
-    ///   「点空白 / 滚动」收键盘都会走 `focused = nil` ——
-    ///   由 SwiftUI 播**系统键盘动画**（而不是瞬间消失）。
+    /// - Parameter focus: 页面自己的 `@FocusState<AnyHashable?>` 绑定。
     ///
     /// 用法：
     /// ```swift
@@ -30,10 +36,6 @@ extension View {
     ///     .keyboardDismissible(focus: $focus)
     /// ```
     func keyboardDismissible(focus: FocusState<AnyHashable?>.Binding) -> some View {
-        modifier(KeyboardDismissModifier())
-            .onChange(of: focus.wrappedValue) { _, _ in
-                // ★ 只在变化时把新值抄给全局协调器（UIKit 手势靠它驱动焦点）。
-                FocusCoordinator.shared.focused = focus.wrappedValue
-            }
+        modifier(KeyboardDismissModifier(focus: focus))
     }
 }

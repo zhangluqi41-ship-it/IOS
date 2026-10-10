@@ -2,99 +2,103 @@
 //  DateField.swift
 //  模板页统一的日期输入控件。
 //
-//  ─────────────────────── 演变史（八次用户反馈） ───────────────────────
+//  ─────────────────────── 演变史（九次用户反馈） ───────────────────────
 //
 //  【第一轮】「选完时间后面板不收」→ 用 `.id` 重建 DatePicker 把它顶掉。
-//  【第二轮】三条反馈：
-//     ① 未点开是 `xxxx年xx月xx日`、选完变成 `xxxx/xx/xx`，要求统一 `xxxx/xx/xx`；
-//     ② 「滚轮选完年月，马上就消失了，影响使用体验」；
-//     ③ 日期单位是中文，要英文缩写 `D/M/Y`。
-//     → ② 的根因就是第一轮的 `.id` 重建：滚轮每落定一个年/月/日，
-//       `onChange` 就换一次 `.id`，面板当场被销毁。所以**彻底删掉 `.id` 重建**。
-//  【第三轮】「日期选择不应该全展开」→ 回到 `.compact`（点击后才弹出），
-//     收起由 `DatePickerDismissal` 负责（点中某一天后收，带冷却窗口）。
-//  【第四轮】「左侧文字全无、时间跑到左边」→ 改用 HStack 当**主布局**。
-//  【第五轮】「右侧日期重复排版」→ **删掉自绘 Text，只留系统 DatePicker**。
-//  【第六轮】（v1.1.1）「滚完滚轮马上就闪关闭界面」→ **取消一切自动收起**
-//     （删掉挂在 `.onChange(of: date)` 上的 `DatePickerDismissal`）。
-//  【第七轮】（v1.1.2）「选好日期应自动收 + 质疑第一方」→ 改成
-//     `Menu { DatePicker(.graphical) }`。→ **打脸**：方案错，产生了本轮的重大 bug。
+//  【第二轮】① 日期格式统一 `xxxx/xx/xx`；② 「滚轮选完年月马上就消失了」；
+//     ③ 日期单位要英文缩写。→ ② 的根因就是 `.id` 重建（滚轮每落定一格就换 id）。
+//  【第三轮】「日期选择不应该全展开」→ 回到 `.compact`。
+//  【第四轮】日期跑到左边 → 改用 HStack 当主布局。
+//  【第五轮】右侧日期重复排版 → 删掉自绘 Text，只留系统 DatePicker。
+//  【第六轮】「滚完滚轮马上就闪关闭」→ 取消一切自动收起。
+//  【第七轮】「选好日期应自动收」→ 改用 `Menu { DatePicker(.graphical) }`。
+//     → **打脸**：Menu 只装命令，日历根本不渲染 = 打不开。
+//  【第八轮】（v1.1.3）回归 `DatePicker(.compact)` 直接当 List 行 +
+//     `.simultaneousGesture(TapGesture())` 抢回点击。→ 点得开了，但仍不收面板。
 //
-//  ★★★【第八轮】本次（v1.1.3）—— 用户两个反馈：
-//     ① 「日期选择**点击完全不弹出日历选择**，重大 bug」
-//     ② 「收回键盘是**瞬间收回、并无流畅动画**，质疑是否第一方」
+//  ★★★【第九轮】本次（v1.1.4）—— 用户：
+//     「沟通确认的点击红框内日期，收回日期选项栏，但是点击后无收回。依然是反复问题」
 //
-//     ★★ ① 的根因是**多因一果**，两条都得修：
+//     ★ 为什么之前「点了没反应」—— **根因不在本文件，而在收键盘那套链路**：
+//       我们挂在 window 上的 `UITapGestureRecognizer` 对 `UIControl` 一律
+//       `return false`（为了让输入框能聚焦），于是"点面板外"这次触摸
+//       对系统而言**根本没发生** → `.compact` 的私有 popover
+//       永远等不到它那个「点了外面就关闭」的条件。
+//       ➜ 那个手势已在本次**从 `KeyboardDismiss.swift` 整体删除**，
+//         「点弹层外面关闭」这条系统原生路径自行恢复。
 //
-//     【A·结构错】上一轮把日历塞进了 `Menu`：
-//         `Menu { DatePicker(.graphical) }`
-//         `Menu` 的内容区是**命令列表**（Button / Toggle / Picker…），
-//         不是任意视图宿主 —— 塞一个完整 `DatePicker` 进去，
-//         它**根本不会渲染成日历**，所以「点了完全没反应」。
+//     ★ 「选完自动收回」怎么实现而又不重蹈第二/六轮覆辙：
+//       第二/六轮的坑是**在 `.onChange(of: date)` 里收起** —— 滚轮每滚一格
+//       date 就变一次，面板当场被关掉。
+//       ➜ 正解 = **只在"值真的变了"时才顶掉面板，且带一个冷却窗口**：
+//         用户一旦开始滚年月（连续变化）就重新计时，只有**停下超过 `quiet` 秒**、
+//         且此时值确实变了，才认为"他选定了"，这时把 `calendarId` 换掉 →
+//         `DatePicker` 被重建 → 私有 popover 随之消失。
+//         ⚠️ 冷却窗口**不能太短**：用户滚轮停手思考时不能关（第二轮的"马上就消失"）。
+//         ⚠️ 也**不能挂在 `.id(date)` 或纯 `.onChange` 上** —— 那样中间态必炸。
 //
-//     【B·手势被吞】**这恰恰就是用户一直点破的那件事** ——
-//         我们挂在 window 上的 `UITapGestureRecognizer`（收键盘用）
-//         会**抢走 `DatePicker` 的点击**。这不是我们独有的 bug：
-//         iOS 17.1 起 `DatePicker` 的已知回归就是
-//         「层级里存在更高层的 tap 手势 → 点不开、要长按 2~3 秒」。
-//         社区一致的两个解法，本轮**都采纳**：
-//           · `DatePicker` 上加 `.simultaneousGesture(TapGesture())`
-//             （**并存**，不互相取消；⚠️ 不能用 `.onTapGesture`，那会互斥）；
-//           · 手势 delegate 的 `shouldReceive` 里**排除** `DatePicker` 宿主
-//             （已加 `name.contains("DatePicker")`）。
-//
-//     ➜ 正解 = **回归最朴素的标准写法**：
-//        `DatePicker("标题", …).datePickerStyle(.compact)` 直接当 List 行
-//        —— 它自己就是「标题 + 可点日期」，也正是用户一直在用的那个形态。
-//
-//     ② 收键盘：改走第一方 `@FocusState`（见 `KeyboardDismiss.swift`
-//        的 `FocusCoordinator`）。UIKit 的 `resignFirstResponder`
-//        **不带转场上下文** → 键盘「啪」地消失；`focused = nil` 才播系统动画。
-//
-//  ⚠️ 已知取舍（**无法同时满足**，别再试图两全）：
-//     `.compact` 弹出的是 UIKit 私有 popover，它一翻动就**吃列表滚动手势**
-//     —— 这是系统行为。用户本轮把「点得开」排在第一位，所以先恢复可用。
-//     「选完自动收」× 「不吃滚动」×「点得开」三者只能取二。
-//
-//  ⚠️ 触发器的坑：**绝对不要**把收起逻辑挂在 `.onChange(of: date)` 上 ——
-//     滚轮每滚一格 date 就变一次，第二/六/七轮连踩三次，别走老路。
+//     ⚠️ 「点得开」是前提，任何改动都必须先保住它：
+//        `.simultaneousGesture(TapGesture())` **必须留着**（iOS 17.1 回归的解法）。
+//        ⚠️ 别改成 `.onTapGesture`（互斥）、别加 `Menu`（不渲染日历）。
 
 import SwiftUI
 
 /// 模板页统一的日期选择器：标准 `DatePicker(.compact)`，
-/// **点自带日期文字弹出日历**，收起由系统负责（点面板外）。
-///
-/// - 形态：`DatePicker("标题", …).datePickerStyle(.compact)` —— 标题在左、
-///   可点日期在右，一个系统控件搞定，**不做任何自绘/包壳**。
-/// - 为什么这么朴素：`DatePicker` 是 List 里的标准行，层级干净、
-///   最不容易被我们挂在 window 上的收键盘手势抢走点击。
+/// **点自带日期文字弹出日历**，**选定后自动收回**。
 struct LabelDatePicker: View {
     let title: String
     @Binding var date: Date
 
+    /// 面板的重建标识：换一次 = 把当前弹层顶掉（即"收回"）。
+    @State private var calendarId = 0
+    /// 挂起中的回收任务（用户继续滚动时要取消重排）。
+    @State private var recheck: Task<Void, Never>?
+
+    /// 停手多久算"选定了"（秒）。**这是唯一的体感旋钮**：
+    /// 太短 → 滚年月时面板被关掉（第二/六轮的病）；太长 → 选完迟迟不收。
+    private let quiet: TimeInterval = 0.45
+
     var body: some View {
-        // ★ 系统 `DatePicker` 直接当整行：它**自带**标题与日期文字，
-        //   而且那个日期文字就是弹出日历的开关。
-        //   ⚠️ 不要再给它套 `Menu` / 自绘 `Text` / `allowsHitTesting(false)`：
-        //      套 Menu 会让日历根本不渲染（上一轮的重大 bug）；
-        //      自绘会与系统文字重复排版（第五轮删过）。
         DatePicker(title, selection: normalized, displayedComponents: .date)
             .datePickerStyle(.compact)
             // ★★★ 保命的一句：顶掉任何上层 tap 手势对这次点击的抢占。
-            //    iOS 17.1 起 `DatePicker` 若被更高层 `.onTapGesture` 抢到，
-            //    就会「点不开 / 要长按 2~3 秒」。
-            //    挂一个**永远不会满足**的 `simultaneousGesture`，
-            //    在不取消系统内部点击的前提下把优先级拿回来。
-            //    ⚠️ 必须是 `simultaneousGesture`（并存），
-            //      不能用 `.onTapGesture`（会互相取消）。
+            //    ⚠️ 必须是 `simultaneousGesture`（并存），不能用 `.onTapGesture`。
             .simultaneousGesture(TapGesture().onEnded {})
+            .id(calendarId)
+            .onChange(of: date) { _, _ in scheduleRecheck() }
+            // 离开页面时别把任务漏在后台。
+            .onDisappear { recheck?.cancel() }
+    }
+
+    /// 值变了 → **不立刻**收面板，而是等 `quiet` 秒之后再看一眼：
+    /// 这期间若又变了（用户在滚年月），任务被重排，计时重新开始。
+    ///
+    /// ★ 这就是"区分「滚年月」和「选定」"的全部机制：
+    ///   · 滚轮连着滚 → 每次变化都把任务往后推 → 面板一直开着（第二/六轮的病不再犯）；
+    ///   · 停手超过 `quiet` → 任务落地 → 收面板。
+    ///
+    /// ⚠️ 只剩一个已知取舍：**打开面板后什么都不做、停超过 `quiet` 秒也收不到**
+    ///    （因为没触发 `onChange`）。要连这个也收，就得再引入一条手势/定时链，
+    ///    与"不要冗余代码"冲突；而且用户点面板外本来就能关（window 手势已删除，
+    ///    系统原生关闭路径已恢复）。**这条取舍是有意保留的。**
+    private func scheduleRecheck() {
+        recheck?.cancel()
+        recheck = Task { @MainActor in
+            // ⚠️ 用 `try?` 吞掉取消异常后**必须**再查 `isCancelled` ——
+            //    `Task.sleep` 被取消时会抛错，`try?` 会把它变成 nil 继续往下走，
+            //    不查取消状态就会"取消后照样收面板"（等于防抖失效）。
+            try? await Task.sleep(nanoseconds: UInt64(quiet * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            // 换 id → `DatePicker` 重建 → 私有 popover 消失 = 面板收回。
+            calendarId &+= 1
+        }
     }
 
     /// ★ 把外部绑定的值**规范化到当天 0 点**再喂给 DatePicker。
     ///
     /// 为什么必须做：`Date` 是带时分秒的绝对时刻，两个「同一天」的 Date
     /// 并不相等；而且业务上我们**只关心日期**（`kDotsPerMM`、+N 天规则都按天算）。
-    /// 统一压到 0 点后：比较稳定、写入语义干净。
+    /// 统一压到 0 点后：比较稳定、写入语义干净，（也顺带避免了同一天被反复触发）。
     private var normalized: Binding<Date> {
         Binding(
             get: { AppCalendar.shared.startOfDay(for: date) },

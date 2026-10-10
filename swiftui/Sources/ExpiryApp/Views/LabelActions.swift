@@ -226,9 +226,9 @@ enum LabelReprint {
 ///
 /// ★★★ 2026-10-10（第十九轮）**「完成」也删掉了** —— 用户：
 ///   「『完成』按钮也不需要，因为逻辑上是**点击或滑动屏幕任意位置，流畅收起键盘**」。
-///   确实不需要：滑动收键盘已由第一方 `.scrollDismissesKeyboard` 负责、
-///   点空白由我们那个只观察不拦截的手势负责，两者都走 **`@FocusState`**
-///   （`FocusCoordinator`）→ 键盘是**动画**收起的，不再需要这个快捷键。
+///   确实不需要：两条路都在 `KeyboardDismiss.swift` 的第一方实现里 ——
+///   滑动走系统 `.scrollDismissesKeyboard`、点空白走容器上的 `onTapGesture`，
+///   都**直接写页面 `@FocusState`** → 键盘是**动画**收起的，不再需要这个快捷键。
 ///
 ///   ➜ 于是**整条 keyboard accessory bar 被彻底移除** —— 这顺带解决了
 ///     第十八轮那个疑难：以前 accessory bar 上挂过「打印」，

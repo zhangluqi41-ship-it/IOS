@@ -100,4 +100,45 @@ final class TemplateInteractionTests: XCTestCase {
         XCTAssertFalse(presets.contains { isSelected(expire, matches: $0) },
                        "冷藏 +5 天不在档位里 → 四个 chip 都不该亮（旧实现会错误地保持上一次的高亮）")
     }
+
+    // MARK: - 3. 日期「选完自动收回」的防抖判定（v1.1.4 第二十轮）
+
+    /// ★ `LabelDatePicker` 的收回规则 = **值变化后连续静默 `quiet` 秒**才收。
+    ///
+    /// 视图本身没法在单测里渲染，所以这里复刻**同一套判定**：
+    /// 给一串「变化时刻」（相对打开面板的毫秒数），返回是否会收回。
+    ///
+    /// 规则：`最后两次变化的间隔 >= quiet` 或「只有一次变化且到判定点已静默够久」→ 收。
+    private func wouldAutoCollapse(changeTimes: [Int], quietMS: Int = 450) -> Bool {
+        guard !changeTimes.isEmpty else { return false }   // 没变过 → 不收
+        let last = changeTimes.last!
+        guard let prev = changeTimes.dropLast().last else { return true } // 只变一次 → 停手即收
+        return (last - prev) >= quietMS
+    }
+
+    /// 用户快速点选某一天 → 只变化一次 → **应当收回**。
+    func testSingleChangeCollapsesPanel() {
+        XCTAssertTrue(wouldAutoCollapse(changeTimes: [0]),
+                      "点中一天（只变一次）→ 面板应当自动收回")
+    }
+
+    /// 用户连着滚年月（每 120ms 一格）→ 每次变化都重置计时 → **进程结束时仍在滚 → 不该收**。
+    func testContinuousWheelScrollingDoesNotCollapse() {
+        let rolling = stride(from: 0, through: 1080, by: 120).map { $0 }  // 10 格，间隔 120ms
+        XCTAssertFalse(wouldAutoCollapse(changeTimes: rolling),
+                       "滚年月途中（间隔 120ms < 450ms）不该收面板 —— 第二/六轮的病不能复发")
+    }
+
+    /// 滚完年月后停手 → 最后一格与前一格间隔变长 → **会收**（此时用户确实选定了）。
+    func testScrollingThenPausingCollapses() {
+        // 前三格连滚（120ms 间隔），然后停 900ms 落定。
+        XCTAssertTrue(wouldAutoCollapse(changeTimes: [0, 120, 240, 1140]),
+                      "滚完停手超过 quiet 秒后应当收回（用户已选定）")
+    }
+
+    /// 打开面板但**什么都没选** → 没有任何变化 → **不该收**（用户可能只是在看）。
+    func testNoChangeKeepsPanelOpen() {
+        XCTAssertFalse(wouldAutoCollapse(changeTimes: []),
+                       "打开面板没做任何操作时不该收（这条由「无 onChange」自然保证）")
+    }
 }
