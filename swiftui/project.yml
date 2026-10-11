@@ -484,8 +484,34 @@ targets:
         #   ⚠️ 墓碑追加：**popover 内容不给宽度**；**把 `.popover` 挂在行的子控件上**。
         #   ⚠️ 收起判据仍**一个字没改**（`startOfDay` 规范化后的「天」真的变了）。
         #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
-        CURRENT_PROJECT_VERSION: 52
-        MARKETING_VERSION: 1.1.10
+        #
+        # ★★★ 2026-10-11 1.1.11 / build 53（第二十七轮）—— 滚年月也被误收起。
+        #       用户复验 v1.1.10：「现在日历点击完日期确实收回了，但是**选择年月的滚轮后
+        #       也收回了**（不应该收回，只有选择完日期后收回）」。
+        #
+        #   ✔ 界面畸形已修好（浮层是正常宽方块日历）；点某天能收，功能达标。
+        #   ✘ **收起判据错了**：滚年月被误判成"选完日期"。
+        #
+        #   ★★★ 真根因（上一版我的注释写错了）：
+        #     上一版判据 = 「规范化后的『天』变了就收」，注释里还写着
+        #     "左右翻月 / 滚年份 → `selection` 不参与 → 不受影响"。
+        #     **这句是错的**：`.graphical` 日历点顶部标题弹出的**年月滚轮**，
+        #     滚动时会**立即把新值写进 `selection`**（年月变、日尽量保持）
+        #     → `onChange` 触发 → 浮层被误关。
+        #
+        #   ★ 正确判据 = **区分「点网格里的某一天」和「用滚轮换月/换年」**：
+        #       · 点网格里的一天    → 年月**不变**，只换「日」→ 收起 ✔
+        #       · 滚轮换月 / 换年   → 年月**变了**          → 不收 ✔
+        #       · 点相邻月的灰字日期 → 年月变（系统会翻月）  → 不收（用户还在导航）
+        #       · 点中的就是当前这天 → 值不变，`onChange` 不触发 → 不收
+        #     ➜ 抽成纯函数 `LabelTemplate.shouldCollapseAfterDateChange(from:to:)`，可单测。
+        #
+        #   ⚠️ 测试同步重写：第 3 节改成**直接测真函数**（不再复刻规则 ——
+        #      v1.1.7 就是"复刻的规则"与"视图实现"漂移，测试全绿但真机坏）。
+        #   ⚠️ 墓碑追加：**「值变了就收」当判据**；**用防抖计时器猜"滚完了没"**。
+        #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
+        CURRENT_PROJECT_VERSION: 53
+        MARKETING_VERSION: 1.1.11
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -537,8 +563,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.10
-        CURRENT_PROJECT_VERSION: 52
+        MARKETING_VERSION: 1.1.11
+        CURRENT_PROJECT_VERSION: 53
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

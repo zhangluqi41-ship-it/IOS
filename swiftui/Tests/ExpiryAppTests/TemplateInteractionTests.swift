@@ -9,17 +9,18 @@
 //       —— 必须**按天**比对，且**不来自任何存储状态**。
 //       （用户原话：「修改完日期（明显不是 +15 天）后，+15 天依然高亮」）
 //    2. 「按推荐填日期」算出来的档位，必须能被 1 的判定命中。
-//    3. 日期控件只做「规范化到当天」这一件事 + **"选完自动收"必须由
-//       「规范化后的天真的变了」驱动**（v1.1.7 定案，v1.1.9 沿用）——
-//       不许引入防抖计时器、不许用"打开着就收"这种会误伤的判据。
+//    3. 日期控件的「选完自动收」判据：
+//       **只有"年月没变、只是换了某一天"才算"选完日期"**（v1.1.11 定案）——
+//       滚轮换月/换年 **不收**（那是在导航，不是选择）；不许引入防抖计时器。
 //
-//  ⚠️ 视图本身没法在单测里渲染（无 Xcode/模拟器），所以这里复刻的是
-//     `QuickDateChips.isSelected` / `LabelDatePicker.day` **同一套判定规则**，
-//     并把规则本身也测一遍。一旦有人把判定改回去，这里会红。
+//  ⚠️ 视图本身没法在单测里渲染（无 Xcode/模拟器），所以：
+//     · 第 1/2 节复刻 `QuickDateChips.isSelected` 的判定规则；
+//     · 第 3 节**直接测真函数** `LabelTemplate.shouldCollapseAfterDateChange`。
+//   v1.1.7 曾因"测试里复刻的规则"与"视图里的实现"漂移 → 测试全绿但真机是坏的，
+//   所以第 3 节改为**只测真函数**，不再复刻。
 //
-//  ⚠️ v1.1.9（路线 B）只换了「怎么把浮层收起来」的实现手段
-//     （`.compact` 私有面板 → `.popover` + `.graphical`），
-//     **收起判据一个字没改** —— 所以第 3 节的断言原样保留，仍然有效。
+//  ⚠️ v1.1.11 改的是**判据本身**：上一版「值变了就收」会被年月滚轮误触发
+//     （用户报「选择年月的滚轮后也收回了」）。
 //
 
 import XCTest
@@ -146,42 +147,68 @@ final class TemplateInteractionTests: XCTestCase {
                        "23:59 选的 30 日，写回记录也必须是 30 日")
     }
 
-    /// ★★★ 「选完自动收」的判据必须是"规范化后的天真的变了"（v1.1.7 定案，v1.1.9 沿用）。
+    /// ★★★ 「选完自动收」的判据（v1.1.11 第二十七轮 · **最终定案**）。
     ///
-    /// 这条钉住的是「什么时候该收日历浮层」这个判断本身。三条断言：
+    /// 现在**直接测真函数** `LabelTemplate.shouldCollapseAfterDateChange(from:to:)`，
+    /// 不再"复刻规则" —— 复刻的规则和视图里的实现会漂移，这条正是被漂移坑过一次。
     ///
-    /// ① 换了另一天 → 值变 → **必须收**（用户要的核心行为）；
-    /// ② 点中的就是当前这天 → 值不变 → **不能收**（否则点了像没反应、还白抖一下）；
-    /// ③ 翻月份/滚年份 → `selection` 不参与 → **不该收**
-    ///    （这正是当年"防抖计时器"想解决的问题，用"值变了"当判据天然解决）。
+    /// 判据 = **只有「年月没变、只是换了某一天」才算"选完日期"**：
     ///
-    /// ⚠️ 判据必须建立在 `startOfDay` 规范化之后的值上 —— 否则"同一天的不同时刻"
-    ///    会被误判成"变了"，日历会在用户只是重新点了同一天时莫名收起。
-    ///
-    /// ⚠️ v1.1.9 换的只是**收起手段**（`DatePicker` 的 `onChange` → `.popover` 的
-    ///    `onChange`），判据本身不变 —— 这三条断言对新实现同样成立，故原样保留。
-    func testCollapseRuleIsNormalizedDayChange() {
+    /// ① 同月换天   → **收**（用户点网格里的某一天）—— 核心行为；
+    /// ② 换月（日不变）→ **不收**（用户滚月份滚轮导航，**这就是本轮修的 bug**）；
+    /// ③ 换年（日不变）→ **不收**（滚年份滚轮）；
+    /// ④ 同一天（只是时刻不同）→ **不收**（`onChange` 一般不触发，这里兜底）；
+    /// ⑤ 跨年换月（12月→1月）→ **不收**（年月都变）。
+    func testCollapseRuleOnlyOnSameMonthDayChange() {
         let cal = AppCalendar.shared
-        let day10 = cal.date(from: DateComponents(year: 2026, month: 10, day: 10,
-                                                  hour: 9, minute: 0))!
-        let day10Again = cal.date(from: DateComponents(year: 2026, month: 10, day: 10,
-                                                       hour: 21, minute: 30))!
-        let day30 = cal.date(from: DateComponents(year: 2026, month: 10, day: 30,
-                                                  hour: 0, minute: 0))!
+        func d(_ y: Int, _ m: Int, _ day: Int, _ h: Int = 0, _ mi: Int = 0) -> Date {
+            cal.date(from: DateComponents(year: y, month: m, day: day, hour: h, minute: mi))!
+        }
+        func collapse(from a: Date, to b: Date) -> Bool {
+            LabelTemplate.shouldCollapseAfterDateChange(from: a, to: b, calendar: cal)
+        }
 
-        /// 复刻视图里 `onChange(of: day.wrappedValue)` 看到的值 —— 已经是规范化后的。
-        func normalized(_ d: Date) -> Date { cal.startOfDay(for: d) }
+        // ① 同月换天 → 收（用户点网格里的日期）
+        XCTAssertTrue(collapse(from: d(2026, 10, 10), to: d(2026, 10, 30)),
+                      "点中同月的另一天 → 必须收起（用户要的核心行为）")
 
-        // ① 10 日 → 30 日：变 → 收
-        XCTAssertNotEqual(normalized(day10), normalized(day30),
-                          "点中另一天必须触发收起")
+        // ② 换月、日不变 → **不收** ← 本轮修的核心 bug
+        XCTAssertFalse(collapse(from: d(2026, 10, 15), to: d(2026, 11, 15)),
+                       "滚月份滚轮（10/15 → 11/15，日没变）→ 不许收起")
+        XCTAssertFalse(collapse(from: d(2026, 10, 30), to: d(2026, 11, 30)),
+                       "滚月份滚轮带日不变 → 不许收起")
 
-        // ② 同一天的 09:00 → 21:30：规范化后**相同** → 不收
-        XCTAssertEqual(normalized(day10), normalized(day10Again),
-                       "同一天（只是时刻不同）规范化后相等 → 不许触发收起")
+        // ③ 换年、日不变 → **不收**
+        XCTAssertFalse(collapse(from: d(2026, 10, 15), to: d(2027, 10, 15)),
+                       "滚年份滚轮（2026 → 2027，日没变）→ 不许收起")
 
-        // ③ 规范化是幂等的纯投影 —— 不夹带任何状态/副作用（不许再引入防抖计时器）。
-        XCTAssertEqual(normalized(normalized(day30)), normalized(day30),
-                       "规范化必须幂等：收起逻辑不许引入冷却窗口或计时状态")
+        // ④ 同一天、只是时刻不同 → 不收
+        XCTAssertFalse(collapse(from: d(2026, 10, 10, 9, 0), to: d(2026, 10, 10, 21, 30)),
+                       "同一天的不同时刻 → 不许收起（规范化后相等）")
+
+        // ⑤ 跨年换月（12月 → 次年1月）→ 不收
+        XCTAssertFalse(collapse(from: d(2026, 12, 15), to: d(2027, 1, 15)),
+                       "滚到次年 1 月 → 不许收起")
+    }
+
+    /// ★ 滚轮换月时，`日` 可能被"夹"到月末（如 10/31 → 11/30）——
+    ///   此时「日」也变了，但**年月仍然变了** → 判定依然是"不收"。
+    ///   这条钉住"年月优先"这个判据顺序（不能先看日）。
+    func testCollapseRuleMonthChangeWinsEvenIfDayClamped() {
+        let cal = AppCalendar.shared
+        func d(_ y: Int, _ m: Int, _ day: Int) -> Date {
+            cal.date(from: DateComponents(year: y, month: m, day: day))!
+        }
+        XCTAssertFalse(
+            LabelTemplate.shouldCollapseAfterDateChange(
+                from: d(2026, 10, 31), to: d(2026, 11, 30), calendar: cal),
+            "10/31 滚到 11/30（日被夹到月末，日也变了）→ 仍然是滚轮导航，不许收起"
+        )
+        // 对照组：同月内换天，判据不受影响
+        XCTAssertTrue(
+            LabelTemplate.shouldCollapseAfterDateChange(
+                from: d(2026, 11, 1), to: d(2026, 11, 30), calendar: cal),
+            "同一个月内点另一天 → 收起"
+        )
     }
 }
