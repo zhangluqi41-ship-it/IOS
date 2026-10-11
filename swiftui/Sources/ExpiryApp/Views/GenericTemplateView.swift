@@ -21,9 +21,18 @@ struct GenericTemplateView: View {
     var body: some View {
         List {
             Section {
+                // ★★★ 2026-10-11（第二十四轮）**修掉一个真 bug**：
+                //   原来 `.focused(...)` 被挂在 `field(...)` 的**返回值**上，
+                //   而 `field()` 返回的是外层 `HStack` ——
+                //   `.focused` 对 `HStack` 无效（它必须作用在 `TextField` 自身），
+                //   于是输入框**根本没绑定到 `focus`**，
+                //   `focus.wrappedValue = nil` 就等于**什么都没做**
+                //   —— 这是"点了完全没反应"的直接原因之一。
+                //
+                //   ➜ 正解：把 `.focused` 传进 `field()`，写在 **`TextField` 自己身上**
+                //     （与 `MakerField` / `KombuchaTemplateView` 的写法保持一致）。
                 field(icon: "tag", placeholder: "输入物料名称", text: $title,
                       limit: LabelTemplate.maxTitleLength)
-                    .focused($focus, equals: AnyHashable("title"))
                 MakerField(maker: $maker, focused: $focus)
             } footer: {
                 Text("会记住上次填写的操作人")
@@ -48,6 +57,9 @@ struct GenericTemplateView: View {
         }
     }
 
+    /// ★★★ `.focused` 必须写在 **`TextField` 自己身上**（不能挂外层 `HStack`）。
+    ///   `field()` 是这里的**唯一**一处封装了 `TextField` 的辅助函数，
+    ///   所以把 `focus` 作为参数传进来、在 `TextField` 上直接 `.focused(...)`。
     private func field(icon: String, placeholder: String,
                        text: Binding<String>, limit: Int) -> some View {
         HStack(spacing: 12) {
@@ -55,6 +67,7 @@ struct GenericTemplateView: View {
                 .foregroundStyle(Theme.brand)
                 .frame(width: 22)
             TextField(placeholder, text: text)
+                .focused($focus, equals: AnyHashable("title"))
                 .onChange(of: text.wrappedValue) { _, value in
                     if value.count > limit { text.wrappedValue = String(value.prefix(limit)) }
                 }

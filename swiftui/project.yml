@@ -423,8 +423,8 @@ targets:
         #      `window` 级手势（吞系统弹层关闭条件，第 19 轮）；
         #      `resignFirstResponder`（无转场动画，第 20 轮）；
         #      日期 chip 的 `.buttonStyle(.bordered)`（蓝底蓝字，第 22 轮）。
-        CURRENT_PROJECT_VERSION: 49
-        MARKETING_VERSION: 1.1.7
+        CURRENT_PROJECT_VERSION: 50
+        MARKETING_VERSION: 1.1.8
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -476,8 +476,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.7
-        CURRENT_PROJECT_VERSION: 49
+        MARKETING_VERSION: 1.1.8
+        CURRENT_PROJECT_VERSION: 50
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
