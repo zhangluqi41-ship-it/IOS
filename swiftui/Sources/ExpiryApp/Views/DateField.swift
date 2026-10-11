@@ -4,6 +4,34 @@
 //
 //  ───────────── 十四轮演变的最终结论（v1.1.9 · 路线 B 定案） ─────────────
 //
+//  ★★★ 2026-10-11（第二十六轮）—— 用户复验 v1.1.9：
+//
+//      「功能测试完全没问题，但是界面又畸形了」（附真机截图）
+//
+//  ✔ **功能对了**：点日期行能弹、选完能带动画收起、日期文字是系统色。
+//  ✘ **界面畸形**：浮层变成一条 ~120pt 的**竖向细条**，箭头指着行的中段；
+//    里面的 `.graphical` 日历被**横向压扁 + 裁切**（只看得见「14 / 21 / 28」一列），
+//    整块浮层压在下面的快捷档位 chip 上 —— 完全没法用。
+//
+//  ★★★ 真根因（**不是锚点问题，是弹层内容没给宽度**）：
+//
+//    **iPhone 上 `.presentationCompactAdaptation(.popover)` 不会"按内容撑开"弹层。**
+//    它会按锚点算出一个很窄的宽度，然后让 `.graphical` 日历**硬塞进去被压扁**。
+//    `.graphical` 的固有宽度（~320pt）在普通布局里会自动生效（它自带
+//    intrinsic size），但在 popover 里**不参与 sizing**，必须我们显式指定。
+//
+//    ➜ 社区通行且实测有效的写法 = 给日历一个 **`.frame(width: 320)`**。
+//      这是"给系统一个尺寸建议"的正规用法，不是自造控件。
+//
+//  ★ 本版同时修掉锚点：`.popover` 挂在**满宽的 `HStack` 容器**上
+//    （而不是 `Button` 自身）—— 两者叠加，浮层才既宽、又对准整行居中。
+//
+//  ★★ 教训（第三次同型）：**"我加了 `.frame(maxWidth:.infinity)`" ≠ "锚点变宽了"**。
+//     凡"锚点类 / 尺寸类"的修饰符（`.popover` / `.sheet` / `.frame(width:)`），
+//     都要独立确认**它到底作用在哪个视图、哪个阶段**。
+//     ➜ 与第 23/24 轮（`.focused` 挂错对象、`.background` 挂错层）**完全同型**。
+//     又一次证明：**"我加了这段代码" ≠ "这段代码在起作用"**。
+//
 //  ★★★ 2026-10-11（第二十五轮）—— 用户拍板走「路线 B」：
 //
 //      「直接上 b，但是你要自己检查全部代码，不要出现问题」
@@ -83,8 +111,15 @@
 //   ⑦ 日期文字用 `Theme.brand` —— 用户要的是系统黑/白（第 11/22 轮）；
 //   ⑧ `.background(手势层)` —— 被不透明的 `List` 遮住，收不到触摸（第 23 轮）。
 //
+//  ★★★ ⑨ **popover 内容不给宽度** —— iPhone 上 `.presentationCompactAdaptation(.popover)`
+//        不会按内容撑开，会把 `.graphical` 日历**压扁成竖条**（第 26 轮用户实机截图）。
+//        **永远记得给弹层内容一个 `.frame(width: 320)`。**
+//  ★★★ ⑩ **把 `.popover` 挂在 `List` 行的"子控件"上** —— 锚点会是那个子控件的小框，
+//        而不是整行；要挂在**撑满整行宽度的容器**上（第 11 / 26 轮）。
+//
 //  ★ 一句话：**「关不掉某个系统弹层」的困境，正解是换一个公开、可控的第一方 API，
 //    而不是用重建控件的歪招。**
+//  ★ 另一句：**popover 是"两件事"——锚点是谁 + 内容多大。两个都要显式管。**
 //
 
 import SwiftUI
@@ -126,38 +161,64 @@ struct LabelDatePicker: View {
         .year().month().day()
 
     var body: some View {
-        Button {
-            showing = true
-        } label: {
-            HStack {
-                Text(title)
-                    .foregroundStyle(.primary)
-                Spacer()
-                // ★ 日期文字 = **系统标签色**（浅色下黑、深色下白），不是品牌蓝。
-                Text(day.wrappedValue, format: Self.slashy)
-                    .foregroundStyle(.primary)
-                    .monospacedDigit()
+        // ★★★ 关键结构：**外层是满宽容器，`.popover` 挂在容器上**（不挂在 `Button` 上）。
+        //
+        //   ⚠️ 为什么不能直接把 `.popover` 挂在 `Button` 上 ——
+        //      `.popover` 的锚点 = **它附着视图的 layout frame**。
+        //      第 11 / 25 两轮我都是挂在 `Button`（或它的行内小控件）上，
+        //      即便外面套了 `.frame(maxWidth:.infinity)`，系统取到的仍是
+        //      **按钮自身那个又窄又高的矩形** → 箭头只指着行的中段。
+        //   ➜ 必须让 `.popover` 附在一个**真正撑满整行宽度**的容器上。
+        HStack(spacing: 0) {
+            Button {
+                showing = true
+            } label: {
+                HStack {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    // ★ 日期文字 = **系统标签色**（浅色下黑、深色下白），不是品牌蓝。
+                    Text(day.wrappedValue, format: Self.slashy)
+                        .foregroundStyle(.primary)
+                        .monospacedDigit()
+                }
+                // ★ 撑满矩形，保证整行都能点中。
+                .contentShape(Rectangle())
             }
-            // ★ 满宽 + 明确行高：给 `.popover` 一个**稳定、方正**的锚点区域
-            //   （第 11 轮浮层飘走的成因之一就是锚点太窄）。
-            .frame(maxWidth: .infinity, minHeight: 24)
-            // ★ 撑满矩形，保证整行都能点中。
-            .contentShape(Rectangle())
+            // ★ `.plain`：不要给文字染上系统强调色（那会变成"蓝字白底按钮"，
+            //   和用户要的"系统黑/白"冲突）。
+            .buttonStyle(.plain)
         }
-        // ★ `.plain`：不要给文字染上系统强调色（那会变成"蓝字白底按钮"，
-        //   和用户要的"系统黑/白"冲突）。
-        .buttonStyle(.plain)
+        // ★★ 锚点本体：**满宽 + 明确行高** —— 这才是给 `.popover` 用的矩形。
+        .frame(maxWidth: .infinity, minHeight: 24)
         // ★★★ 第一方弹层。`isPresented` 归我们掌控 → 能主动、带动画地收起。
-        //   ⚠️ **不传 `arrowEdge`** —— 交给系统按可用空间自己挑方向（原生行为）。
-        //     硬编码 `.bottom` 会把它推到锚点上方，屏幕上半部的行就会"飘到导航栏"。
+        //
+        //   ⚠️ **不传 `arrowEdge`** —— 默认 `nil` 即"系统自选最优方向"（苹果文档原文
+        //      "the system allowing any arrow edge"）。硬编码 `.bottom` 会强制把浮层
+        //      放到锚点**上方**，屏幕上半部的行就没地方放 → "飘到导航栏"（第 11 轮）。
+        //
+        //   ⚠️ **不改 `attachmentAnchor`**，保持默认 `.rect(.bounds)` ——
+        //      锚点 = 上面那个满宽容器的 bounds。
         .popover(isPresented: $showing) {
             DatePicker(title, selection: day, displayedComponents: .date)
                 .datePickerStyle(.graphical)
                 .labelsHidden()
+                // ★★★ 第二十六轮的**真凶**：popover 内容必须**显式给宽度**！
+                //
+                //   实测现象（用户截图）：浮层变成一条 ~120pt 的**竖向细条**，
+                //   里面的 `.graphical` 日历被**横向压扁 + 裁切**（只能看见
+                //   「14 / 21 / 28」一列），完全没法用。
+                //
+                //   根因：**iPhone 上 `.presentationCompactAdaptation(.popover)` 不会
+                //   让弹层"按内容撑开"** —— 它会按锚点算一个很窄的宽度，
+                //   然后把 `.graphical` 日历**硬塞进去压扁**。
+                //   `.graphical` 的固有宽度（~320pt）在普通布局里会自动生效，
+                //   但在 popover 里**不参与 sizing**，必须我们显式指定。
+                //
+                //   ➜ 社区通行且实测有效的写法：给日历一个 `.frame(width: 320)`。
+                //     （这是"给系统一个尺寸建议"的正规用法，不是自造控件。）
+                .frame(width: 320)
                 .padding()
-                // ★ iPhone 上 `.popover` 默认会自适应成 sheet（半屏卡），
-                //   必须用 `.presentationCompactAdaptation(.popover)`（iOS 16.4+）
-                //   强制保持「浮层 + 箭头」的原生形态。
                 .presentationCompactAdaptation(.popover)
                 .onChange(of: day.wrappedValue) { _, _ in
                     // ★★★ 收起判据 = **规范化后的「天」真的变了**。

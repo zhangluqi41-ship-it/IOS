@@ -461,8 +461,31 @@ targets:
         #   ⚠️ 墓碑追加：**`@FocusState`/`.focused` 收 `DatePicker` 浮层**（死代码）；
         #      `.popover` 的 `arrowEdge` 硬编码；日期文字用 `Theme.brand`。
         #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
-        CURRENT_PROJECT_VERSION: 51
-        MARKETING_VERSION: 1.1.9
+        #
+        # ★★★ 2026-10-11 1.1.10 / build 52（第二十六轮）—— 日历浮层**界面畸形**。
+        #       用户复验 v1.1.9：「功能测试完全没问题，但是界面又畸形了」（附真机截图）。
+        #
+        #   ✔ 功能已对：弹得出、选完带动画收、日期文字是系统色。
+        #   ✘ 畸形表现：浮层是一条 ~120pt 的**竖向细条**，箭头指着行的中段，
+        #      `.graphical` 日历被**横向压扁 + 裁切**（只看得见「14/21/28」一列），
+        #      整块浮层压在下面的快捷档位 chip 上。
+        #
+        #   ★★★ 真根因（两件事，都要显式管）：
+        #     ① **popover 内容没给宽度。** iPhone 上
+        #        `.presentationCompactAdaptation(.popover)` **不会按内容撑开弹层** ——
+        #        它按锚点算一个很窄的宽度，把 `.graphical` 日历**硬塞进去压扁**。
+        #        `.graphical` 的固有宽度（~320pt）在普通布局里会自动生效，
+        #        但在 popover 里**不参与 sizing**。
+        #        ➜ 必须显式 `.frame(width: 320)`（社区通行写法，非自造控件）。
+        #     ② **`.popover` 挂在了 `List` 行的子控件（`Button`）上** ——
+        #        锚点 = 那个按钮的小框，不是整行。
+        #        ➜ 改挂在**撑满整行宽度的 `HStack` 容器**上。
+        #
+        #   ⚠️ 墓碑追加：**popover 内容不给宽度**；**把 `.popover` 挂在行的子控件上**。
+        #   ⚠️ 收起判据仍**一个字没改**（`startOfDay` 规范化后的「天」真的变了）。
+        #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
+        CURRENT_PROJECT_VERSION: 52
+        MARKETING_VERSION: 1.1.10
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -514,8 +537,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.9
-        CURRENT_PROJECT_VERSION: 51
+        MARKETING_VERSION: 1.1.10
+        CURRENT_PROJECT_VERSION: 52
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
