@@ -23,52 +23,6 @@ enum AppCalendar {
     }()
 }
 
-// MARK: - 日期选择器的「收起判据」
-
-/// 日历浮层「什么时候该自动收起」的判定 —— **纯函数，可单测**。
-///
-/// ─────────── 2026-10-11 第二十七轮：修「滚年月也被收起」───────────
-///
-/// 用户复验 v1.1.10：
-///   「现在日历点击完日期确实收回了，**但是选择年月的滚轮后也收回了**
-///     （不应该收回，只有选择完日期后收回）」
-///
-/// ★ 我上一版判据写的是「规范化后的『天』变了就收」，注释里还写了一句
-///   "左右翻月 / 滚年份 → `selection` 不参与 → 不受影响" ——
-///   **这条注释是错的**：`.graphical` 日历点顶部标题弹出的**年月滚轮**
-///   在滚动时会**立即把新值写进 `selection`**（年月变、日尽量保持），
-///   于是 `onChange` 触发 → `showing = false` → 浮层被误关。
-///
-/// ★ 正确判据 = **区分「点网格里的某一天」和「用滚轮换月/换年」**：
-///
-///   · 点网格里的一天  → **年月不变**，只有「日」变  → 应当收起 ✔
-///   · 滚轮换月 / 换年 → **年月变了**，日通常不变    → 不该收起 ✔
-///   · 点相邻月的灰字日期 → 年月会变（系统还会翻月）  → 不收（用户还在导航，合理）
-///   · 点中的就是当前这天 → 值不变 → `onChange` 根本不触发 → 不收
-///
-/// ➜ 所以判据落在一句话上：**「年月没变、只是换了某一天」才算"选完日期"。**
-///
-/// ⚠️ 别再退回「值变了就收」—— 那正是本轮被否掉的做法。
-/// ⚠️ 别引入防抖计时器来"猜"用户滚完了没 —— 判据本身就该是确定的。
-static func shouldCollapseAfterDateChange(from old: Date, to new: Date,
-                                          calendar: Calendar = AppCalendar.shared) -> Bool {
-    let oldDay = calendar.startOfDay(for: old)
-    let newDay = calendar.startOfDay(for: new)
-
-    // ① 同一天 → 什么都没选（`onChange` 一般也不会触发，这里兜个底）。
-    guard oldDay != newDay else { return false }
-
-    // ② 年月只要变了 → 判定为「滚轮导航」（换月/换年），**不收起**。
-    let oldYear = calendar.component(.year, from: oldDay)
-    let newYear = calendar.component(.year, from: newDay)
-    let oldMonth = calendar.component(.month, from: oldDay)
-    let newMonth = calendar.component(.month, from: newDay)
-    guard oldYear == newYear, oldMonth == newMonth else { return false }
-
-    // ③ 年月没变、只是换了一天 → 这才是「点了网格里的日期」→ 收起。
-    return true
-}
-
 // MARK: - 奶制品类型
 
 /// 奶制品类型 → 推荐效期（天）。
@@ -148,6 +102,56 @@ enum LabelTemplate {
     static func clamp(_ text: String, _ max: Int = maxTitleLength) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.count > max ? String(trimmed.prefix(max)) : trimmed
+    }
+
+    // MARK: - 日期选择器的「收起判据」
+
+    /// 日历浮层「什么时候该自动收起」的判定 —— **纯函数，可单测**。
+    ///
+    /// ─────────── 2026-10-11 第二十七轮：修「滚年月也被收起」───────────
+    ///
+    /// 用户复验 v1.1.10：
+    ///   「现在日历点击完日期确实收回了，**但是选择年月的滚轮后也收回了**
+    ///     （不应该收回，只有选择完日期后收回）」
+    ///
+    /// ★ 我上一版判据写的是「规范化后的『天』变了就收」，注释里还写了一句
+    ///   "左右翻月 / 滚年份 → `selection` 不参与 → 不受影响" ——
+    ///   **这条注释是错的**：`.graphical` 日历点顶部标题弹出的**年月滚轮**
+    ///   在滚动时会**立即把新值写进 `selection`**（年月变、日尽量保持），
+    ///   于是 `onChange` 触发 → `showing = false` → 浮层被误关。
+    ///
+    /// ★ 正确判据 = **区分「点网格里的某一天」和「用滚轮换月/换年」**：
+    ///
+    ///   · 点网格里的一天  → **年月不变**，只有「日」变  → 应当收起 ✔
+    ///   · 滚轮换月 / 换年 → **年月变了**，日通常不变    → 不该收起 ✔
+    ///   · 点相邻月的灰字日期 → 年月会变（系统还会翻月）  → 不收（用户还在导航，合理）
+    ///   · 点中的就是当前这天 → 值不变 → `onChange` 根本不触发 → 不收
+    ///
+    /// ➜ 所以判据落在一句话上：**「年月没变、只是换了某一天」才算"选完日期"。**
+    ///
+    /// ⚠️ 别再退回「值变了就收」—— 那正是本轮被否掉的做法。
+    /// ⚠️ 别引入防抖计时器来"猜"用户滚完了没 —— 判据本身就该是确定的。
+    ///
+    /// ⚠️⚠️ 必须写在 `enum LabelTemplate` **内部**：Swift 不允许「顶层 static func」
+    ///     （`static methods may only be declared on a type`）——
+    ///     v1.1.11 首次推 CI 就是踩了这个坑（两个 job 同时编译失败）。
+    static func shouldCollapseAfterDateChange(from old: Date, to new: Date,
+                                              calendar: Calendar = AppCalendar.shared) -> Bool {
+        let oldDay = calendar.startOfDay(for: old)
+        let newDay = calendar.startOfDay(for: new)
+
+        // ① 同一天 → 什么都没选（`onChange` 一般也不会触发，这里兜个底）。
+        guard oldDay != newDay else { return false }
+
+        // ② 年月只要变了 → 判定为「滚轮导航」（换月/换年），**不收起**。
+        let oldYear = calendar.component(.year, from: oldDay)
+        let newYear = calendar.component(.year, from: newDay)
+        let oldMonth = calendar.component(.month, from: oldDay)
+        let newMonth = calendar.component(.month, from: newDay)
+        guard oldYear == newYear, oldMonth == newMonth else { return false }
+
+        // ③ 年月没变、只是换了一天 → 这才是「点了网格里的日期」→ 收起。
+        return true
     }
 
     private static let weekCn = ["日", "一", "二", "三", "四", "五", "六"]
