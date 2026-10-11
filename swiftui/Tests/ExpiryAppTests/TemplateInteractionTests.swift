@@ -10,12 +10,16 @@
 //       （用户原话：「修改完日期（明显不是 +15 天）后，+15 天依然高亮」）
 //    2. 「按推荐填日期」算出来的档位，必须能被 1 的判定命中。
 //    3. 日期控件只做「规范化到当天」这一件事 + **"选完自动收"必须由
-//       「规范化后的天真的变了」驱动**（v1.1.7 定案）——
+//       「规范化后的天真的变了」驱动**（v1.1.7 定案，v1.1.9 沿用）——
 //       不许引入防抖计时器、不许用"打开着就收"这种会误伤的判据。
 //
 //  ⚠️ 视图本身没法在单测里渲染（无 Xcode/模拟器），所以这里复刻的是
 //     `QuickDateChips.isSelected` / `LabelDatePicker.day` **同一套判定规则**，
 //     并把规则本身也测一遍。一旦有人把判定改回去，这里会红。
+//
+//  ⚠️ v1.1.9（路线 B）只换了「怎么把浮层收起来」的实现手段
+//     （`.compact` 私有面板 → `.popover` + `.graphical`），
+//     **收起判据一个字没改** —— 所以第 3 节的断言原样保留，仍然有效。
 //
 
 import XCTest
@@ -104,13 +108,14 @@ final class TemplateInteractionTests: XCTestCase {
                        "冷藏 +5 天不在档位里 → 四个 chip 都不该亮（旧实现会错误地保持上一次的高亮）")
     }
 
-    // MARK: - 3. 日期控件（v1.1.7 第二十三轮 · 定案）
+    // MARK: - 3. 日期控件（v1.1.9 第二十五轮 · 路线 B 定案）
 
     /// ★ `LabelDatePicker` 的**日期文字**必须与写入记录的日子是同一天（规范化后相等）。
     ///
-    /// 背景：v1.1.6 起日期控件回归**一行原生 `DatePicker(.compact)`**，
-    /// 它读的是 `startOfDay` 之后的绑定值 —— 这里钉住"显示值 == 真相值"，
+    /// 背景：日期控件只读 `startOfDay` 之后的绑定值 —— 这里钉住"显示值 == 真相值"，
     /// 一旦有人把规范化去掉（或改成显示未规范化的 `date`），这条会红。
+    /// ⚠️ v1.1.9 起主行的 `Text(_:format:)` 读的就是这个规范化值，
+    ///    所以这条断言对新实现**更加直接对应**。
     func testDisplayedDayEqualsNormalizedBinding() {
         let cal = AppCalendar.shared
         // 带时分秒的"真实时刻"（用户实际会拿到的那种 Date）。
@@ -141,7 +146,7 @@ final class TemplateInteractionTests: XCTestCase {
                        "23:59 选的 30 日，写回记录也必须是 30 日")
     }
 
-    /// ★★★ v1.1.7：**「选完自动收」的判据必须是"规范化后的天真的变了"。**
+    /// ★★★ 「选完自动收」的判据必须是"规范化后的天真的变了"（v1.1.7 定案，v1.1.9 沿用）。
     ///
     /// 这条钉住的是「什么时候该收日历浮层」这个判断本身。三条断言：
     ///
@@ -152,6 +157,9 @@ final class TemplateInteractionTests: XCTestCase {
     ///
     /// ⚠️ 判据必须建立在 `startOfDay` 规范化之后的值上 —— 否则"同一天的不同时刻"
     ///    会被误判成"变了"，日历会在用户只是重新点了同一天时莫名收起。
+    ///
+    /// ⚠️ v1.1.9 换的只是**收起手段**（`DatePicker` 的 `onChange` → `.popover` 的
+    ///    `onChange`），判据本身不变 —— 这三条断言对新实现同样成立，故原样保留。
     func testCollapseRuleIsNormalizedDayChange() {
         let cal = AppCalendar.shared
         let day10 = cal.date(from: DateComponents(year: 2026, month: 10, day: 10,
