@@ -377,8 +377,54 @@ targets:
         #   ⚠️ 墓碑（**一个都别再写回来**）：`.id()` 重建控件 / `Menu { DatePicker }` /
         #      `.onChange(of: date)` 收面板 / 防抖计时器 / `Button`+`.popover` 自绘日期行 /
         #      自绘 `Text` 显示日期 / **容器级** `.contentShape`。
-        CURRENT_PROJECT_VERSION: 48
-        MARKETING_VERSION: 1.1.6
+        #
+        # ★★★ 2026-10-11 1.1.7 / build 49（第二十三轮）—— 用户复验 v1.1.6 报三条：
+        #   「① 键盘：现在点和滑，全部都不收起键盘
+        #     ② 点击日期后也不收回日历选项了
+        #     ③ 颜色不对，改成原来的颜色」
+        #
+        #   ★ 本轮最重要的收获：**v1.1.6 的三条修复全部没生效**（已用 `ip_tool.py apps`
+        #     确认手机上装的确实是 1.1.6），说明我的因果判断有根本性偏差。
+        #     逐条重新定位后：
+        #
+        #   ① 键盘"点和滑都不收"的两个真实原因：
+        #      · **"滑"不是被抢了手势，而是 `List` 内容不满一屏、根本滚不动** ——
+        #        模板页（名称/操作人/日期/打印）一屏显示完，`.scrollDismissesKeyboard`
+        #        没有滚动事件可响应。
+        #      · **"点"是我把命中区做小了** —— 第 22 轮只在 `List` 末尾放了一行
+        #        「收起键盘」按钮，用户点页面其他空白处当然没反应。
+        #        用户的原话一直是「**点击屏幕任意位置**」。
+        #      ➜ 定案：新增 `BackgroundTapDismisser`（`UIViewRepresentable`），
+        #        用**第一方 UIKit 手势**铺在页面底层：
+        #          · `cancelsTouchesInView = false` → 绝不吞掉控件的触摸；
+        #          · `delegate.shouldReceive` 遇 `UIControl` 返回 `false` → 点控件不收起；
+        #          · 挂在**背景层（`List` 之下）** → 滚动时手指落在 `List` 上，
+        #            手势收不到触摸 → **完全不影响滚动**（第 21 轮的病根正是这个）。
+        #        `KeyboardDismissRow` 及其六处插入**全部删除**。
+        #
+        #   ② "日期点完不收" = 第 22 轮把「选完自动收」整个**放弃**了，做过头。
+        #      原生 `.compact` 浮层**只能靠"点外面"关**，且会飘到屏幕上方盖住内容。
+        #      ➜ 定案：`LabelDatePicker` 用 `@FocusState` + `.focused(_:)` 补回这个行为 ——
+        #        点中某天 → **规范化后的「天」真的变了** → `isFocused = false`
+        #        → 系统**自己**播收起动画。
+        #        ⚠️ **绝不重建控件**（`.id()` 会连带销毁正在弹的浮层，第 2/6/9/11 轮的病）；
+        #        ⚠️ 判据必须用 `startOfDay` 规范化后的值（同一天只是时刻不同 → 不收）；
+        #        ⚠️ 不需要防抖计时器：`selection` 只在点到某天时变，翻月份不碰它。
+        #
+        #   ③ 颜色 = 我自作主张改坏的。对照用户给的改前/改后两张图可确认：
+        #      · 原版（用户要的）= `Color(.tertiarySystemFill)` 深灰胶囊 + `.primary` 文字，
+        #        选中 = `Theme.brand` 蓝底白字（= **v1.1.3 那套写法**，`git show 53c1d64`）；
+        #      · 我改成 `.buttonStyle(.bordered/.borderedProminent)` 后，
+        #        `.tint(Theme.brand)` 同时作用于底和字 → 「实心蓝 + 蓝字」，四个还全同色。
+        #      ➜ 恢复 v1.1.3 写法（它本来就是系统语义色，自动适配深/浅模式）。
+        #
+        #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
+        #   ⚠️ 墓碑追加：**`List` 容器上**的 `.contentShape`+`.onTapGesture`（抢滚动，第 21 轮）；
+        #      `window` 级手势（吞系统弹层关闭条件，第 19 轮）；
+        #      `resignFirstResponder`（无转场动画，第 20 轮）；
+        #      日期 chip 的 `.buttonStyle(.bordered)`（蓝底蓝字，第 22 轮）。
+        CURRENT_PROJECT_VERSION: 49
+        MARKETING_VERSION: 1.1.7
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -430,8 +476,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.6
-        CURRENT_PROJECT_VERSION: 48
+        MARKETING_VERSION: 1.1.7
+        CURRENT_PROJECT_VERSION: 49
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

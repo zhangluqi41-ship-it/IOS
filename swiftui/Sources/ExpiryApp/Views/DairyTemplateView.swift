@@ -58,9 +58,6 @@ struct DairyTemplateView: View {
             } footer: {
                 Text("会记住上次填写的操作人")
             }
-
-            // ★ 键盘：点这一行收键盘（行级，不碰 List 容器 → 不影响滚动）。
-            Section { KeyboardDismissRow(focus: $focus) }
         }
         .navigationTitle("奶制品")
         .navigationBarTitleDisplayMode(.inline)

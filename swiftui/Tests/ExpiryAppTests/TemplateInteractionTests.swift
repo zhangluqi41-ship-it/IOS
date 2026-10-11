@@ -9,8 +9,9 @@
 //       —— 必须**按天**比对，且**不来自任何存储状态**。
 //       （用户原话：「修改完日期（明显不是 +15 天）后，+15 天依然高亮」）
 //    2. 「按推荐填日期」算出来的档位，必须能被 1 的判定命中。
-//    3. 日期控件只做「规范化到当天」这一件事，**不许夹带收起/计时等副作用**
-//       （v1.1.6 定案：所有"选完自动收"的手段都已被否掉，见下方测试注释）。
+//    3. 日期控件只做「规范化到当天」这一件事 + **"选完自动收"必须由
+//       「规范化后的天真的变了」驱动**（v1.1.7 定案）——
+//       不许引入防抖计时器、不许用"打开着就收"这种会误伤的判据。
 //
 //  ⚠️ 视图本身没法在单测里渲染（无 Xcode/模拟器），所以这里复刻的是
 //     `QuickDateChips.isSelected` / `LabelDatePicker.day` **同一套判定规则**，
@@ -103,7 +104,7 @@ final class TemplateInteractionTests: XCTestCase {
                        "冷藏 +5 天不在档位里 → 四个 chip 都不该亮（旧实现会错误地保持上一次的高亮）")
     }
 
-    // MARK: - 3. 日期控件（v1.1.6 第二十二轮 · 定案）
+    // MARK: - 3. 日期控件（v1.1.7 第二十三轮 · 定案）
 
     /// ★ `LabelDatePicker` 的**日期文字**必须与写入记录的日子是同一天（规范化后相等）。
     ///
@@ -140,29 +141,39 @@ final class TemplateInteractionTests: XCTestCase {
                        "23:59 选的 30 日，写回记录也必须是 30 日")
     }
 
-    /// ★★★ v1.1.6 定案：**日期控件不再有"选完自动收"这回事。**
+    /// ★★★ v1.1.7：**「选完自动收」的判据必须是"规范化后的天真的变了"。**
     ///
-    /// 这条测试的意义是**反向**的：它断言"我们**没有**引入任何收起逻辑"。
+    /// 这条钉住的是「什么时候该收日历浮层」这个判断本身。三条断言：
     ///
-    /// 十二轮的历史证明，所有"选完自动收"的手段都有代价：
-    ///   · `.id(...)` 重建       → 无动画 + 样式退化（第 2/6/9 轮）
-    ///   · `Menu { DatePicker }` → 日历根本不渲染（第 7 轮）
-    ///   · `.onChange` 收面板    → 滚轮每格触发，面板闪关（第 2/6 轮）
-    ///   · 防抖计时器            → 自造冷却窗口（第 10/11 轮）
-    ///   · `Button` + `.popover` → 锚点飘到导航栏 + 阻断交互 + 破坏配色（第 11 轮）
-    /// 全部被用户否掉。系统原生的"点日历外面即关闭"体验上等价、且零风险。
-    func testNoCustomCollapseRuleExists() {
-        // 日期控件只做一件事：把绑定值规范化到当天 0 点。
-        // 任何"什么时候收起来"的判断都**不该存在**于我们的代码里。
+    /// ① 换了另一天 → 值变 → **必须收**（用户要的核心行为）；
+    /// ② 点中的就是当前这天 → 值不变 → **不能收**（否则点了像没反应、还白抖一下）；
+    /// ③ 翻月份/滚年份 → `selection` 不参与 → **不该收**
+    ///    （这正是当年"防抖计时器"想解决的问题，用"值变了"当判据天然解决）。
+    ///
+    /// ⚠️ 判据必须建立在 `startOfDay` 规范化之后的值上 —— 否则"同一天的不同时刻"
+    ///    会被误判成"变了"，日历会在用户只是重新点了同一天时莫名收起。
+    func testCollapseRuleIsNormalizedDayChange() {
         let cal = AppCalendar.shared
-        let anyDay = cal.date(from: DateComponents(year: 2026, month: 10, day: 30))!
+        let day10 = cal.date(from: DateComponents(year: 2026, month: 10, day: 10,
+                                                  hour: 9, minute: 0))!
+        let day10Again = cal.date(from: DateComponents(year: 2026, month: 10, day: 10,
+                                                       hour: 21, minute: 30))!
+        let day30 = cal.date(from: DateComponents(year: 2026, month: 10, day: 30,
+                                                  hour: 0, minute: 0))!
 
-        // 幂等：规范化两次 == 规范化一次（说明它是个纯投影，不带副作用/状态）。
-        let once = cal.startOfDay(for: anyDay)
-        let twice = cal.startOfDay(for: once)
-        XCTAssertEqual(once, twice, "规范化必须是幂等的纯函数 —— 不许夹带收起/计时等副作用")
+        /// 复刻视图里 `onChange(of: day.wrappedValue)` 看到的值 —— 已经是规范化后的。
+        func normalized(_ d: Date) -> Date { cal.startOfDay(for: d) }
 
-        // 规范化不改变"哪一天"，只抹掉时分秒。
-        XCTAssertTrue(cal.isDate(once, inSameDayAs: anyDay))
+        // ① 10 日 → 30 日：变 → 收
+        XCTAssertNotEqual(normalized(day10), normalized(day30),
+                          "点中另一天必须触发收起")
+
+        // ② 同一天的 09:00 → 21:30：规范化后**相同** → 不收
+        XCTAssertEqual(normalized(day10), normalized(day10Again),
+                       "同一天（只是时刻不同）规范化后相等 → 不许触发收起")
+
+        // ③ 规范化是幂等的纯投影 —— 不夹带任何状态/副作用（不许再引入防抖计时器）。
+        XCTAssertEqual(normalized(normalized(day30)), normalized(day30),
+                       "规范化必须幂等：收起逻辑不许引入冷却窗口或计时状态")
     }
 }

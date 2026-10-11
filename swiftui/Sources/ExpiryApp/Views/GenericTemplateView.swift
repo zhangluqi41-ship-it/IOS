@@ -38,9 +38,6 @@ struct GenericTemplateView: View {
             } header: {
                 Text("日期")
             }
-
-            // ★ 键盘：点这一行收键盘（行级，不碰 List 容器 → 不影响滚动）。
-            Section { KeyboardDismissRow(focus: $focus) }
         }
         .navigationTitle("通用效期")
         .navigationBarTitleDisplayMode(.inline)
@@ -116,24 +113,42 @@ struct QuickDateChips: View {
     var body: some View {
         HStack(spacing: 8) {
             ForEach(presets, id: \.label) { p in
-                // ★ 第一方按钮样式：选中态用 `.borderedProminent`（系统高亮色），
-                //   未选中用 `.bordered`（系统描边）。按压有系统自带的高光反馈。
-                //   ⚠️ 分支必须各自返回**同一个具体类型**的修饰视图 ——
-                //      写成 `.buttonStyle(cond ? .borderedProminent : .bordered)`
-                //      会因两个分支类型不同而编译失败。
-                if isSelected(p.date) {
-                    Button(p.label) { selection = p.date }
-                        .buttonStyle(.borderedProminent)
-                        .buttonBorderShape(.capsule)
-                        .controlSize(.small)
-                        .tint(Theme.brand)
-                } else {
-                    Button(p.label) { selection = p.date }
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
-                        .controlSize(.small)
-                        .tint(Theme.brand)
+                // ★★★ 2026-10-11（第二十三轮）**颜色回归原版**。
+                //
+                //   用户报：「颜色不对，改成原来的颜色」（附了改前/改后两张对比图）。
+                //   图片对比结论：
+                //     · 原版（用户要的）= **深灰胶囊 `Color(.tertiarySystemFill)`
+                //       + `.primary` 文字**（深色模式下就是白字），选中 = 蓝底白字；
+                //     · 我改坏的（v1.1.5）= `.buttonStyle(.borderedProminent)`
+                //       → 系统把 `Theme.brand` 同时当**底色**和**文字色**，
+                //         变成「实心蓝 + 蓝字」，四个 chip 还全一个色、看不出选没选。
+                //
+                //   ➜ 正解 = 回到 **v1.1.3 那套写法**（`git show 53c1d64` 可查）。
+                //     它本来就是第一方语义色：`.tertiarySystemFill` 是系统动态灰、
+                //     `.primary` 是系统语义标签色 —— 跟深/浅模式、液态玻璃都自动协调，
+                //     比 `.bordered` 系列在 `List` 行里更贴合、也更贴近用户认可的观感。
+                //
+                //   ⚠️ 别再改回 `.buttonStyle(.bordered / .borderedProminent)` ——
+                //      `.tint()` 会同时给底和字上色，出不来"灰底黑字"的静默态。
+                //   ⚠️ 高亮判定仍然必须**按天现算**（见 `isSelected`），不许存状态。
+                let isOn = isSelected(p.date)
+                Button {
+                    selection = p.date
+                } label: {
+                    Text(p.label)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            isOn ? Theme.brand : Color(.tertiarySystemFill),
+                            in: Capsule()
+                        )
+                        .foregroundStyle(isOn ? .white : .primary)
+                        // ★ 撑满胶囊矩形，保证整块都能点（胶囊内边距也算命中区）。
+                        .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(.top, 6)
