@@ -175,7 +175,10 @@ struct MenuPickerRow<Value: Hashable>: View {
 
     /// 透明热区的宽度（贴右）。取 160pt：iPhone 上行内容宽约 320pt，
     /// 它覆盖「值 + 箭头」及周遭的右半区，菜单左缘也刚好落在标签文字右侧。
-    private static let hotZoneWidth: CGFloat = 160
+    /// ⚠️ 泛型类型里**不能写 `static let`**（stored property 不被支持，
+    ///   CI 报过：`static stored properties not supported in generic types`）
+    ///   —— 必须写成计算属性。
+    private static var hotZoneWidth: CGFloat { 160 }
 
     var body: some View {
         ZStack(alignment: .trailing) {
