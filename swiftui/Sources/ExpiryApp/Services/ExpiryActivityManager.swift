@@ -177,6 +177,20 @@ final class ExpiryActivityManager {
     ///   幂等短路、以及判断「它是否已进窗口」都用它。
     private static let scheduledCountdownStartKey = "expiry.scheduledCountdownStart"
 
+    // MARK: 「正在显示的即时倒计时」的持久化钥匙（第十八轮新增）
+
+    /// ★★★【第十八轮】`sync` 的**即时分支**（目标已进 5 分钟窗口时直接
+    ///   `Activity.request` 的那条 A）也要把 id 落盘 ——
+    ///   否则 App 被杀后内存变量 `activity` 丢失，这条正在显示的活动就成了
+    ///   「系统里有、我们钥匙串里没有」的孤儿，下次 `endCountdownOnly`
+    ///   认不出它（虽然最终会被当野生活动收掉，但会打断正在跑的倒计时）。
+    ///   ⚠️ **必须与预定 A 的键分开**：预定 A 的语义是「还没到点、由系统
+    ///     托管、start 在未来」，即时 A 的语义是「正在显示、区间已开始」。
+    ///     混用会让 `scheduleCountdown` 的 `abs(start 差) < 1` 幂等短路
+    ///     误判，也会让 `cancelScheduledCountdown()` 在排新预定前
+    ///     把正在显示的即时 A 一起撤掉。
+    private static let liveCountdownIDKey = "expiry.liveCountdownID"
+
     // MARK: 「最后一次倒计时活动」的属性缓存（第十三轮新增）
 
     /// ★★★ 为什么要把活动属性存进 UserDefaults：
@@ -323,6 +337,8 @@ final class ExpiryActivityManager {
                                                 content: content,
                                                 pushType: nil)
                 currentKey = key
+                // ★★★【第十八轮】把这条**即时显示**的 A 的 id 落盘（独立键）。
+                Self.setObject(activity?.id, forKey: Self.liveCountdownIDKey)
             } catch {
                 NSLog("ExpiryActivityManager: 灵动岛启动失败 \(error.localizedDescription)")
                 activity = nil
@@ -450,9 +466,7 @@ final class ExpiryActivityManager {
     ///   - start: 启动时刻 = 里程碑 - `window`（提前 5 分钟）。
     ///   - dueAt: 里程碑本身（倒计时区间的上界 / `staleDate`）。
     ///
-    /// ⚠️ 幂等：同启动时刻 + 活动还在 → 直接返回（`sync` 会被频繁调用，
-    ///   没有这条的话每次都「撤掉→重排」一遍，凭空多出丢活动的窗口）。
-    /// ⚠️ `start` 已过 → 直接返回：那一刻起的显示交给 `sync` 的即时分支。
+    /// ⚠️★★★【第十八轮】幂等短路与「start 已过」判据都改过，理由见下。
     /// ⚠️ `alertConfiguration` 是预定式的**必填项**（Apple 要求）。
     ///   它的 `sound` 参数类型是 `AlertConfiguration.AlertSound` ——
     ///   **非可选、且没有「静音」项**（只有 `.default` 与 `.named(文件)`）；
@@ -465,8 +479,17 @@ final class ExpiryActivityManager {
                                    dueAt: Date) async {
         let defaults = UserDefaults.standard
 
+        // ★★★【第十八轮】`start` 已过 = 目标已进「最后 5 分钟」窗口 ——
+        //   那一刻的显示由 `sync` 的即时分支（内存变量 `activity`）负责。
+        //   ⚠️ 这里**只 return，绝不 `cancelScheduledCountdown()`** ——
+        //     否则会把 `sync` 刚 request 的那条正在显示的 A 误杀
+        //     （本函数开头的 `guard` 早于 `cancel`，历史版本曾把它放在 cancel 之后）。
         guard start > Date() else { return }
 
+        // ★★★【第十八轮】幂等判据：同启动时刻 + **id 还在系统里找到** → 不动它。
+        //   ⚠️ 不要用 `activityState == .pending` —— 预定活动的 state 会报 `.active`，
+        //     用它会让短路永远不成立 → 每次 `sync` 都「撤掉→重排」一遍，
+        //     白白丢掉活动（与 `endCountdownOnly` 同源，见该函数头注释）。
         if let saved = defaults.object(forKey: Self.scheduledCountdownStartKey) as? Date,
            abs(saved.timeIntervalSince(start)) < 1,
            let id = defaults.string(forKey: Self.scheduledCountdownIDKey),
@@ -532,6 +555,13 @@ final class ExpiryActivityManager {
     ///   （ended / dismissed）的条目可能短暂残留，会骗过幂等短路，
     ///   让该次重排被跳过 → 提醒静默丢失。
     ///   ➜ 白名单式判断：只认 `active` / `stale` / `pending` 三个状态。
+    ///   ★★★【第十八轮】这条判据现在承担**唯一可信的「预定活动还在不在」**
+    ///     职责（`endCountdownOnly` 与 `scheduleCountdown` 的幂等短路都靠它）——
+    ///     所以三个状态的**白名单语义必须保持**：只把 `ended` / `dismissed`
+    ///     判为「不在了」。
+    ///   ⚠️ 反过来，**绝不要**在别处再用 `activityState == .pending` 去判
+    ///     「这条预定活动该不该保留」—— 预定活动的 state 会报 `.active`，
+    ///     那是本次「倒计时全没了」事故的根因（见 `endCountdownOnly` 头注释）。
     private static func isScheduledActivityAlive(_ id: String) -> Bool {
         Activity<ExpiryActivityAttributes>.activities.contains { item in
             item.id == id
@@ -654,25 +684,37 @@ final class ExpiryActivityManager {
     /// ★ 兜底那一段（按 `scheduledAlertIDKey` 过滤）是为了覆盖「App 重启后
     ///   `activity` 内存变量是 nil、但岛上还挂着上次启动留下的活动」。
     ///
-    /// ★★★【第十七轮】又加了一条排除：**「还没到启动时刻」的预定倒计时（A）**
-    ///   必须原地保留 ——
-    ///     · 它是「提前 5 分钟系统自动上岛」的唯一载体，误杀 = 那一次提醒
-    ///       彻底丢失（用户再也等不到倒计时）；
-    ///     · `pending` + `start 在未来` 两个条件同时满足才算「还没到启动时刻」。
-    ///       若 `start` 已过还 `pending`（系统延迟启动中）**不保留** ——
-    ///       那一刻我们会走「即时显示」的路子重建它，留着会出两条。
+    /// ★★★【第十八轮·2026-10-13 用户「所有 5 分钟倒计时灵动岛全没了」的根因修复】
+    ///
+    ///   ⚠️ 「不再用 `activityState == .pending` 判豁免」—— 那条判据在这台机器上
+    ///      **必然是错的**，也就是本次事故的真正元凶：
+    ///        · 预定式（`start:` 在未来）活动，系统内部状态是 `pending`；
+    ///          但 `Activity.activities[i].activityState` 在 App 进程里
+    ///          **不保证报 `.pending`** —— 实测会直接报 `.active`
+    ///          （系统已经把它登记成一条已存在的活动，只是还没到显示时刻）。
+    ///        · 于是原来的豁免 `item.activityState == .pending` **不成立** →
+    ///          每次 `sync` 走「窗口外」分支时，都会把**自己刚预定好的那条 A**
+    ///          `end()` 掉；而 `end()` 之后 `scheduledCountdownIDKey` 又被
+    ///          `cancelScheduledCountdown`/下一次重排清掉 → 下一条再排时
+    ///          又是全新 request → 排了又被撤 → 最终停在「岛上什么都没有」。
+    ///          这正是用户看到的「所有 5 分钟倒计时灵动岛全没了」。
+    ///     ✅ 正解 = **只认 id**：只要这条活动是 `scheduledCountdownIDKey`
+    ///        记录的那条预定 A，就原地保留 —— 它是不是 `pending` 与
+    ///        「该不该留」无关（该留是因为它是系统托管的未来活动）。
+    ///        · 真正要撤的那条「已经进窗口、正在显示的 A」由 `activity`
+    ///          内存变量单独兜住（见下 `if let activity`）——
+    ///          它**不**在 `scheduledCountdownIDKey` 里（`cancelScheduledCountdown`
+    ///          在它启动时已把 id 清掉），所以两者不会撞车。
     ///   ⚠️ 「换目标 / 到点退场 / 窗口外清理」三条路都走这个函数：
-    ///      · 换目标：旧预定（若目标没变）由 `scheduleUpcoming` 的幂等短路
-    ///        继续沿用；若目标变了，`scheduleUpcoming` 里会用
-    ///        `cancelScheduledCountdown()` 精确撤掉再排新的；
+    ///      · 换目标：旧预定由 `scheduleUpcoming` 的幂等短路沿用；
+    ///        目标变了则由 `cancelScheduledCountdown()` 精确撤掉再排新的；
     ///      · 到点退场：下一条的预定 A 安然存活，用户处理完这条后
     ///        下一条照常在「提前 5 分钟」自动上岛；
-    ///      · 窗口外：`pending` 的预定 A 本来就该留着。
+    ///      · 窗口外：预定 A 本来就必须留着（本次事故就是它被误杀）。
     private func endCountdownOnly() async {
         let defaults = UserDefaults.standard
         let alertID = defaults.string(forKey: Self.scheduledAlertIDKey)
         let countdownID = defaults.string(forKey: Self.scheduledCountdownIDKey)
-        let countdownStart = defaults.object(forKey: Self.scheduledCountdownStartKey) as? Date
 
         if let activity {
             await activity.end(nil, dismissalPolicy: .immediate)
@@ -680,15 +722,30 @@ final class ExpiryActivityManager {
         for item in Activity<ExpiryActivityAttributes>.activities {
             // B（到点警报）有独立的生命周期，永远不在这里收。
             if item.id == alertID { continue }
-            // 未来才启动的预定 A：保留（见函数头注释）。
-            if item.id == countdownID, item.activityState == .pending,
-               let start = countdownStart, start > Date() {
-                continue
-            }
+            // ★★★【第十八轮】预定 A：**只认 id，不看 activityState**（见函数头）。
+            if item.id == countdownID { continue }
             await item.end(nil, dismissalPolicy: .immediate)
         }
         activity = nil
         currentKey = nil
+        // ★★★【第十八轮】即时显示的 A 已随之收掉，钥匙串同步清空 ——
+        //   否则下轮 `sync` 会拿一个死 id 去比对。
+        UserDefaults.standard.removeObject(forKey: Self.liveCountdownIDKey)
+    }
+
+    // MARK: - 落盘小工具（第十八轮）
+
+    /// 写一个可能为 nil 的值；nil 时删键。
+    ///
+    /// ★ 只有一个用途（即时倒计时 id），但把 nil 语义收进一处，
+    ///   免得调用点到处写 `if let … else removeObject`。
+    private static func setObject(_ value: String?, forKey key: String) {
+        let defaults = UserDefaults.standard
+        if let value {
+            defaults.set(value, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
     }
 
     /// 把灵动岛的倒计时重置成「从现在起 5 分钟」。
@@ -827,6 +884,8 @@ final class ExpiryActivityManager {
         defaults.removeObject(forKey: Self.scheduledCountdownIDKey)
         defaults.removeObject(forKey: Self.scheduledCountdownRecordKey)
         defaults.removeObject(forKey: Self.scheduledCountdownStartKey)
+        // ★【第十八轮】即时显示的 A 也一并清（全清语义下不能漏）。
+        defaults.removeObject(forKey: Self.liveCountdownIDKey)
     }
 
     // MARK: - 辅助（第十三轮新增）
