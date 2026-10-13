@@ -453,8 +453,13 @@ final class ExpiryActivityManager {
     /// ⚠️ 幂等：同启动时刻 + 活动还在 → 直接返回（`sync` 会被频繁调用，
     ///   没有这条的话每次都「撤掉→重排」一遍，凭空多出丢活动的窗口）。
     /// ⚠️ `start` 已过 → 直接返回：那一刻起的显示交给 `sync` 的即时分支。
-    /// ⚠️ `alertConfiguration` 是预定式的**必填项**（Apple 要求），
-    ///   这里把 `sound` 设成 `nil` —— 响铃由本地通知承担，避免双响。
+    /// ⚠️ `alertConfiguration` 是预定式的**必填项**（Apple 要求）。
+    ///   它的 `sound` 参数类型是 `AlertConfiguration.AlertSound` ——
+    ///   **非可选、且没有「静音」项**（只有 `.default` 与 `.named(文件)`）；
+    ///   试过传 `nil` 会直接编译失败（v1.1.13 首轮 CI 的报错）。
+    ///   所以这里用 `.default`：宁可「通知 + 岛弹出」轻响两声，也不能没提醒。
+    ///   （将来若用户嫌吵，正路是往主 App bundle 塞一个静音音频文件，
+    ///     再用 `.named("silence")`；文件不存在会 fallback 回默认音，别乱传。）
     private func scheduleCountdown(attrs: ExpiryActivityAttributes,
                                    start: Date,
                                    dueAt: Date) async {
@@ -479,7 +484,7 @@ final class ExpiryActivityManager {
         let alert = AlertConfiguration(
             title: "\(attrs.title)",
             body: "还有 \(Int(Self.window / 60)) 分钟到\(attrs.milestoneLabel)，倒计时已开始。",
-            sound: nil)
+            sound: .default)
 
         do {
             let scheduled = try Activity.request(attributes: attrs,
