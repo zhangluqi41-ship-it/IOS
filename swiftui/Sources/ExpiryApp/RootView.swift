@@ -140,6 +140,10 @@ struct RootView: View {
             PrinterService.shared.startAppSession()
             // ★ 灵动岛对齐（冷启动时 `ExpiryStore.init` 还没有触发过重排）。
             syncLiveActivity()
+            // ★★★【第十九轮】冷启动时先落一份活动诊断 —— 若此时系统里还挂着
+            //   上一次运行的僵尸活动（stale/ended），这份记录能直接暴露它们
+            //   （`sync` 里的 `purgeZombieActivities` 随后会清掉）。
+            ExpiryActivityManager.dumpActivityDiagnostics(stage: "app-launch")
             // ★★★【第二十九轮】通知重排（**升级/重装后第一次启动必须走一遍**）：
             //   否则「旧版本排下的待发通知」会原样留着（比如 ≤v1.1.11 的
             //   五档阶梯），而新逻辑的「提前 5 分钟」通知又没人排 ——

@@ -83,6 +83,27 @@
 //      ⚠️ 因此 `endCountdownOnly()` 必须**保留下一条的预定 A（pending）**：
 //        误杀它 = 那一次提醒彻底丢失（用户再也等不到倒计时）。
 //
+//    【第十九轮·2026-10-13 用户第 5 条】「还是没有倒计时」——
+//      ★ 本轮**不再靠猜**，直接用真机 syslog + 沙盒落盘取证，拿到两条决定性证据：
+//        ① 系统里挂着 **3 条活动、state 全是 `stale`**（没有一条 `active`）；
+//        ② 活动 `presentationOptions` 里有
+//           **`Should Show System Aperture: false`**（被标记为不上灵动岛）。
+//      ★ Apple 文档原文：
+//        · 「The system limits the number of simultaneous ongoing Live Activities.
+//           **Scheduled Live Activities count towards this limit.**」
+//        · 活动 8 小时自动结束后进入 `ended`，**不会自动移除**，仍占名额。
+//      ➜ 根因 = **僵尸活动堆积占满名额**：本项目常驻 2 条预定活动（A+B），
+//        历史版本里 `cancelScheduled*` 只按 UserDefaults 里的 id 精确匹配，
+//        而 id 一旦被覆盖，那些「系统里还在、钥匙串里已丢失」的活动就成了
+//        收不掉的孤儿 → 越攒越多 → 顶满 5 条上限 → 新 `request` 仍返回成功，
+//        但系统**不再显示**（= 用户看到的「灵动岛什么都没有」）。
+//      ✅ 本轮两处修复：
+//        ① `sync` 开头无条件 `purgeZombieActivities()` —— 只保留钥匙串里
+//           当前有效的那三条 id（预定 A / 预定 B / 即时 A），其余全 `end()`；
+//        ② 全链路**诊断落盘** `dumpActivityDiagnostics(...)` —— 写
+//           `/Documents/activity_debug.txt`（可用 `pull_docs.py` 直接拉回本机，
+//           不必依赖被系统噪声淹没、且无历史回放的 syslog）。
+//
 //  ★ 倒计时不需要我们管：`Text(timerInterval:countsDown:)` 由系统每秒自己刷，
 //    不需要 App 在后台推状态。
 //
@@ -222,11 +243,29 @@ final class ExpiryActivityManager {
     ///   - records: 全部记录。
     ///   - enabled: 到期提醒是否开着；关掉时直接把灵动岛收掉。
     func sync(records: [LabelRecord], enabled: Bool) async {
+        // ★★★【第十九轮·2026-10-13】先把诊断落盘 —— 必须在**任何 guard 之前**，
+        //   这样「权限关着」「提醒关着」这类情况也能在沙盒文件里看到，
+        //   不必依赖 syslog（真机 syslog 被系统噪声淹没，且无历史回放）。
+        Self.dumpActivityDiagnostics(stage: "sync-enter")
+
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         guard enabled else {
             await endAll()
+            Self.dumpActivityDiagnostics(stage: "sync-disabled->endAll")
             return
         }
+
+        // ★★★【第十九轮】每次前台同步先把**僵尸活动**清干净 —— 这是本轮
+        //   「返回到点后灵动岛什么都没有」的第一处修复：
+        //   · `stale` / `ended` / `dismissed` 三种状态的活动**系统不会自动移除**
+        //     （Apple 文档：活动结束只是进入 `dismissed`，仍占名额直到被清理）；
+        //   · 它们既不上岛、又**算进系统的并发活动上限**
+        //     （Apple：Scheduled Live Activities count towards this limit）
+        //     → 名额被僵尸占满后，新 `request` 虽成功但**不再显示**，
+        //       这正是真机日志里「3 条全 stale + Should Show System Aperture: false」
+        //       的成因。
+        //   ➜ 无条件收掉「不是本 App 当前有效钥匙串里那两条」的活动。
+        await purgeZombieActivities()
 
         let now = Date()
         // ★★【第十二轮】挑选逻辑抽成 `nearestMilestone` 纯函数 —— 这样
@@ -244,6 +283,7 @@ final class ExpiryActivityManager {
         guard let best else {
             await endCountdownOnly()
             await scheduleUpcoming(records: records)
+            Self.dumpActivityDiagnostics(stage: "sync-no-window->upcoming")
             return
         }
 
@@ -281,6 +321,7 @@ final class ExpiryActivityManager {
             //   不排的缺口：用户此刻若马上锁屏走人，下一条的
             //   「提前 5 分钟预定」就没人补 —— 所以要在这里补上。
             await scheduleUpcoming(records: records)
+            Self.dumpActivityDiagnostics(stage: "sync-A-retire->upcoming")
             return
         }
 
@@ -328,6 +369,7 @@ final class ExpiryActivityManager {
         //（比如刚打开 App、用户点过「稍后提醒」要把区间换新）。
         if currentKey == key, let activity {
             await activity.update(content)
+            Self.dumpActivityDiagnostics(stage: "sync-update-A")
         } else {
             // 换目标了：先把**倒计时**那条收干净。
             // ⚠️ 这里**不能**用 `endAll()` —— 它会把预定的到点警报一起收掉。
@@ -339,8 +381,10 @@ final class ExpiryActivityManager {
                 currentKey = key
                 // ★★★【第十八轮】把这条**即时显示**的 A 的 id 落盘（独立键）。
                 Self.setObject(activity?.id, forKey: Self.liveCountdownIDKey)
+                Self.dumpActivityDiagnostics(stage: "sync-request-A-ok")
             } catch {
                 NSLog("ExpiryActivityManager: 灵动岛启动失败 \(error.localizedDescription)")
+                Self.dumpActivityDiagnostics(stage: "sync-request-A-FAIL \(error.localizedDescription)")
                 activity = nil
                 currentKey = nil
             }
@@ -351,6 +395,7 @@ final class ExpiryActivityManager {
         //   · B 预定：`start = dueAt - alertFireLead` —— 到点自动弹出展开态。
         //   详见 `scheduleUpcoming` / `scheduleCountdown` 的注释。
         await scheduleUpcoming(records: records)
+        Self.dumpActivityDiagnostics(stage: "sync-exit")
     }
 
     // MARK: - 纯查询（给 `ExpiryStore` 判断「通知要不要静默」用）
@@ -520,8 +565,10 @@ final class ExpiryActivityManager {
             defaults.set(attrs.recordID, forKey: Self.scheduledCountdownRecordKey)
             defaults.set(start, forKey: Self.scheduledCountdownStartKey)
             NSLog("ExpiryActivityManager: 已预定倒计时 \(attrs.title) @ \(start)")
+            Self.dumpActivityDiagnostics(stage: "scheduleCountdown-ok \(attrs.title)")
         } catch {
             NSLog("ExpiryActivityManager: 倒计时预定失败 \(error.localizedDescription)")
+            Self.dumpActivityDiagnostics(stage: "scheduleCountdown-FAIL \(error.localizedDescription)")
         }
     }
 
@@ -658,8 +705,10 @@ final class ExpiryActivityManager {
             defaults.set(attrs.recordID, forKey: Self.scheduledAlertRecordKey)
             defaults.set(dueAt, forKey: Self.scheduledAlertDueKey)
             NSLog("ExpiryActivityManager: 已预定到点警报 \(attrs.title) @ \(dueAt)")
+            Self.dumpActivityDiagnostics(stage: "scheduleAlert-ok \(attrs.title)")
         } catch {
             NSLog("ExpiryActivityManager: 到点警报预定失败 \(error.localizedDescription)")
+            Self.dumpActivityDiagnostics(stage: "scheduleAlert-FAIL \(error.localizedDescription)")
         }
     }
 
@@ -886,6 +935,96 @@ final class ExpiryActivityManager {
         defaults.removeObject(forKey: Self.scheduledCountdownStartKey)
         // ★【第十八轮】即时显示的 A 也一并清（全清语义下不能漏）。
         defaults.removeObject(forKey: Self.liveCountdownIDKey)
+    }
+
+    // MARK: - 僵尸活动清理 + 诊断落盘（第十九轮新增）
+
+    /// 收掉**僵尸活动** —— 只保留钥匙串里那两条「有效目标」。
+    ///
+    /// ★★★ 为什么必须有它（本轮「到点后灵动岛什么都没有」的直接根因之一）：
+    ///   真机 syslog 抓到系统里挂着 **3 条活动、state 全是 `stale`**，
+    ///   没有一条 `active`；同时 `presentationOptions` 里有
+    ///   **`Should Show System Aperture: false`** —— 活动被系统标记为不上灵动岛。
+    ///   Apple 文档：`The system limits the number of simultaneous ongoing
+    ///   Live Activities. **Scheduled Live Activities count towards this limit.**」
+    ///   ➜ 僵尸活动（`stale` / `ended`）**系统不会自己移除**，既不上岛又占名额；
+    ///     名额占满后新 `request` 虽返回成功，却**不会再显示**
+    ///     （所以「代码没报错，但岛上什么都没有」）。
+    ///
+    /// ★ 保留白名单 = 钥匙串里**当前有效的那两条**：
+    ///   · `scheduledCountdownIDKey` —— 预定 A（start 在未来，系统托管）
+    ///   · `scheduledAlertIDKey`     —— 预定 B（到点警报）
+    ///   · `liveCountdownIDKey`      —— 即时显示的 A
+    ///   其余一律 `end(.immediate)`。
+    ///
+    /// ⚠️ 只认 id、**绝不看 `activityState`** —— 与 `endCountdownOnly` 同源理由：
+    ///   预定活动的 state 在 App 进程里会报 `.active`，用 state 做判据会误杀。
+    private func purgeZombieActivities() async {
+        let defaults = UserDefaults.standard
+        let keep: Set<String> = [
+            defaults.string(forKey: Self.scheduledCountdownIDKey),
+            defaults.string(forKey: Self.scheduledAlertIDKey),
+            defaults.string(forKey: Self.liveCountdownIDKey),
+            activity?.id,
+        ].compactMap { $0 }.reduce(into: Set<String>()) { $0.insert($1) }
+
+        for item in Activity<ExpiryActivityAttributes>.activities {
+            if keep.contains(item.id) { continue }
+            await item.end(nil, dismissalPolicy: .immediate)
+        }
+    }
+
+    /// 把 `Activity.activities` 的真实清单写进沙盒可读文件。
+    ///
+    /// ★ 为什么不用 `NSLog`：真机 syslog 被系统噪声淹没且**无历史回放**，
+    ///   而这个文件可以用 `pull_docs.py` 随时拉回本机看（App 开了文件共享，
+    ///   `/Documents` 无需解锁即可读）。
+    ///
+    /// 写 `/Documents/activity_debug.txt`（追加式，带时间戳），内容形如：
+    /// ```
+    /// [19:08:12] stage=sync-enter count=3 systemApertureAllowed=true
+    ///     id=XXXX state=active startedAt=... milestone=... rec=...
+    /// ```
+    nonisolated static func dumpActivityDiagnostics(stage: String) {
+        let fm = FileManager.default
+        guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let url = docs.appendingPathComponent("activity_debug.txt")
+
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm:ss.SSS"
+        let stamp = fmt.string(from: Date())
+
+        let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
+        let activities = Activity<ExpiryActivityAttributes>.activities
+
+        var lines = ["[\(stamp)] stage=\(stage) count=\(activities.count) authorized=\(enabled)"]
+        for item in activities {
+            let state: String
+            switch item.activityState {
+            case .active: state = "active"
+            case .stale: state = "stale"
+            case .pending: state = "pending"
+            case .ended: state = "ended"
+            case .dismissed: state = "dismissed"
+            @unknown default: state = "unknown"
+            }
+            let s = item.content.state
+            lines.append("    id=\(item.id) state=\(state) "
+                + "startedAt=\(fmt.string(from: s.startedAt)) "
+                + "dueAt=\(fmt.string(from: s.dueAt)) "
+                + "title=\(item.attributes.title) "
+                + "milestone=\(item.attributes.milestoneLabel)")
+        }
+        let block = lines.joined(separator: "\n") + "\n"
+
+        // 追加写（文件不存在就建）。
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            if let data = block.data(using: .utf8) { handle.write(data) }
+            try? handle.close()
+        } else {
+            try? block.write(to: url, atomically: true, encoding: .utf8)
+        }
     }
 
     // MARK: - 辅助（第十三轮新增）
