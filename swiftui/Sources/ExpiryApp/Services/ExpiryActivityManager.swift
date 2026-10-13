@@ -605,12 +605,16 @@ final class ExpiryActivityManager {
         let content = ActivityContent(state: state,
                                       staleDate: dueAt.addingTimeInterval(Self.graceWindow),
                                       relevanceScore: Self.alertRelevance)
-        // ★★★ 2026-10-13（用户第 3 条）：使用「完成时间」的标签（康普茶 / 肉类
-        //   解冻…）按钮文案是「已完成」—— 提示语跟着切换，别点名不存在的按钮。
-        let doneTitle = attrs.milestoneLabel == "完成时间" ? "已完成" : "已完成使用"
+        // ★★★ 2026-10-13（用户第 6 条）：提示语按**里程碑**切换，且别点名
+        //   不存在的按钮 —— 「完成时间」现在只有一个「已完成」（没有「稍后提醒」，
+        //   见 `ExpiryStore.registerCategories` 与灵动岛的 `ActionButtons`）。
+        let isCompletion = attrs.milestoneLabel == ExpiryActivityAttributes.completionMilestoneLabel
+        let alertBody = isCompletion
+            ? "\(attrs.milestoneLabel)已到，请在灵动岛上点「已完成」。"
+            : "\(attrs.milestoneLabel)已到，请在灵动岛上点「已完成使用」或「稍后提醒」。"
         let alert = AlertConfiguration(
             title: "\(attrs.title)",
-            body: "\(attrs.milestoneLabel)已到，请在灵动岛上点「\(doneTitle)」或「稍后提醒」。",
+            body: "\(alertBody)",
             sound: .default)
 
         do {

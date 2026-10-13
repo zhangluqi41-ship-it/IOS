@@ -215,13 +215,14 @@ final class MeatTests: XCTestCase {
 
     func testRebuildThawLabelKeepsThawTimeRow() {
         let stamp = d(2026, 10, 9, 10, 0)
-        // 记录里仍存冷冻标签的「原始保质期」当 expireAt —— 它只服务于提醒，
-        // 不参与标签第二行的排版（第二行按 createdAt 现算「完成时间」）。
-        let expireAt = d(2027, 1, 8, 23, 59)
+        // ★ 2026-10-13（用户第 6 条）：解冻记录的 `expireAt` 现在存的是
+        //   「完成时间」（= 解冻 + 1 天），不再是冷冻标签的原保 ——
+        //   重打时第二行直接读这个存量值（与 `buildMeatThaw` 同源，逐字一致）。
+        let complete = MeatRule.thawedComplete(from: stamp)
         let best = MeatRule.thawedBest(from: stamp)
         let data = LabelTemplate.buildMeatThaw(baseName: "牛肉-眼肉", now: stamp, maker: "四野")
         let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: stamp,
-                                              expireAt: expireAt, bestBefore: best,
+                                              expireAt: complete, bestBefore: best,
                                               maker: "四野")
         assertRebuildMatches(record, data, "解冻标签")
         let rebuilt = LabelTemplate.rebuild(from: record)
@@ -229,6 +230,9 @@ final class MeatTests: XCTestCase {
                        "解冻标签重打时第一行必须还是「解冻时间」，不能变成「开封时间」")
         XCTAssertEqual(rebuilt.rows[1].label, "完成时间：",
                        "解冻标签重打时第二行必须还是「完成时间」")
+        XCTAssertEqual(rebuilt.rows[1].value,
+                       LabelTemplate.fmtDateByThreshold(stamp, complete),
+                       "重打第二行要直接取 `expireAt` 里存的完成时间")
     }
 
     // MARK: - 到期提醒
@@ -267,26 +271,30 @@ final class MeatTests: XCTestCase {
         XCTAssertEqual(milestones[1].label, "最佳使用时间")
     }
 
-    /// ★★★ 2026-10-13（用户第 2 条）：**解冻标签要有三个提醒时刻** ——
-    ///   完成时间（解冻 + 1 天）/ 最佳使用时间 / 原始保质期。
-    ///   完成时间是派生值（记录里不存），必须用 `createdAt` 现算。
-    func testThawMeatHasThreeMilestonesIncludingComplete() {
+    /// ★★★ 2026-10-13（用户第 6 条）：**解冻标签只有两个提醒时刻** ——
+    ///   完成时间（存在 `expireAt`）/ 最佳使用时间。
+    ///   ⚠️ **没有「原始保质期」** —— 解冻后冷冻原保不再适用
+    ///   （用户原话：「原始保质期可能部分没有」）。
+    ///   完成时间直接读 `expireAt`（打印 / 扫码两条路径存的都是它），
+    ///   **不是**由 `createdAt` 现算（扫码合并后 createdAt 会变）。
+    func testThawMeatHasTwoMilestonesCompletionAndBest() {
         let stamp = d(2026, 10, 9, 10, 0)
-        let expireAt = d(2027, 1, 8, 23, 59)
+        let complete = MeatRule.thawedComplete(from: stamp)
         let best = MeatRule.thawedBest(from: stamp)
         let data = LabelTemplate.buildMeatThaw(baseName: "猪肉-梅花肉", now: stamp, maker: "四野")
         let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: stamp,
-                                              expireAt: expireAt, bestBefore: best,
+                                              expireAt: complete, bestBefore: best,
                                               maker: "四野")
         XCTAssertTrue(record.usesCompletionTime, "解冻标签 = 使用「完成时间」的标签")
         let milestones = ExpiryStore.milestones(of: record)
-        XCTAssertEqual(milestones.count, 3, "完成时间 / 最佳使用时间 / 原始保质期都要提醒")
-        XCTAssertEqual(milestones[0].date, MeatRule.thawedComplete(from: stamp))
+        XCTAssertEqual(milestones.count, 2, "完成时间 / 最佳使用时间，两个即可")
+        XCTAssertEqual(milestones[0].date, complete,
+                       "完成时间直接读 `expireAt`（就是打印时存进去的值）")
         XCTAssertEqual(milestones[0].label, "完成时间")
         XCTAssertEqual(milestones[1].date, best)
         XCTAssertEqual(milestones[1].label, "最佳使用时间")
-        XCTAssertEqual(milestones[2].date, expireAt)
-        XCTAssertEqual(milestones[2].label, "原始保质期")
+        let labels = milestones.map(\.label).joined()
+        XCTAssertFalse(labels.contains("原始保质期"), "解冻肉类不该出现「原始保质期」")
     }
 
     /// 普通（非解冻）肉类不吃「完成时间」这套。

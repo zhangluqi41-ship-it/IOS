@@ -315,12 +315,16 @@ struct ExpiryDetailSheet: View {
 
     /// 效期区块。
     ///
-    /// ★ 康普茶**没有原始保质期** —— 它的第二组数据是「完成时间」，
-    ///   也就是可以喝、可以做二发的时刻（用户反馈：这里显示成「原始保质期」是错的）。
+    /// ★★★ 2026-10-13（用户第 6 条）：判据从 `kind == .kombucha` 改为
+    ///   **`record.usesCompletionTime`** —— 肉类解冻记录的第二组数据同样是
+    ///   「完成时间」（= 解冻 + 1 天，存在 `expireAt` 槽位）；
+    ///   此前它走 else 分支被显示成「原始保质期」，正是用户说的
+    ///   「扫解冻后，效期管理里面显示的完成时间被存成了原始保质期」。
+    ///   ➜ 康普茶 + 肉类解冻 → 「完成时间」；其余记录 → 「原始保质期」。
     private var expirySection: some View {
         let status = ExpiryStatus.of(record)
         return Section {
-            if record.kind == .kombucha {
+            if record.usesCompletionTime {
                 LabeledContent("完成时间", value: LabelTemplate.fmtDateTime(record.expireAt))
             } else {
                 LabeledContent("原始保质期", value: LabelTemplate.fmtDateTime(record.expireAt))
@@ -337,6 +341,10 @@ struct ExpiryDetailSheet: View {
             if record.kind == .kombucha {
                 Text("康普茶没有原始保质期。它的第二组时间是「完成时间」——"
                      + "可以饮用或做二发的时刻；会过期的是「最佳使用时间」。")
+            } else if record.usesCompletionTime {
+                Text("解冻肉类没有原始保质期。它的「完成时间」= 解冻时间 + "
+                     + "\(MeatRule.thawCompleteDays) 天 —— 可以开始使用的时刻；"
+                     + "会过期的是「最佳使用时间」。")
             } else {
                 Text("剩余天数以「最佳使用时间」为准。")
             }

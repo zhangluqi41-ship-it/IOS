@@ -17,7 +17,8 @@
 //    每个「里程碑」（完成时间 / 最佳使用时间 / 原始保质期，按标签类型）
 //    只排 **1 条**通知 —— **提前 5 分钟**提醒一次：
 //      · `interruptionLevel = .timeSensitive`（穿透专注模式）；
-//      · 带「已完成使用（使用「完成时间」的标签是「已完成」）/ 稍后提醒」两个动作。
+//      · 动作按钮**按里程碑**定制：「完成时间」→ 只有「已完成」（点击数据零操作）；
+//        其余 → 「已完成使用 + 稍后提醒」（点击标用完）。
 //    到时间那一刻由系统托管的「到点警报」灵动岛承担（见 `ExpiryActivityManager`），
 //    不再另发通知。
 //
@@ -26,9 +27,13 @@
 //    用户原话：「倒计时应该是在完成时间、最佳使用时间、原始保质期都做提醒，
 //    并且是提前 5 分钟」。➜ 全部收敛成「每时刻一条、提前 5 分钟」。
 //    **不要**把五档加回来，除非用户再改需求。
-//      · 「完成时间」覆盖：康普茶（= `expireAt` 槽位）、肉类解冻（= 解冻 + 1 天，派生值）；
-//      · 使用「完成时间」的标签，按钮文案单独定制为「已完成」（`categoryDueComplete`）
-//        —— 点击**不改记录数据**（≠「用完」），见 `completeOrUse`。
+//      · 「完成时间」覆盖：康普茶（= `expireAt` 槽位）、肉类解冻
+//        （= 解冻 + 1 天，**也存在 `expireAt` 槽位** —— 2026-10-13 用户第 6 条定版）；
+//      · ★★★ 2026-10-13（用户第 6 条）：**按钮文案与点击行为都按「里程碑」判** ——
+//        「完成时间」→「已完成」（`categoryDueComplete`，点击数据零操作）；
+//        其余（最佳使用时间 / 原始保质期）→「已完成使用」（点击标用完）。
+//        ⚠️ 别再退回"按记录判"（`usesCompletionTime`）—— 肉类解冻记录同时挂
+//          两种里程碑，记录级判据会把「最佳使用时间」的点击也变成零操作。
 //    ⚠️ 旧的「有岛上胶囊时静默横幅（`.passive`）」规则随五档一并删除 ——
 //      现在唯一一条提醒**必须带声音**（横幅就是提醒本体）。
 //
@@ -63,8 +68,10 @@ final class ExpiryStore: ObservableObject {
     private static let maxPendingNotifications = 60
     private static let reminderKey = "expiryReminderEnabled"
     private static let idPrefix = "expiry.milestone."
-    /// 每个里程碑 **1 条**通知 → 一条记录最多 3 个 identifier
-    /// （只有肉类解冻有三个时刻：完成 / 最佳 / 原保；其余最多 2 个）。
+    /// identifier 槽位数：每个里程碑 1 条 → 一条记录最多 **2 条**通知
+    /// （完成时间 + 最佳使用时间；通用/奶制品是原始保质期 + 最佳使用时间）。
+    /// ⚠️ 保留 3（而不是收到 2）：多出来的槽位用于**清理旧版本留下的残留**
+    ///   （v1.1.13 及更早给肉类解冻排过 slot 2 的「原始保质期」通知）。
     private static let notificationsPerRecord = 3
     /// ★★★ 2026-10-13（用户第 2 条）：**提前多久提醒** —— 统一 5 分钟。
     ///   （旧版的 1 小时 / 10 分钟两档随五档阶梯一起删除。）
@@ -76,12 +83,14 @@ final class ExpiryStore: ObservableObject {
 
     /// 提醒通知：带「已完成使用」「稍后提醒」两个按钮。
     static let categoryDue = "expiry.due"
-    /// ★★★ 2026-10-13（用户第 3 条）：**使用「完成时间」的标签**专用分类 ——
-    ///   按钮文案是「已完成」（不是「已完成使用」），点击后**不改记录数据**。
-    ///   （康普茶、肉类解冻，以及以后所有使用完成时间的标签。）
+    /// ★★★ 2026-10-13（用户第 6 条）：**「完成时间」里程碑**专用分类 ——
+    ///   按钮只有「已完成」一个（没有「稍后提醒」），点击后**不改记录数据**。
+    ///   （康普茶完成、肉类解冻完成，以及以后所有使用完成时间的场景。）
+    ///   ⚠️ 判据是**里程碑**（`milestone.label == "完成时间"`），不是记录 ——
+    ///     肉类解冻的「最佳使用时间」必须走 `categoryDue`（点击标用完）。
     static let categoryDueComplete = "expiry.due.complete"
     static let actionDone = "expiry.action.done"
-    /// 「已完成」按钮的动作 id（真实行为由记录本身决定，见 `completeOrUse`）。
+    /// 「已完成」按钮的动作 id（真实行为由**里程碑**决定，见 `completeOrUse`）。
     static let actionComplete = "expiry.action.complete"
     static let actionSnooze = "expiry.action.snooze"
 
@@ -89,6 +98,10 @@ final class ExpiryStore: ObservableObject {
     ///
     /// ★ 「稍后提醒」的重复通知也用这两个分类，这样用户从通知上
     ///   直接点按钮就能让它停下来。
+    /// ★★★ 2026-10-13（用户第 6 条）：`categoryDueComplete`（「完成时间」用）
+    ///   **只保留「已完成」一个按钮** —— 完成是"可以开始使用"的确认，
+    ///   没有"稍后提醒"的语义（用户原话：「按钮应该只有已完成」）。
+    ///   其余里程碑走的 `categoryDue` 保持「已完成使用 + 稍后提醒」。
     static func registerCategories() {
         let done = UNNotificationAction(identifier: actionDone,
                                         title: "已完成使用",
@@ -104,7 +117,7 @@ final class ExpiryStore: ObservableObject {
                                          intentIdentifiers: [],
                                          options: [.customDismissAction])
         let dueComplete = UNNotificationCategory(identifier: categoryDueComplete,
-                                                 actions: [complete, snooze],
+                                                 actions: [complete],
                                                  intentIdentifiers: [],
                                                  options: [.customDismissAction])
         UNUserNotificationCenter.current().setNotificationCategories([due, dueComplete])
@@ -313,12 +326,20 @@ final class ExpiryStore: ObservableObject {
         var out: [Candidate] = []
         let ids = ids(for: record)
         let kindLabel = record.kind.label
-        // ★ 使用「完成时间」的标签（康普茶 / 肉类解冻 …）按钮文案单独定制（第 3 条）。
-        let category = record.usesCompletionTime ? categoryDueComplete : categoryDue
 
         for (slot, milestone) in milestones(of: record).enumerated() {
             let fire = milestone.date.addingTimeInterval(-reminderLead)
             guard fire > now else { continue }
+
+            // ★★★ 2026-10-13（用户第 6 条）：分类按**里程碑**选（不是按记录）——
+            //   「完成时间」→ `categoryDueComplete`（按钮只有「已完成」、点击零操作）；
+            //   其余（最佳使用时间 / 原始保质期）→ `categoryDue`
+            //   （「已完成使用」→ 标用完）。
+            //   ⚠️ 肉类解冻记录同时挂这两种里程碑，原来按记录判会让它的
+            //     「最佳使用时间」也变成"已完成 + 点击无操作" —— 用户明确否掉。
+            let category = milestone.label == ExpiryActivityAttributes.completionMilestoneLabel
+                ? categoryDueComplete
+                : categoryDue
 
             let content = UNMutableNotificationContent()
             content.title = "还有 \(Int(Self.reminderLead / 60)) 分钟到\(milestone.label)"
@@ -330,6 +351,8 @@ final class ExpiryStore: ObservableObject {
             content.userInfo = [
                 Self.userInfoRecordID: record.id.uuidString,
                 Self.userInfoDueAt: milestone.date.timeIntervalSince1970,
+                // ★ 里程碑名一并带上 —— 点按钮时的数据行为按它判定（见 `completeOrUse`）。
+                Self.userInfoMilestone: milestone.label,
             ]
             out.append(Candidate(
                 id: ids[slot],
@@ -346,6 +369,11 @@ final class ExpiryStore: ObservableObject {
     /// 通知里携带的记录定位信息（点了按钮之后要用）。
     static let userInfoRecordID = "expiryRecordID"
     static let userInfoDueAt = "expiryDueAt"
+    /// ★★★ 2026-10-13（用户第 6 条）：通知里一并带的**里程碑名** ——
+    ///   点按钮时按它区分「已完成（数据零操作）」与「已完成使用（标用完）」。
+    ///   ⚠️ 老通知（本版之前排下的）没有这个键 → 读取为 nil，
+    ///      `completeOrUse` 会退回按记录判（兼容，见其注释）。
+    static let userInfoMilestone = "expiryMilestone"
 
     // MARK: - 通知动作
 
@@ -355,10 +383,10 @@ final class ExpiryStore: ObservableObject {
         guard let id = userInfo[Self.userInfoRecordID] as? String else { return }
         switch actionIdentifier {
         case Self.actionDone, Self.actionComplete:
-            // ★★★ 2026-10-13（用户第 3 条）：动作的真实行为由**记录本身**决定 ——
-            //   「完成时间」标签（康普茶 / 肉类解冻…）→ 数据零操作；
-            //   其余标签 → 标记用完。见 `completeOrUse`。两种情况都收掉灵动岛。
-            completeOrUse(byID: id)
+            // ★★★ 2026-10-13（用户第 6 条）：动作的真实行为由**里程碑**决定 ——
+            //   「完成时间」（康普茶完成 / 肉类解冻完成）→ 数据零操作；
+            //   其余（最佳使用时间 / 原始保质期）→ 标记用完。两种情况都收掉灵动岛。
+            completeOrUse(byID: id, milestoneLabel: userInfo[Self.userInfoMilestone] as? String)
             Task { await ExpiryActivityManager.shared.end(recordID: id) }
         case Self.actionSnooze:
             let due = (userInfo[Self.userInfoDueAt] as? Double)
@@ -369,25 +397,36 @@ final class ExpiryStore: ObservableObject {
         }
     }
 
-    /// 「已完成使用 / 已完成」的统一入口（通知动作与灵动岛按钮都走这里）。
+    /// 「已完成 / 已完成使用」的统一入口（通知动作与灵动岛按钮都走这里）。
     ///
-    /// ★★★ 2026-10-13（用户第 3 条）：**使用「完成时间」的标签**（康普茶、
-    ///   猪肉解冻，以及以后所有使用完成时间的标签）按钮叫「已完成」——
-    ///   点击后**不改动记录数据**（完成 ≠ 吃掉：记录继续留在效期管理里接受
-    ///   后续提醒，不等于「用完」）；其余标签维持原行为（标记为已用完）。
+    /// ★★★ 2026-10-13（用户第 6 条）：**判据从「记录」改成「里程碑」** ——
+    ///   · 里程碑是「完成时间」（康普茶完成 / 肉类解冻完成）→ **数据零操作**
+    ///     （完成 ≠ 吃掉：记录继续留在效期管理里接受「最佳使用时间」的后续提醒）；
+    ///   · 其余里程碑（最佳使用时间 / 原始保质期）→ 标记为「已用完」。
+    ///   ⚠️ 肉类解冻记录同时挂这两种里程碑，按记录判会让「最佳使用时间」
+    ///     的点击也变成零操作 —— 那正是用户第 6 条纠的点。
+    ///   ⚠️ `milestoneLabel == nil`（老通知 / 旧入口没带）→ 退回按记录判（兼容）。
     ///
     /// ★ 通知 / 灵动岛只拿得到一个 uuid 字符串，而且回调可能不在主线程上；
     ///   这里统一走 `onMain`，查找与写入都在主线程做。
-    func completeOrUse(byID idString: String) {
+    func completeOrUse(byID idString: String, milestoneLabel: String? = nil) {
         onMain { [weak self] in
-            guard let self else { return }
-            // 「已完成」：数据零操作，直接返回。
-            if self.records.first(where: { $0.id.uuidString == idString })?
-                .usesCompletionTime == true {
-                return
+            guard let self,
+                  let record = self.records.first(where: { $0.id.uuidString == idString })
+            else { return }
+
+            let isCompletion: Bool
+            if let milestoneLabel {
+                isCompletion = (milestoneLabel == ExpiryActivityAttributes.completionMilestoneLabel)
+            } else {
+                // 兼容路径：老通知没有里程碑字段，按记录判 —— 与旧行为一致。
+                isCompletion = record.usesCompletionTime
             }
+            if isCompletion { return }   // 「已完成」：数据零操作。
+
+            // 其余里程碑 → 标记用完。
             let list = self.records.map { item -> LabelRecord in
-                guard item.id.uuidString == idString else { return item }
+                guard item.id == record.id else { return item }
                 var copy = item
                 copy.usedAt = Date()
                 return copy
@@ -483,21 +522,25 @@ final class ExpiryStore: ObservableObject {
         case .kombucha:
             // 康普茶的第二组数据是「完成时间」= 可以喝 / 可以做二发的时刻。
             return [
-                ExpiryMilestone(date: record.expireAt, label: "完成时间"),
+                ExpiryMilestone(date: record.expireAt,
+                                label: ExpiryActivityAttributes.completionMilestoneLabel),
                 ExpiryMilestone(date: record.bestBefore, label: "最佳使用时间"),
             ]
         case .meat:
-            // ★★★ 2026-10-13（用户第 2 条）：解冻标签有三个提醒时刻 ——
-            //   完成时间 / 最佳使用时间 / 原始保质期（用户点名「猪肉」等
-            //   使用完成时间的标签都要提醒）。
-            //   完成时间是**派生值**：解冻那一刻（= 记录 `createdAt`）+ 1 天，
-            //   记录里不存；判「是不是解冻标签」见 `LabelRecord.usesCompletionTime`。
+            // ★★★ 2026-10-13（用户第 6 条）：解冻标签只有**两个**提醒时刻 ——
+            //   完成时间 / 最佳使用时间。
+            //   ⚠️ **没有「原始保质期」** —— 解冻后冷冻原保不再适用；解冻标签的
+            //     数据里也没有它（「完成时间」就存在 `expireAt` 槽位，与康普茶同构）。
+            //   ⚠️ 完成时间**直接读 `expireAt`**（不是由 `createdAt` 现算）：
+            //     打印路径（`MeatThawView`）存的是完成时间、扫码路径从二维码
+            //     解析的也是完成时间；若拿 `createdAt` 现算，扫码合并后
+            //     （`add` 整体替换记录、只保留 id/usedAt）createdAt 变成扫码时刻
+            //     → 算出来的完成时间就错了。
             if record.usesCompletionTime {
                 return [
-                    ExpiryMilestone(date: MeatRule.thawedComplete(from: record.createdAt),
-                                    label: "完成时间"),
+                    ExpiryMilestone(date: record.expireAt,
+                                    label: ExpiryActivityAttributes.completionMilestoneLabel),
                     ExpiryMilestone(date: record.bestBefore, label: "最佳使用时间"),
-                    ExpiryMilestone(date: record.expireAt, label: "原始保质期"),
                 ]
             }
             // 非解冻肉类：两个日期**按规则完全相同**（冷藏都 +5 天，冷冻都 +3 个月，

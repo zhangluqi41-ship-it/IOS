@@ -535,8 +535,27 @@ targets:
         #      不再依赖 App 恰好运行；`endCountdownOnly` 因此必须保留
         #      「还没到启动时刻」的预定 A（误杀 = 那一次提醒彻底丢失）。
         #   ⚠️ 通知时刻（各里程碑提前 5 分钟一条）、标签版式、二维码、日期规则未变。
-        CURRENT_PROJECT_VERSION: 55
-        MARKETING_VERSION: 1.1.13
+        #
+        # ★★★ 2026-10-13 1.1.14 / build 56（第三十轮）—— 用户四条：
+        #   ① 选择菜单「从最右侧弹出，而不是中心点弹出」：`MenuPickerRow` 的透明热区
+        #      从整行收成**贴右固定宽**（160pt）—— 系统菜单居中于锚点矩形，
+        #      锚点靠右 → 菜单从右侧展开，不再盖住行首的标签文字。
+        #   ② 灵动岛/通知的「完成时间」按钮：**按里程碑判**（不再是按记录）——
+        #      完成时间 → 只有一个「已完成」（点击数据零操作）；
+        #      其余里程碑 → 「已完成使用」（到点后追加「稍后提醒」；点击标用完）。
+        #      `ExpiryMarkDoneIntent` 增加 `milestoneLabel` 参数一并回传主 App。
+        #   ③ 效期规范化（用户原话「扫解冻后，效期管理里面显示的完成时间被存成了
+        #      原始保质期」）：
+        #      · 解冻记录的 `expireAt` 改存**完成时间**（= 解冻 + 1 天；原来打印路径
+        #        存的是冷冻原保、扫码路径存的却是完成时间 —— 两条路径语义终于统一）；
+        #      · 详情页「完成时间 / 原始保质期」判据改为 `record.usesCompletionTime`
+        #        （原来只认康普茶，解冻记录被错显成「原始保质期」）；
+        #      · 解冻里程碑从 3 个收成 2 个（完成 + 最佳）—— 解冻后没有「原始保质期」；
+        #        完成时间**直接读 `expireAt`**（不再由 createdAt 现算：扫码合并后
+        #        createdAt 会变成扫码时刻，现算出来是错的）。
+        #   ⚠️ 标签版式、二维码格式、日期规则未变。
+        CURRENT_PROJECT_VERSION: 56
+        MARKETING_VERSION: 1.1.14
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -588,8 +607,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.13
-        CURRENT_PROJECT_VERSION: 55
+        MARKETING_VERSION: 1.1.14
+        CURRENT_PROJECT_VERSION: 56
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

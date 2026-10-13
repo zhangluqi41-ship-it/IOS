@@ -133,27 +133,37 @@ struct MakerField: View {
 
 // MARK: - 菜单式选择行（整行可点）
 
-/// 菜单式选择行：**整行都是点击热区**，右侧显示当前值与上下箭头。
+/// 菜单式选择行：右侧显示当前值与上下箭头，**行右半区都是点击热区**。
 ///
 /// ★★★ 2026-10-13（用户第一次反馈）：「要点击（红框内的）小箭头才能拉出菜单，
 ///   影响使用体验」—— 根因是原生 `Picker(.menu)` 在 `List` 里只有尾部
-///   一小块区域响应点击。改用 `Menu` + `.contentShape(Rectangle())`，
-///   把**整行**变成热区（点行内任意位置都能拉出菜单）。
+///   一小块区域响应点击。改用 `Menu` + `.contentShape(Rectangle())` 扩大热区
+///   （用户原话：「点击**右边这附近**都可以拉出」）。
 ///
 /// ★★★ 2026-10-13（用户第二次反馈）：「点击后文字都消失了……字体这个位置
 ///   要**锁定**，不参与点击弹出菜单和动画」——
 ///   根因：文字 / 当前值放在 `Menu` 的 **label** 里时，iOS 在菜单弹出的
 ///   「morph 动画」中会把 label 整块吃掉（snapshot 成锚点色块），
 ///   行内文字随之消失。
-///   ➜ 修法 = **内容与热区分家**（本文件第 28 轮改动的核心）：
+///   ➜ 修法 = **内容与热区分家**：
 ///     · `Menu` 的 label 只放一块**透明热区**（`Color.clear`）——
 ///       系统动画想怎么 morph 这块透明色块都行，**看不见就伤不到**；
-///     · 文字 / 当前值 / 箭头放到 `.overlay` 里盖在最上层，并
-///       `allowsHitTesting(false)`（不挡点击）—— 它是 `Menu` **外部**的
-///       普通视图，系统的菜单动画**碰不到它** → 位置永久锁定、永不消失。
-///   ⚠️ 别把内容挪回 label 里 —— 那正是这一轮被否掉的样子。
-///   ⚠️ overlay 里**必须**有 `allowsHitTesting(false)`，否则那层会把
+///     · 文字 / 当前值 / 箭头放在 `Menu` **外部**（`ZStack` 的静态层），
+///       并 `allowsHitTesting(false)`（不挡点击）—— 系统的菜单动画
+///       **碰不到它们** → 位置永久锁定、永不消失。
+///   ⚠️ 别把内容挪回 label 里 —— 那正是被否掉的样子。
+///   ⚠️ 静态层里**必须**有 `allowsHitTesting(false)`，否则那层会把
 ///      所有点击吃掉，菜单反而拉不出来。
+///
+/// ★★★ 2026-10-13（用户第三次反馈）：「他弹出的时候能不能**从最右侧弹出**，
+///   而不是中心点弹出呢？」——
+///   系统的菜单弹出位置由 label 的 frame 决定（菜单会居中于锚点矩形）：
+///     · 上一版 label = **整行** → 菜单从整行中心展开，把行首的
+///       「奶制品类型」等标签文字盖住（用户截图圈出的问题）；
+///     · ✅ 现在把热区收成**贴右的固定宽度** → 锚点靠右 → 菜单从右侧展开，
+///       行首文字不再被盖，观感也与系统「点值区域弹菜单」的习惯一致。
+///   ⚠️ `hotZoneWidth` 是权衡值：太宽 → 菜单又跑回中间；太窄 → 可点区域变小。
+///      **别改回 `.frame(maxWidth: .infinity)`**（= 锚点全行 = 菜单居中）。
 struct MenuPickerRow<Value: Hashable>: View {
     let title: String
     let options: [Value]
@@ -163,21 +173,14 @@ struct MenuPickerRow<Value: Hashable>: View {
     /// 外层 `.disabled(...)` 的状态 —— 自绘内容要照着系统样式给出「禁用变灰」。
     @Environment(\.isEnabled) private var isEnabled
 
+    /// 透明热区的宽度（贴右）。取 160pt：iPhone 上行内容宽约 320pt，
+    /// 它覆盖「值 + 箭头」及周遭的右半区，菜单左缘也刚好落在标签文字右侧。
+    private static let hotZoneWidth: CGFloat = 160
+
     var body: some View {
-        Menu {
-            Picker(title, selection: $selection) {
-                ForEach(options, id: \.self) { option in
-                    Text(optionLabel(option)).tag(Optional(option))
-                }
-            }
-        } label: {
-            // 透明热区：撑满整行，只负责接收点击 / 承载系统菜单动画。
-            Color.clear
-                .frame(maxWidth: .infinity, minHeight: 28)
-                .contentShape(Rectangle())
-        }
-        .overlay {
-            // 静态内容层（Menu 外部）：位置锁定，不参与菜单的任何动画。
+        ZStack(alignment: .trailing) {
+            // ① 静态展示层（占满整行；不参与命中测试、不参与菜单动画）——
+            //    系统的菜单 morph 动画只作用于 ② 的透明热区，碰不到这一层。
             HStack(spacing: 8) {
                 Text(title)
                     .foregroundStyle(.primary)
@@ -191,8 +194,22 @@ struct MenuPickerRow<Value: Hashable>: View {
                     .foregroundStyle(.tertiary)
             }
             .opacity(isEnabled ? 1 : 0.35)
-            // ⚠️ 放行命中测试 —— 让点击穿到下面那块透明热区上。
+            // ⚠️ 放行命中测试 —— 让点击穿到下面的透明热区上。
             .allowsHitTesting(false)
+
+            // ② 透明热区（贴右、固定宽）—— 只负责接收点击 / 承载系统菜单动画。
+            //    它是 `Menu` 的 label，frame 决定菜单弹出的水平位置（见文件头注释）。
+            Menu {
+                Picker(title, selection: $selection) {
+                    ForEach(options, id: \.self) { option in
+                        Text(optionLabel(option)).tag(Optional(option))
+                    }
+                }
+            } label: {
+                Color.clear
+                    .frame(width: Self.hotZoneWidth, height: 28)
+                    .contentShape(Rectangle())
+            }
         }
     }
 }

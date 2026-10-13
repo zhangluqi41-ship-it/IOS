@@ -393,10 +393,8 @@ enum LabelTemplate {
     ///     `bestBefore`→ 第三行（最佳使用时间）
     ///   这正是 `makeRecord` 当初存进去的东西，逐字一致。
     ///
-    ///   ⚠️ **解冻肉类是唯一例外**：它的第二行是「完成时间」= `createdAt` + 1 天，
-    ///      这个值当初没有单独存 —— 但它只依赖 `createdAt`，用
-    ///      `MeatRule.thawedComplete(from: now)` 重算即可**逐字复现**
-    ///      （`now` 就是 `createdAt`，与 `buildMeatThaw` 同源）。
+    ///   ⚠️ 解冻肉类的第二行是「完成时间」—— 它**就存在 `expireAt`**（与康普茶
+    ///      同槽位；2026-10-13 用户第 6 条统一定版），直接用存量值、不现算。
     ///
     /// ★ 「原始保质期」那两行当初用的是 `fmtDateByThreshold(now, date)`，
     ///   依赖 `now` 只是为了判「是否 ≤7 天」，所以这里传 `createdAt` 复现结果完全相同。
@@ -418,12 +416,18 @@ enum LabelTemplate {
             // （解冻标签的标题一定是「解冻-…」，见 `MeatRule.thawTitle`），
             // 由它反推即可，不必为一行文案去改数据模型。
             if record.title.hasPrefix(MeatRule.thawPrefix + MeatRule.titleSeparator) {
-                // 解冻标签第二行「完成时间」与 `buildMeatThaw` 同源：
-                // 由 `createdAt`（= 当初的解冻时刻）再算一次 +1 天，逐字一致。
+                // ★★★ 2026-10-13（用户第 6 条）：完成时间**直接就存在 `record.expireAt`**
+                //   （与康普茶同槽位）—— 打印（`MeatThawView`）/ 扫码（`handleMeat`）
+                //   两条路径存进去的都是它，重打直接用存量值。
+                //   ⚠️ 不要改回「由 `createdAt` 现算」：扫码合并（`add` 会整体替换
+                //     记录、只保留 id/usedAt）后 createdAt 变成扫码时刻 → 算出来是错的，
+                //     而实物标签上印的完成时间根本没变。
+                //   ⚠️ 存量旧解冻记录（本版之前入库的）`expireAt` 还带着冷冻原保，
+                //     重打第二行会不对 —— 那批都是旧版测试数据，删掉重新打即可。
                 rows = [
                     LabelRow(label: "解冻时间：", value: fmtDateTime(now)),
                     LabelRow(label: "完成时间：",
-                             value: fmtDateByThreshold(now, MeatRule.thawedComplete(from: now))),
+                             value: fmtDateByThreshold(now, record.expireAt)),
                     LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
                 ]
             } else {

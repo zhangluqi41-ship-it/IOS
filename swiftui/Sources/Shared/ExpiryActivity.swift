@@ -110,26 +110,52 @@ struct ExpiryActivityAttributes: ActivityAttributes {
     var milestoneLabel: String
 }
 
+extension ExpiryActivityAttributes {
+    /// ★★★ 2026-10-13（用户第 6 条）：**「完成时间」这个里程碑名的统一常量**。
+    ///
+    /// 有四处在按"是不是完成时间"分支（按钮文案 / 按钮数量 / 通知分类 /
+    /// 点击后的数据行为），散着写字面量迟早漂移 —— 全部引这里：
+    ///   · `ExpiryStore.candidates`            → 通知分类（`categoryDueComplete`）
+    ///   · `ExpiryStore.completeOrUse`         → 点击后「零操作 vs 标用完」
+    ///   · `ExpiryActivityManager.scheduleAlert` → 到点提示语
+    ///   · `ExpiryLiveActivity.ActionButtons`  → 按钮文案与数量
+    ///
+    /// ⚠️ 它必须与 `ExpiryStore.milestones(of:)` 里生成的 label **逐字一致**。
+    static let completionMilestoneLabel = "完成时间"
+}
+
 // MARK: - 灵动岛上的两个按钮
 
-/// 「已完成使用」（使用「完成时间」的标签显示为「已完成」）——
-/// 前者对应「效期管理」里的「已用完」；后者**不改记录数据**（用户第 3 条）。
+/// 「已完成 / 已完成使用」——**按钮文案按里程碑定，行为也按里程碑定**：
+///   · 里程碑是「完成时间」（康普茶完成 / 肉类解冻完成）→ 按钮叫「已完成」，
+///     点击**不改记录数据**（完成 ≠ 吃掉：记录继续留在效期管理里）；
+///   · 其余里程碑（最佳使用时间 / 原始保质期）→ 按钮叫「已完成使用」，
+///     点击把记录标记为「已用完」。
+///
+/// ★★★ 2026-10-13（用户第 6 条修正）：**判据从「记录」改为「里程碑」** ——
+///   肉类解冻记录同时有「完成时间」和「最佳使用时间」两个里程碑，
+///   按记录判会让「最佳使用时间」那条也显示「已完成」（且点击不标用完）—— 错的。
+///   所以 Intent 必须把 `milestoneLabel` 一起带到主 App 进程。
 struct ExpiryMarkDoneIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "已完成使用"
     static var isDiscoverable: Bool = false
 
     @Parameter(title: "记录")
     var recordID: String
+    /// 点的是哪个里程碑（用于区分「已完成」（零操作）与「已完成使用」（标用完））。
+    @Parameter(title: "里程碑")
+    var milestoneLabel: String
 
     init() {}
 
-    init(recordID: String) {
+    init(recordID: String, milestoneLabel: String) {
         self.recordID = recordID
+        self.milestoneLabel = milestoneLabel
     }
 
     func perform() async throws -> some IntentResult {
         #if EXPIRY_APP
-        ExpiryActivityBridge.markDone(recordID: recordID)
+        ExpiryActivityBridge.markDone(recordID: recordID, milestoneLabel: milestoneLabel)
         #endif
         return .result()
     }
@@ -225,14 +251,16 @@ enum ExpiryDeepLink {
 enum ExpiryActivityBridge {
     #if EXPIRY_APP
 
-    /// 「已完成使用 / 已完成」：由**记录本身**决定行为（见 `ExpiryStore.completeOrUse`）——
-    /// 使用「完成时间」的标签（康普茶 / 肉类解冻…）只收掉提醒、**不改数据**；
-    /// 其余标签标记为已用完。两种情况都要收掉灵动岛。
+    /// 「已完成 / 已完成使用」：由**里程碑**决定行为（见 `ExpiryStore.completeOrUse`）——
+    /// 里程碑是「完成时间」（康普茶完成 / 肉类解冻完成）→ 只收掉提醒、**不改数据**；
+    /// 其余里程碑（最佳使用时间 / 原始保质期）→ 标记为已用完。
+    /// 两种情况都要收掉灵动岛。
     ///
-    /// ★★★ 2026-10-13（用户第 3 条）：按钮文案在 Widget 侧按
-    ///   `milestoneLabel`（「完成时间」）切换，行为在这里按记录切换 —— 同一套判据。
-    static func markDone(recordID: String) {
-        ExpiryStore.shared.completeOrUse(byID: recordID)
+    /// ★★★ 2026-10-13（用户第 6 条修正）：判据从「记录」改为「里程碑」——
+    ///   肉类解冻记录同时挂着「完成时间」和「最佳使用时间」，记录级判据
+    ///   会让后者的点击也"零操作"，而用户要求它标用完。
+    static func markDone(recordID: String, milestoneLabel: String) {
+        ExpiryStore.shared.completeOrUse(byID: recordID, milestoneLabel: milestoneLabel)
         Task { await ExpiryActivityManager.shared.end(recordID: recordID) }
     }
 
@@ -256,7 +284,7 @@ enum ExpiryActivityBridge {
 
     #else
 
-    static func markDone(recordID: String) {}
+    static func markDone(recordID: String, milestoneLabel: String) {}
     static func snooze(recordID: String, dueAt: Date) {}
 
     #endif

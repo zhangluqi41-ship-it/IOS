@@ -622,14 +622,23 @@ private struct ActionButtons: View {
     let attributes: ExpiryActivityAttributes
     let state: ExpiryActivityAttributes.ContentState
 
+    /// 这条里程碑是不是「完成时间」（康普茶完成 / 肉类解冻完成）。
+    private var isCompletion: Bool {
+        attributes.milestoneLabel == ExpiryActivityAttributes.completionMilestoneLabel
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            // ★★★ 2026-10-13（用户第 3 条）：使用「完成时间」的标签（康普茶、肉类解冻…）
-            //   按钮文案单独定制为「已完成」—— 点击**不改记录数据**（≠「用完」）。
-            //   判据 = `milestoneLabel`（这些标签的里程碑名就叫「完成时间」）；
-            //   真实行为在 `ExpiryStore.completeOrUse`，与文案同一套判据。
-            Button(intent: ExpiryMarkDoneIntent(recordID: attributes.recordID)) {
-                Label(attributes.milestoneLabel == "完成时间" ? "已完成" : "已完成使用",
+            // ★★★ 2026-10-13（用户第 6 条）：按**里程碑**决定文案与数量 ——
+            //   · 「完成时间」→ 只有一个「已完成」，点击**数据零操作**
+            //     （完成 = 解冻成功 / 二发完成，是"可以开始用"的确认，不是"吃掉"）；
+            //   · 其余（最佳使用时间 / 原始保质期）→「已完成使用」，点击 = 标用完。
+            //   ⚠️ Intent 里必须把 `milestoneLabel` 一起带回主 App ——
+            //     点击行为也按里程碑判（见 `ExpiryStore.completeOrUse`）；
+            //     光看记录会把肉类解冻的「最佳使用时间」也判成零操作（用户纠的点）。
+            Button(intent: ExpiryMarkDoneIntent(recordID: attributes.recordID,
+                                                milestoneLabel: attributes.milestoneLabel)) {
+                Label(isCompletion ? "已完成" : "已完成使用",
                       systemImage: "checkmark.circle.fill")
                     .font(.caption)
                     .fontWeight(.semibold)
@@ -637,11 +646,13 @@ private struct ActionButtons: View {
             }
             .tint(.green)
 
-            // ★ 只有「到时间」之后才给「稍后提醒」。
-            //   ⚠️ 判据与倒计时**同源**（`countdownInterval == nil`），
-            //      而不是 `phase`：这样「倒计时变『到点』」与「按钮冒出来」
-            //      在**同一次重绘**里发生，不会出现「显示到点了但少一个按钮」。
-            if state.countdownInterval == nil {
+            // ★ 「稍后提醒」只在**到点后**且**不是完成时间**时出现。
+            //   · 判据与倒计时**同源**（`countdownInterval == nil`）——
+            //     这样「倒计时变『到点』」与「按钮冒出来」在**同一次重绘**里发生，
+            //     不会出现「显示到点了但少一个按钮」；
+            //   · 完成时间是"可以开始用"的确认（用户原话：「按钮应该只有已完成」），
+            //     没有"稍后提醒"的语义。
+            if !isCompletion, state.countdownInterval == nil {
                 Button(intent: ExpirySnoozeIntent(recordID: attributes.recordID,
                                                   dueAt: state.dueAt)) {
                     Label("稍后提醒", systemImage: "clock.arrow.circlepath")

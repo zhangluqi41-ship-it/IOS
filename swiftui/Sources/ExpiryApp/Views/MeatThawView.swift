@@ -80,12 +80,21 @@ struct MeatThawView: View {
         let makerFinal = MakerField.finalize(maker)
 
         let stamp = Date()
+        // 完成时间 = 解冻时间 + 1 天（与标签第二行同源，同一个 `stamp`）。
+        let complete = MeatRule.thawedComplete(from: stamp)
         let best = MeatRule.thawedBest(from: stamp)
         let data = LabelTemplate.buildMeatThaw(baseName: meat.baseName,
                                                now: stamp,
                                                maker: makerFinal)
+        // ★★★ 2026-10-13（用户第 6 条）：`expireAt` 存**完成时间**（= 解冻 + 1 天），
+        //   不再是冷冻标签的原保 —— 解冻后冷冻原保不再适用，而且：
+        //     · 详情页对「使用完成时间」的记录会把这一栏显示成「完成时间」；
+        //     · 提醒里程碑「完成时间」直接读这个槽位；
+        //     · 重打（`rebuild`）第二行的取值也来自它。
+        //   ⚠️ 这与扫码路径完全同构（扫解冻标签时，二维码里的「完成时间」
+        //     也是落进 `expireAt`，见 `ScanView.handleMeat`）—— 两条路径终于一致。
         let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: stamp,
-                                              expireAt: meat.expireAt, bestBefore: best,
+                                              expireAt: complete, bestBefore: best,
                                               maker: makerFinal)
         return LabelDraft(data: data, record: record)
     }
