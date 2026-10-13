@@ -254,7 +254,6 @@ final class MeatTests: XCTestCase {
         XCTAssertEqual(milestones.count, 1, "两个日期相同就只提醒一次")
         XCTAssertEqual(milestones[0].date, same)
         XCTAssertEqual(milestones[0].label, "原始保质期")
-        XCTAssertTrue(milestones[0].todayTitle.contains("原始保质期"))
     }
 
     /// 用户手动改掉其中一个日期时，两条都要提醒（与通用模板一致）。
@@ -263,24 +262,36 @@ final class MeatTests: XCTestCase {
                                                                    bestBefore: day(5)))
         XCTAssertEqual(milestones.count, 2)
         XCTAssertEqual(milestones[0].date, day(30))
+        XCTAssertEqual(milestones[0].label, "原始保质期")
         XCTAssertEqual(milestones[1].date, day(5))
+        XCTAssertEqual(milestones[1].label, "最佳使用时间")
     }
 
-    /// 五档提醒都要有文案（前一天 / 当天 / 提前 1 小时 / 到时间）。
-    func testMilestoneHasAllFiveTiers() {
-        let milestones = ExpiryStore.milestones(of: makeMeatRecord(expireAt: day(30),
-                                                                   bestBefore: day(5)))
-        for m in milestones {
-            XCTAssertFalse(m.label.isEmpty)
-            XCTAssertFalse(m.tomorrowTitle.isEmpty)
-            XCTAssertFalse(m.tomorrowBody.isEmpty)
-            XCTAssertFalse(m.todayTitle.isEmpty)
-            XCTAssertFalse(m.todayBody.isEmpty)
-            XCTAssertFalse(m.soonTitle.isEmpty)
-            XCTAssertFalse(m.soonBody.isEmpty)
-            XCTAssertFalse(m.dueTitle.isEmpty)
-            XCTAssertFalse(m.dueBody.isEmpty)
-        }
+    /// ★★★ 2026-10-13（用户第 2 条）：**解冻标签要有三个提醒时刻** ——
+    ///   完成时间（解冻 + 1 天）/ 最佳使用时间 / 原始保质期。
+    ///   完成时间是派生值（记录里不存），必须用 `createdAt` 现算。
+    func testThawMeatHasThreeMilestonesIncludingComplete() {
+        let stamp = d(2026, 10, 9, 10, 0)
+        let expireAt = d(2027, 1, 8, 23, 59)
+        let best = MeatRule.thawedBest(from: stamp)
+        let data = LabelTemplate.buildMeatThaw(baseName: "猪肉-梅花肉", now: stamp, maker: "四野")
+        let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: stamp,
+                                              expireAt: expireAt, bestBefore: best,
+                                              maker: "四野")
+        XCTAssertTrue(record.usesCompletionTime, "解冻标签 = 使用「完成时间」的标签")
+        let milestones = ExpiryStore.milestones(of: record)
+        XCTAssertEqual(milestones.count, 3, "完成时间 / 最佳使用时间 / 原始保质期都要提醒")
+        XCTAssertEqual(milestones[0].date, MeatRule.thawedComplete(from: stamp))
+        XCTAssertEqual(milestones[0].label, "完成时间")
+        XCTAssertEqual(milestones[1].date, best)
+        XCTAssertEqual(milestones[1].label, "最佳使用时间")
+        XCTAssertEqual(milestones[2].date, expireAt)
+        XCTAssertEqual(milestones[2].label, "原始保质期")
+    }
+
+    /// 普通（非解冻）肉类不吃「完成时间」这套。
+    func testNonThawMeatDoesNotUseCompletionTime() {
+        XCTAssertFalse(makeMeatRecord(expireAt: day(5), bestBefore: day(5)).usesCompletionTime)
     }
 
     // MARK: - 扫码路由判据

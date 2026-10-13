@@ -510,8 +510,19 @@ targets:
         #      v1.1.7 就是"复刻的规则"与"视图实现"漂移，测试全绿但真机坏）。
         #   ⚠️ 墓碑追加：**「值变了就收」当判据**；**用防抖计时器猜"滚完了没"**。
         #   ⚠️ 标签内容、二维码、提醒与灵动岛逻辑**一律未变**。
-        CURRENT_PROJECT_VERSION: 53
-        MARKETING_VERSION: 1.1.11
+        #
+        # ★★★ 2026-10-13 1.1.12 / build 54（第二十八轮）—— 用户三条：
+        #   ① 奶制品 / 肉类模板的选择菜单：**整行**都可以点开
+        #      （原来只有尾部小箭头能点）→ 新增 `MenuPickerRow`
+        #      （`Menu` + `.contentShape(Rectangle())`）。
+        #   ② 提醒重新定版：**「完成时间 / 最佳使用时间 / 原始保质期」各提前 5 分钟
+        #      一条**（旧的五档阶梯删除）；灵动岛倒计时窗口 8 小时 → **最后 5 分钟**；
+        #      肉类解冻新增「完成时间」里程碑（= 解冻 + 1 天，派生值不入库）。
+        #   ③ 使用「完成时间」的标签（康普茶 / 肉类解冻…）通知与灵动岛按钮
+        #      单独定制为「已完成」—— 点击**不改记录数据**（≠「用完」）。
+        #   ⚠️ 标签版式、二维码、日期规则**一律未变**。
+        CURRENT_PROJECT_VERSION: 54
+        MARKETING_VERSION: 1.1.12
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -563,8 +574,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.11
-        CURRENT_PROJECT_VERSION: 53
+        MARKETING_VERSION: 1.1.12
+        CURRENT_PROJECT_VERSION: 54
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

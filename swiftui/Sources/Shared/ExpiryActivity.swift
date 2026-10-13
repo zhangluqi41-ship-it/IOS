@@ -24,7 +24,8 @@
 //    Live Activity **只能由处于前台的 App 调 `Activity.request()` 启动**；
 //    本地通知 / 后台唤醒都拉不起它（iOS 17.2 起后台只能靠服务端 APNs
 //    push-to-start，免费开发者账号没有推送能力）。
-//    所以只能「用户最后一次打开 App 时，把 8 小时内会到期的那个里程碑先挂上去」。
+//    所以只能「用户打开 App 时，把窗口内（2026-10-13 起：最后 5 分钟）
+//    会到期的那个里程碑先挂上去」。
 //
 //  ★★ 但这只限制「起点」，不限制「之后」：
 //    活动一旦起来了，它的**倒计时**是系统自己算的 —— `Text(timerInterval:)`
@@ -111,7 +112,8 @@ struct ExpiryActivityAttributes: ActivityAttributes {
 
 // MARK: - 灵动岛上的两个按钮
 
-/// 「已完成使用」 —— 对应「效期管理」里的「已用完」。
+/// 「已完成使用」（使用「完成时间」的标签显示为「已完成」）——
+/// 前者对应「效期管理」里的「已用完」；后者**不改记录数据**（用户第 3 条）。
 struct ExpiryMarkDoneIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "已完成使用"
     static var isDiscoverable: Bool = false
@@ -136,7 +138,7 @@ struct ExpiryMarkDoneIntent: LiveActivityIntent {
 /// 「稍后提醒」。
 ///
 /// ★ 用户规则（清单「三、效期管理」第 2 条）：
-///     · 「提前 10 分钟」那条点稍后提醒 → **不做任何操作**
+///     · 「提前 5 分钟」那条点稍后提醒 → **不做任何操作**
 ///     · 「到时间」那条点稍后提醒 → **每 5 分钟提醒一次**
 ///   判据是「点下去的这一刻有没有到时间」，所以这里把 `dueAt` 一并带过去，
 ///   由主 App 现判。
@@ -223,9 +225,14 @@ enum ExpiryDeepLink {
 enum ExpiryActivityBridge {
     #if EXPIRY_APP
 
-    /// 「已完成使用」：把记录标记为已用完，并收掉灵动岛。
+    /// 「已完成使用 / 已完成」：由**记录本身**决定行为（见 `ExpiryStore.completeOrUse`）——
+    /// 使用「完成时间」的标签（康普茶 / 肉类解冻…）只收掉提醒、**不改数据**；
+    /// 其余标签标记为已用完。两种情况都要收掉灵动岛。
+    ///
+    /// ★★★ 2026-10-13（用户第 3 条）：按钮文案在 Widget 侧按
+    ///   `milestoneLabel`（「完成时间」）切换，行为在这里按记录切换 —— 同一套判据。
     static func markDone(recordID: String) {
-        ExpiryStore.shared.markUsed(byID: recordID)
+        ExpiryStore.shared.completeOrUse(byID: recordID)
         Task { await ExpiryActivityManager.shared.end(recordID: recordID) }
     }
 

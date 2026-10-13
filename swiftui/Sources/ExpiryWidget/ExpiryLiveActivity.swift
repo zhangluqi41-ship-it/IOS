@@ -624,8 +624,13 @@ private struct ActionButtons: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // ★★★ 2026-10-13（用户第 3 条）：使用「完成时间」的标签（康普茶、肉类解冻…）
+            //   按钮文案单独定制为「已完成」—— 点击**不改记录数据**（≠「用完」）。
+            //   判据 = `milestoneLabel`（这些标签的里程碑名就叫「完成时间」）；
+            //   真实行为在 `ExpiryStore.completeOrUse`，与文案同一套判据。
             Button(intent: ExpiryMarkDoneIntent(recordID: attributes.recordID)) {
-                Label("已完成使用", systemImage: "checkmark.circle.fill")
+                Label(attributes.milestoneLabel == "完成时间" ? "已完成" : "已完成使用",
+                      systemImage: "checkmark.circle.fill")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)

@@ -150,10 +150,8 @@ final class OptimizationTests: XCTestCase {
         // 下标顺序是通知 identifier 的计算依据，不能变。
         XCTAssertEqual(milestones[0].date, expire)
         XCTAssertEqual(milestones[1].date, best)
-        XCTAssertTrue(milestones[0].todayTitle.contains("原始保质期"))
-        XCTAssertTrue(milestones[1].todayTitle.contains("最佳使用时间"))
-        XCTAssertFalse(milestones[0].tomorrowTitle.isEmpty)
-        XCTAssertFalse(milestones[1].tomorrowBody.isEmpty)
+        XCTAssertEqual(milestones[0].label, "原始保质期")
+        XCTAssertEqual(milestones[1].label, "最佳使用时间")
     }
 
     func testDairyHasBothMilestones() {
@@ -172,11 +170,9 @@ final class OptimizationTests: XCTestCase {
                                                                 bestBefore: day(20)))
         XCTAssertEqual(milestones.count, 2)
         XCTAssertEqual(milestones[0].date, day(3))
-        let text = milestones[0].todayTitle + milestones[0].todayBody
-            + milestones[0].tomorrowTitle + milestones[0].tomorrowBody
-        XCTAssertTrue(text.contains("完成"), "第二组提醒要按「完成时间」的语义出：\(text)")
-        XCTAssertTrue(text.contains("饮用") || text.contains("二发"),
-                      "要告诉用户这时候能喝 / 能做二发：\(text)")
-        XCTAssertFalse(text.contains("原始保质期"), "康普茶不该出现「原始保质期」：\(text)")
+        XCTAssertEqual(milestones[0].label, "完成时间", "第二组提醒要按「完成时间」的语义出")
+        XCTAssertEqual(milestones[1].label, "最佳使用时间")
+        let labels = milestones.map(\.label).joined()
+        XCTAssertFalse(labels.contains("原始保质期"), "康普茶不该出现「原始保质期」")
     }
 }

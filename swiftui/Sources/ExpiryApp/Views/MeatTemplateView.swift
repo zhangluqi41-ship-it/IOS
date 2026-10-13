@@ -32,31 +32,24 @@ struct MeatTemplateView: View {
     var body: some View {
         List {
             Section {
-                Picker("保存类型", selection: $storage) {
-                    // ★ 2026-10-09：去掉「请选择」占位项，理由同奶制品模板。
-                    ForEach(MeatStorage.allCases) { s in
-                        Text(s.label).tag(Optional(s))
-                    }
-                }
-                .pickerStyle(.menu)
+                // ★★★ 2026-10-13（用户反馈）：三个选择行全部换成 `MenuPickerRow`
+                //   —— **整行可点**（原生 `.pickerStyle(.menu)` 只有尾部小箭头能点）。
+                MenuPickerRow(title: "保存类型",
+                              options: MeatStorage.allCases,
+                              optionLabel: { $0.label },
+                              selection: $storage)
 
-                Picker("肉类", selection: $animal) {
-                    // ★ 同上：不塞占位项。
-                    ForEach(MeatAnimal.allCases) { a in
-                        Text(a.label).tag(Optional(a))
-                    }
-                }
-                .pickerStyle(.menu)
-                .disabled(storage == nil)
+                MenuPickerRow(title: "肉类",
+                              options: MeatAnimal.allCases,
+                              optionLabel: { $0.label },
+                              selection: $animal)
+                    .disabled(storage == nil)
 
-                Picker("部位", selection: $cut) {
-                    // ★ 同上：不塞占位项。
-                    ForEach(animal?.cuts ?? [], id: \.self) { c in
-                        Text(c).tag(Optional(c))
-                    }
-                }
-                .pickerStyle(.menu)
-                .disabled(animal == nil)
+                MenuPickerRow(title: "部位",
+                              options: animal?.cuts ?? [],
+                              optionLabel: { $0 },
+                              selection: $cut)
+                    .disabled(animal == nil)
 
                 if let s = storage, animal != nil, cut != nil {
                     Button {

@@ -131,6 +131,51 @@ struct MakerField: View {
     }
 }
 
+// MARK: - 菜单式选择行（整行可点）
+
+/// 菜单式选择行：**整行都是点击热区**，右侧显示当前值与上下箭头。
+///
+/// ★★★ 2026-10-13（用户反馈）：「要点击（红框内的）小箭头才能拉出菜单，
+///   影响使用体验」—— 根因是原生 `Picker(.menu)` 在 `List` 里只有尾部
+///   一小块区域响应点击。改用 `Menu` + `.contentShape(Rectangle())`，
+///   把**整行**变成热区（点行内任意位置都能拉出菜单）。
+///
+/// 设计要点：
+///   · 选项菜单本体仍用 `Picker` —— 保留系统原生的勾选样式；
+///   · `selection` 为 nil 时右侧只显示箭头（与原生一致的「未选」视觉）；
+///   · 支持 `.disabled(...)`（如「肉类」要先选保存类型）。
+struct MenuPickerRow<Value: Hashable>: View {
+    let title: String
+    let options: [Value]
+    let optionLabel: (Value) -> String
+    @Binding var selection: Value?
+
+    var body: some View {
+        Menu {
+            Picker(title, selection: $selection) {
+                ForEach(options, id: \.self) { option in
+                    Text(optionLabel(option)).tag(Optional(option))
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(title)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                if let selection {
+                    Text(optionLabel(selection))
+                        .foregroundStyle(.secondary)
+                }
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            // ★ 整行热区：没有它，只有「内容本身」可点，右侧空白点不动。
+            .contentShape(Rectangle())
+        }
+    }
+}
+
 // MARK: - 重新打印
 
 /// 「效期管理」里对一条已有记录重新出标签。

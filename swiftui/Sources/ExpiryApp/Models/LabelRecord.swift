@@ -94,6 +94,24 @@ struct LabelRecord: Identifiable, Codable, Hashable {
     var dueLabel: String {
         dueDate == bestBefore ? "最佳使用" : "完成"
     }
+
+    /// 这条记录的标签是否使用「完成时间」—— 决定提醒按钮叫「已完成」还是「已完成使用」。
+    ///
+    /// ★★★ 2026-10-13（用户第 3 条）：使用「完成时间」的标签（康普茶、猪肉解冻，
+    ///   以及以后所有使用完成时间的标签）的通知 / 灵动岛按钮单独定制为「已完成」，
+    ///   点击后**不改动记录数据**（≠「用完」：完成 ≠ 吃掉，记录继续留在列表里）。
+    ///
+    /// 判据与标签语义保持一致（**不新增存储字段** —— 那会让旧 `records.json`
+    /// 解码失败）：
+    ///   · 康普茶：`expireAt` 槽位存的就是「完成时间」；
+    ///   · 肉类：只有**解冻标签**带完成时间，而「是不是解冻」由标题前缀
+    ///     「解冻-」承载（见 `MeatRule.thawPrefix` 的注释 —— 当初就是靠标题前缀
+    ///     在不动已定版式的前提下区分解冻标签的）。
+    var usesCompletionTime: Bool {
+        if kind == .kombucha { return true }
+        return kind == .meat
+            && title.hasPrefix(MeatRule.thawPrefix + MeatRule.titleSeparator)
+    }
 }
 
 // MARK: - 状态

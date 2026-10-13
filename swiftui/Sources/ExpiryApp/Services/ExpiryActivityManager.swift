@@ -16,7 +16,7 @@
 //      Apple 原文：「The system starts the Live Activity at the specified date,
 //      **even if the app is in the background**.」
 //      ➜ 于是本项目现在跑**两条活动**：
-//        · **A = 倒计时**（现在的老路子，`pushType: nil`，最多 8 小时）
+//        · **A = 倒计时**（现在的老路子，`pushType: nil`，只在 `window` 内上岛）
 //          —— 负责「还有多久」的实时倒计时；
 //        · **B = 到点警报**（`start: dueAt` + `alertConfiguration`）
 //          —— 由**系统托管**，到点那一刻自动拉起并弹出展开态，
@@ -54,6 +54,15 @@
 //        ⚠️ 提醒（通知）逻辑**一律没动**：4 档时机、passive 静默判据
 //           全部保持原样，本轮只改「灵动岛活动怎么排、怎么退场」。
 //
+//    【第十六轮·2026-10-13 用户第 2 条】「倒计时……提前 5 分钟」——
+//      用户截图里灵动岛在目标前 6 小时就开始倒计时（`403:40` = 6h43m40s），
+//      要求「提醒提前 5 分钟」。➜ `window` 从 8 小时**收紧到 5 分钟**：
+//      灵动岛倒计时现在只呈现**最后 5 分钟**（`5:00` → `0:00`），
+//      到点那一刻照旧由 B（到点警报）弹出展开态接管。
+//      （通知侧同步改成「每时刻提前 5 分钟一条」，见 `ExpiryStore`。）
+//      ⚠️ 旧口径「用户最后一次打开 App 时，把 8 小时内会到期的里程碑先挂上岛」
+//        **作废** —— 现在是「最后 5 分钟才上岛」。
+//
 //  ★ 倒计时不需要我们管：`Text(timerInterval:countsDown:)` 由系统每秒自己刷，
 //    不需要 App 在后台推状态。
 //
@@ -73,7 +82,15 @@ final class ExpiryActivityManager {
     static let shared = ExpiryActivityManager()
 
     /// 提前多久就把灵动岛挂上去（见文件头）。
-    static let window: TimeInterval = 8 * 60 * 60
+    ///
+    /// ★★★ 2026-10-13（用户第 2 条）8 小时 → **5 分钟**：
+    ///   用户要求提醒统一「提前 5 分钟」，截图里目标前 6 小时就开始倒计时
+    ///   被判为 bug（`403:40` = 6h43m40s）。现在灵动岛倒计时只呈现**最后
+    ///   5 分钟**（`5:00` → `0:00`），到点后照旧显示「已到时间 + 两个按钮」
+    ///   （`graceWindow` 30 分钟）。
+    ///   ⚠️ 这个窗口同时决定 `sync` 里「有没有东西该上岛」—— 调大会让倒计时
+    ///     出现得更早，调小会让它更晚。改之前先看用户是否再次改需求。
+    static let window: TimeInterval = 5 * 60
 
     // MARK: 两条活动的灵动岛优先级（见文件头第十三轮说明）
 
@@ -169,9 +186,10 @@ final class ExpiryActivityManager {
         //   不会出现「岛上挂的是 A、判静默用的是 B」这种错位。
         let best = Self.nearestMilestone(records: records, now: now)
 
-        // ★★★【第十轮】**不要**在「8 小时内没有里程碑」时直接 `endAll()` 返回 ——
-        //   那会把预定的「到点警报」一起收掉。8 小时窗口只管**倒计时那条**；
-        //   预定的警报活动不受它限制（它是 `pending` 状态，到点才开始计时）。
+        // ★★★【第十轮】**不要**在「窗口内没有里程碑」时直接 `endAll()` 返回 ——
+        //   那会把预定的「到点警报」一起收掉。`window`（2026-10-13 起 5 分钟）
+        //   只管**倒计时那条**；预定的警报活动不受它限制（它是 `pending`
+        //   状态，到点才开始计时）。
         guard let best else {
             await endCountdownOnly()
             await scheduleAlertForNextMilestone(records: records)
@@ -293,14 +311,16 @@ final class ExpiryActivityManager {
 
     /// 「此刻该挂在灵动岛上的那个里程碑」—— 纯计算，不碰任何活动状态。
     ///
-    /// - Returns: 最近的那个里程碑；8 小时窗口内没有就返回 `nil`（= 岛上没东西）。
+    /// - Returns: 最近的那个里程碑；窗口（`window`，2026-10-13 起 **5 分钟**）内
+    ///   没有就返回 `nil`（= 岛上没东西）。
     nonisolated static func nearestMilestone(records: [LabelRecord], now: Date)
         -> (record: LabelRecord, milestone: ExpiryStore.ExpiryMilestone)? {
         var best: (record: LabelRecord, milestone: ExpiryStore.ExpiryMilestone)?
         for record in records where record.usedAt == nil {
             for milestone in ExpiryStore.milestones(of: record) {
                 let delta = milestone.date.timeIntervalSince(now)
-                // ★ 窗口扩到 `window + graceWindow`（8h + 30min）：
+                // ★ 窗口扩到 `window + graceWindow`（window 5 分钟、grace 30 分钟，
+                //   见两者定义）：
                 //   刚过点半小时内的物料仍然要留在岛上（否则「到时间」那一刻
                 //   活动就自己消失了，用户根本来不及点按钮）。这段时间
                 //   `countdownInterval == nil`，岛上显示「已到时间 + 两个按钮」。
@@ -313,24 +333,13 @@ final class ExpiryActivityManager {
         return best
     }
 
-    /// 系统「实时活动」总开关是否允许。
-    ///
-    /// ★★★【第十二轮】必须暴露给 `ExpiryStore`：
-    ///   用户若在「设置 → 面容 ID 与密码 / 通知」里把实时活动关掉，
-    ///   灵动岛上**根本不会有胶囊** —— 这时通知**不能**被静默，
-    ///   否则用户既看不到胶囊、也收不到横幅，等于完全被漏掉。
-    ///   ⚠️ 少了这一条判断，静默规则就会在「实时活动被关闭」时误伤。
-    nonisolated static var liveActivitiesEnabled: Bool {
-        ActivityAuthorizationInfo().areActivitiesEnabled
-    }
-
     // MARK: - 预定「到点自动弹出」（第十轮新增）
 
     /// 找出「下一个会到点的里程碑」，为它预定一条由系统托管的警报活动。
     ///
-    /// ★ 与 `sync` 里那个 8 小时窗口**无关**：这里是「将来任意时刻」的第一个
+    /// ★ 与 `sync` 里那个窗口（`window`）**无关**：这里是「将来任意时刻」的第一个
     ///   里程碑 —— 因为预定式活动在 `start` 之前只是 `pending`，
-    ///   不占「8 小时寿命」（寿命从它真正开始那一刻才起算）。
+    ///   不占「8 小时寿命」（平台对活动寿命的限制；寿命从它真正开始那一刻才起算）。
     private func scheduleAlertForNextMilestone(records: [LabelRecord]) async {
         let now = Date()
         var next: (record: LabelRecord, milestone: ExpiryStore.ExpiryMilestone)?
@@ -417,9 +426,12 @@ final class ExpiryActivityManager {
         let content = ActivityContent(state: state,
                                       staleDate: dueAt.addingTimeInterval(Self.graceWindow),
                                       relevanceScore: Self.alertRelevance)
+        // ★★★ 2026-10-13（用户第 3 条）：使用「完成时间」的标签（康普茶 / 肉类
+        //   解冻…）按钮文案是「已完成」—— 提示语跟着切换，别点名不存在的按钮。
+        let doneTitle = attrs.milestoneLabel == "完成时间" ? "已完成" : "已完成使用"
         let alert = AlertConfiguration(
             title: "\(attrs.title)",
-            body: "\(attrs.milestoneLabel)已到，请在灵动岛上点「已完成使用」或「稍后提醒」。",
+            body: "\(attrs.milestoneLabel)已到，请在灵动岛上点「\(doneTitle)」或「稍后提醒」。",
             sound: .default)
 
         do {
