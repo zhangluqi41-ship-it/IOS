@@ -135,20 +135,33 @@ struct MakerField: View {
 
 /// 菜单式选择行：**整行都是点击热区**，右侧显示当前值与上下箭头。
 ///
-/// ★★★ 2026-10-13（用户反馈）：「要点击（红框内的）小箭头才能拉出菜单，
+/// ★★★ 2026-10-13（用户第一次反馈）：「要点击（红框内的）小箭头才能拉出菜单，
 ///   影响使用体验」—— 根因是原生 `Picker(.menu)` 在 `List` 里只有尾部
 ///   一小块区域响应点击。改用 `Menu` + `.contentShape(Rectangle())`，
 ///   把**整行**变成热区（点行内任意位置都能拉出菜单）。
 ///
-/// 设计要点：
-///   · 选项菜单本体仍用 `Picker` —— 保留系统原生的勾选样式；
-///   · `selection` 为 nil 时右侧只显示箭头（与原生一致的「未选」视觉）；
-///   · 支持 `.disabled(...)`（如「肉类」要先选保存类型）。
+/// ★★★ 2026-10-13（用户第二次反馈）：「点击后文字都消失了……字体这个位置
+///   要**锁定**，不参与点击弹出菜单和动画」——
+///   根因：文字 / 当前值放在 `Menu` 的 **label** 里时，iOS 在菜单弹出的
+///   「morph 动画」中会把 label 整块吃掉（snapshot 成锚点色块），
+///   行内文字随之消失。
+///   ➜ 修法 = **内容与热区分家**（本文件第 28 轮改动的核心）：
+///     · `Menu` 的 label 只放一块**透明热区**（`Color.clear`）——
+///       系统动画想怎么 morph 这块透明色块都行，**看不见就伤不到**；
+///     · 文字 / 当前值 / 箭头放到 `.overlay` 里盖在最上层，并
+///       `allowsHitTesting(false)`（不挡点击）—— 它是 `Menu` **外部**的
+///       普通视图，系统的菜单动画**碰不到它** → 位置永久锁定、永不消失。
+///   ⚠️ 别把内容挪回 label 里 —— 那正是这一轮被否掉的样子。
+///   ⚠️ overlay 里**必须**有 `allowsHitTesting(false)`，否则那层会把
+///      所有点击吃掉，菜单反而拉不出来。
 struct MenuPickerRow<Value: Hashable>: View {
     let title: String
     let options: [Value]
     let optionLabel: (Value) -> String
     @Binding var selection: Value?
+
+    /// 外层 `.disabled(...)` 的状态 —— 自绘内容要照着系统样式给出「禁用变灰」。
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Menu {
@@ -158,6 +171,13 @@ struct MenuPickerRow<Value: Hashable>: View {
                 }
             }
         } label: {
+            // 透明热区：撑满整行，只负责接收点击 / 承载系统菜单动画。
+            Color.clear
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .overlay {
+            // 静态内容层（Menu 外部）：位置锁定，不参与菜单的任何动画。
             HStack(spacing: 8) {
                 Text(title)
                     .foregroundStyle(.primary)
@@ -170,8 +190,9 @@ struct MenuPickerRow<Value: Hashable>: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
-            // ★ 整行热区：没有它，只有「内容本身」可点，右侧空白点不动。
-            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.35)
+            // ⚠️ 放行命中测试 —— 让点击穿到下面那块透明热区上。
+            .allowsHitTesting(false)
         }
     }
 }

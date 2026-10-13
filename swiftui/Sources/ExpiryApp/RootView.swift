@@ -140,13 +140,20 @@ struct RootView: View {
             PrinterService.shared.startAppSession()
             // ★ 灵动岛对齐（冷启动时 `ExpiryStore.init` 还没有触发过重排）。
             syncLiveActivity()
+            // ★★★【第二十九轮】通知重排（**升级/重装后第一次启动必须走一遍**）：
+            //   否则「旧版本排下的待发通知」会原样留着（比如 ≤v1.1.11 的
+            //   五档阶梯），而新逻辑的「提前 5 分钟」通知又没人排 ——
+            //   用户会觉得提醒行为完全不对。
+            //   `rescheduleReminders` 会整批清掉再按当前代码逻辑重排，
+            //   天然完成「升级迁移」，不用专门写判断。
+            store.rescheduleReminders()
         }
         .onChange(of: scenePhase) { _, phase in
             // ★ 回到前台时重算一次：
-            //   · 把窗口内（2026-10-13 起：最后 5 分钟）会到期的那个里程碑挂成**倒计时**活动；
-            //   · 并把「下一个到点的里程碑」**预定**成系统托管的**警报**活动
-            //     （第十轮新增，到点那一刻由系统自己拉起，不需要 App 在运行 ——
-            //      见 `ExpiryActivityManager.scheduleAlert`）。
+            //   · 把窗口内（最后 5 分钟）会到期的那个里程碑挂成**倒计时**活动；
+            //   · 并把「下一条里程碑」预定成两条系统托管活动 ——
+            //     倒计时（提前 5 分钟自动上岛）与到点警报（到点自动弹出），
+            //     见 `ExpiryActivityManager.scheduleUpcoming`。
             guard phase == .active else { return }
             syncLiveActivity()
         }

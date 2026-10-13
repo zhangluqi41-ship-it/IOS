@@ -16,13 +16,15 @@
 //      Apple 原文：「The system starts the Live Activity at the specified date,
 //      **even if the app is in the background**.」
 //      ➜ 于是本项目现在跑**两条活动**：
-//        · **A = 倒计时**（现在的老路子，`pushType: nil`，只在 `window` 内上岛）
-//          —— 负责「还有多久」的实时倒计时；
+//        · **A = 倒计时**（**预定式**：`start: dueAt - window`，见第十七轮）
+//          —— 系统在「提前 5 分钟」那一刻自动拉起，负责最后 5 分钟的
+//             实时倒计时（App 不在运行也生效）；
 //        · **B = 到点警报**（`start: dueAt` + `alertConfiguration`）
 //          —— 由**系统托管**，到点那一刻自动拉起并弹出展开态，
 //             App 完全不需要在运行。见 `scheduleAlert` 的详细注释。
 //      ⚠️ A 和 B 是**两条独立活动**，所以清理时必须区分：
-//        · `endCountdownOnly()` —— 换目标时只清 A；
+//        · `endCountdownOnly()` —— 换目标时只清 A（但会**保留 pending 的
+//          未来预定 A**，见函数注释，误杀 = 那一次提醒彻底丢失）；
 //        · `endAll()`           —— 彻底不要灵动岛时才连 B 一起清。
 //        用错会把刚弹出的到点警报一起收掉。
 //
@@ -63,6 +65,24 @@
 //      ⚠️ 旧口径「用户最后一次打开 App 时，把 8 小时内会到期的里程碑先挂上岛」
 //        **作废** —— 现在是「最后 5 分钟才上岛」。
 //
+//    【第十七轮·2026-10-13 用户第 4 条】「灵动岛完全无提醒了」——
+//      ⚠️ 直接原因是爱思装机给 bundle id 又追加了一层后缀（装成第二个 App，
+//        新沙盒里提醒开关默认关着、通知权限全无），**不是本文件的逻辑问题**；
+//        但顺带暴露了一个真实的结构性缺陷，本轮一并修掉：
+//        · 倒计时（A）此前只在「App 恰好运行 & 目标进入 5 分钟窗口」时
+//          才由 `sync` 即时上岛 —— 现实中用户不可能正好在那 5 分钟里
+//          开着 App，结果就是「灵动岛几乎永远看不到」；
+//        · 正解 = **把 A 也改成预定式**（`start: dueAt - window`）：
+//          系统在「提前 5 分钟」那一刻自动把它拉起来（App 不在运行也行），
+//          然后由 `Text(timerInterval:)` 自己跑完最后 5 分钟 → 到点由 B 接管。
+//      ➜ 系统里现在常驻**两条预定活动**：
+//          A（`dueAt - window` 启动，无声，负责亮岛 + 倒计时）
+//        + B（`dueAt - alertFireLead` 启动，有声，负责到点展开态）。
+//        「提前 5 分钟」的响铃由本地通知承担（见 `ExpiryStore.candidates`），
+//        A 的 `alertConfiguration` 用 `sound: nil` —— 避免同一时刻双响。
+//      ⚠️ 因此 `endCountdownOnly()` 必须**保留下一条的预定 A（pending）**：
+//        误杀它 = 那一次提醒彻底丢失（用户再也等不到倒计时）。
+//
 //  ★ 倒计时不需要我们管：`Text(timerInterval:countsDown:)` 由系统每秒自己刷，
 //    不需要 App 在后台推状态。
 //
@@ -90,6 +110,9 @@ final class ExpiryActivityManager {
     ///   （`graceWindow` 30 分钟）。
     ///   ⚠️ 这个窗口同时决定 `sync` 里「有没有东西该上岛」—— 调大会让倒计时
     ///     出现得更早，调小会让它更晚。改之前先看用户是否再次改需求。
+    ///   ★★★ 2026-10-13（第十七轮）：它**同时是预定 A 的启动提前量** ——
+    ///     系统会在 `dueAt - window` 那一刻自动把倒计时拉上岛（不需要 App
+    ///     在运行）。这就是「提前 5 分钟提醒」的倒计时一半的实现。
     static let window: TimeInterval = 5 * 60
 
     // MARK: 两条活动的灵动岛优先级（见文件头第十三轮说明）
@@ -120,7 +143,7 @@ final class ExpiryActivityManager {
     ///   提前 3 秒预定，让肉眼看到弹出的时刻落回真实到点附近。
     ///   代价：偶尔警报比真实到点早 ~3 秒响 —— 效期场景无感（用户已确认）。
     ///
-    /// ⚠️ 提前量施加在 `scheduleAlertForNextMilestone` 的 target 上 ——
+    /// ⚠️ 提前量施加在 `scheduleUpcoming` 的 target 上 ——
     ///    也就是说 `scheduledAlertDueKey` 存的是**提前后**的时刻，
     ///    `scheduleAlert` 里「已开响就别动它」的短路因此与真实启动时刻对齐；
     ///    别把提前量挪进 `scheduleAlert` 内部（那会让短路判断错位 3 秒，
@@ -142,6 +165,17 @@ final class ExpiryActivityManager {
     private static let scheduledAlertRecordKey = "expiry.scheduledAlertRecord"
     /// 预定警报的目标时刻 —— 用来判断它**有没有已经开响**（见 `scheduleAlert`）。
     private static let scheduledAlertDueKey = "expiry.scheduledAlertDue"
+
+    // MARK: 预定式「倒计时」活动的持久化钥匙（第十七轮新增）
+
+    /// ★★★【第十七轮】倒计时（A）也改成预定式之后，需要和 B 一样把 id 落盘 ——
+    ///   否则下次 `sync` 找不到它，会出现「旧预定没撤、新预定又排」的重复活动。
+    private static let scheduledCountdownIDKey = "expiry.scheduledCountdownID"
+    /// 预定倒计时对应的记录 id（点「已完成」时用来判断要不要一起收掉）。
+    private static let scheduledCountdownRecordKey = "expiry.scheduledCountdownRecord"
+    /// 预定倒计时的**启动时刻**（= 里程碑 - window）——
+    ///   幂等短路、以及判断「它是否已进窗口」都用它。
+    private static let scheduledCountdownStartKey = "expiry.scheduledCountdownStart"
 
     // MARK: 「最后一次倒计时活动」的属性缓存（第十三轮新增）
 
@@ -190,9 +224,12 @@ final class ExpiryActivityManager {
         //   那会把预定的「到点警报」一起收掉。`window`（2026-10-13 起 5 分钟）
         //   只管**倒计时那条**；预定的警报活动不受它限制（它是 `pending`
         //   状态，到点才开始计时）。
+        // ★【第十七轮】`endCountdownOnly` 现在会**保留「还没到启动时刻」的
+        //   预定 A**，并把「过期的显示」收干净；随后 `scheduleUpcoming`
+        //   幂等地对齐 A / B 两条预定。
         guard let best else {
             await endCountdownOnly()
-            await scheduleAlertForNextMilestone(records: records)
+            await scheduleUpcoming(records: records)
             return
         }
 
@@ -221,11 +258,15 @@ final class ExpiryActivityManager {
            snoozedUntil(recordID: best.record.id.uuidString) == nil,
            scheduledAlertIsLive() {
             await endCountdownOnly()
-            // ⚠️ **不要**在这里调 `scheduleAlertForNextMilestone` ——
-            //   它在「已经没有下一个里程碑」时会 `cancelScheduledAlert()`，
-            //   把**正在响的这条 B** 一起收掉（用户就再也看不到「已到时间」了）。
-            //   此刻正确的动作只有一个：让 A 退场、原样保留 B。
-            //   「下一条」的预定交给下一次 `sync`（记录变化 / 下次冷启动）。
+            // ★★★【第十七轮】这里现在**可以**把「下一条」的预定排上了 ——
+            //   之前不敢调的原因（「没有下一条」时会 `cancelScheduledAlert()`
+            //   把**正在响的这条 B** 一起收掉）已经被两道保险修掉：
+            //     · `scheduleUpcoming` 的「没有下一条」分支会先看
+            //       `scheduledAlertFiredRecently()` —— 开响中的 B 不撤；
+            //     · `scheduleAlert` 自己的「已开响短路」也会原样放过它。
+            //   不排的缺口：用户此刻若马上锁屏走人，下一条的
+            //   「提前 5 分钟预定」就没人补 —— 所以要在这里补上。
+            await scheduleUpcoming(records: records)
             return
         }
 
@@ -289,9 +330,11 @@ final class ExpiryActivityManager {
             }
         }
 
-        // ── 活动 B：预定「到点那一刻由系统自动拉起并弹出展开态」──
-        // ★★★【第十轮·用户图1/图2 的真正解法】详见 `scheduleAlert` 的长注释。
-        await scheduleAlertForNextMilestone(records: records)
+        // ── 预定「下一条里程碑」的两条系统托管活动 ──
+        //   · A 预定：`start = dueAt - window` —— 提前 5 分钟自动上岛倒计时；
+        //   · B 预定：`start = dueAt - alertFireLead` —— 到点自动弹出展开态。
+        //   详见 `scheduleUpcoming` / `scheduleCountdown` 的注释。
+        await scheduleUpcoming(records: records)
     }
 
     // MARK: - 纯查询（给 `ExpiryStore` 判断「通知要不要静默」用）
@@ -335,12 +378,23 @@ final class ExpiryActivityManager {
 
     // MARK: - 预定「到点自动弹出」（第十轮新增）
 
-    /// 找出「下一个会到点的里程碑」，为它预定一条由系统托管的警报活动。
+    /// 为「下一条里程碑」预定**两条**系统托管活动（见文件头第十七轮）：
+    ///   · **A 预定 = 倒计时**：`start = dueAt - window` —— 提前 5 分钟
+    ///     系统自动把倒计时拉上岛（App 不在运行也生效），跑完最后 5 分钟；
+    ///   · **B 预定 = 到点警报**：`start = dueAt - alertFireLead` —— 到点
+    ///     自动弹出展开态（「已到时间 + 按钮」）。
     ///
-    /// ★ 与 `sync` 里那个窗口（`window`）**无关**：这里是「将来任意时刻」的第一个
-    ///   里程碑 —— 因为预定式活动在 `start` 之前只是 `pending`，
-    ///   不占「8 小时寿命」（平台对活动寿命的限制；寿命从它真正开始那一刻才起算）。
-    private func scheduleAlertForNextMilestone(records: [LabelRecord]) async {
+    /// ★ 与 `sync` 的即时显示**互补且互斥**：目标进入 5 分钟窗口后，
+    ///   `scheduleCountdown` 的启动时刻已过会停手 —— 那一刻改由 `sync`
+    ///   的即时分支直接 request（App 正开着，内容还能挂最新状态）。
+    ///
+    /// ★ 与 `sync` 里那个窗口（`window`）对 B 而言**无关**：B 面向「将来任意
+    ///   时刻」的第一个里程碑 —— 预定式活动在 `start` 之前只是 `pending`，
+    ///   不占「8 小时寿命」（寿命从它真正开始那一刻才起算）。
+    ///
+    /// ★ 没有「下一条」时：两条预定都撤 —— 但**正在开响的 B 除外**
+    ///   （宽限期内的它正是用户此刻在看的「到点展开态」，撤掉 = 凭空消失）。
+    private func scheduleUpcoming(records: [LabelRecord]) async {
         let now = Date()
         var next: (record: LabelRecord, milestone: ExpiryStore.ExpiryMilestone)?
 
@@ -353,21 +407,133 @@ final class ExpiryActivityManager {
         }
 
         guard let next else {
-            await cancelScheduledAlert()
+            await cancelScheduledCountdown()
+            if !scheduledAlertFiredRecently() {
+                await cancelScheduledAlert()
+            }
             return
         }
 
-        // 用户点过「稍后提醒」→ 警报目标跟着那个 5 分钟目标走。
-        // ★【第十五轮】统一减 `alertFireLead`（3 秒）—— 抵消系统触发延迟，
-        //   理由与注意事项见该常量的注释。
-        let target = (snoozedUntil(recordID: next.record.id.uuidString) ?? next.milestone.date)
-            .addingTimeInterval(-Self.alertFireLead)
         let attrs = ExpiryActivityAttributes(
             recordID: next.record.id.uuidString,
             title: next.record.title,
             kindLabel: next.record.kind.label,
             milestoneLabel: next.milestone.label)
+
+        // ── A：倒计时（提前 `window` 自动上岛）──
+        await scheduleCountdown(attrs: attrs,
+                                start: next.milestone.date.addingTimeInterval(-Self.window),
+                                dueAt: next.milestone.date)
+
+        // ── B：到点警报 ──
+        // 用户点过「稍后提醒」→ 警报目标跟着那个 5 分钟目标走。
+        // ★【第十五轮】统一减 `alertFireLead`（3 秒）—— 抵消系统触发延迟，
+        //   理由与注意事项见该常量的注释。
+        let target = (snoozedUntil(recordID: next.record.id.uuidString) ?? next.milestone.date)
+            .addingTimeInterval(-Self.alertFireLead)
         await scheduleAlert(attrs: attrs, dueAt: target)
+    }
+
+    // MARK: - 预定「提前 5 分钟自动上岛」的倒计时（第十七轮新增）
+
+    /// 预定一条「提前 `window` 自动上岛」的倒计时活动（A）。
+    ///
+    /// ★★★ 为什么要有它（用户第 4 条的真问题）：
+    ///   A 此前只在「App 运行 & 目标进 5 分钟窗口」时才由 `sync` 即时启动 ——
+    ///   现实中用户不会正好在那 5 分钟里开着 App，结果「灵动岛完全没有提醒」。
+    ///   iOS 26 的预定式 `start:` 让**系统**在那一刻自动拉起它：
+    ///     「The system starts the Live Activity at the specified date,
+    ///      even if the app is in the background.」
+    ///
+    /// - Parameters:
+    ///   - attrs: 活动属性（与 B 同源）。
+    ///   - start: 启动时刻 = 里程碑 - `window`（提前 5 分钟）。
+    ///   - dueAt: 里程碑本身（倒计时区间的上界 / `staleDate`）。
+    ///
+    /// ⚠️ 幂等：同启动时刻 + 活动还在 → 直接返回（`sync` 会被频繁调用，
+    ///   没有这条的话每次都「撤掉→重排」一遍，凭空多出丢活动的窗口）。
+    /// ⚠️ `start` 已过 → 直接返回：那一刻起的显示交给 `sync` 的即时分支。
+    /// ⚠️ `alertConfiguration` 是预定式的**必填项**（Apple 要求），
+    ///   这里把 `sound` 设成 `nil` —— 响铃由本地通知承担，避免双响。
+    private func scheduleCountdown(attrs: ExpiryActivityAttributes,
+                                   start: Date,
+                                   dueAt: Date) async {
+        let defaults = UserDefaults.standard
+
+        guard start > Date() else { return }
+
+        if let saved = defaults.object(forKey: Self.scheduledCountdownStartKey) as? Date,
+           abs(saved.timeIntervalSince(start)) < 1,
+           let id = defaults.string(forKey: Self.scheduledCountdownIDKey),
+           Self.isScheduledActivityAlive(id) {
+            return
+        }
+
+        await cancelScheduledCountdown()
+
+        let state = ExpiryActivityAttributes.ContentState(startedAt: start, dueAt: dueAt)
+        // ★ 优先级取「倒计时」这一档（低）：到点那一刻 B（高分）会立刻顶掉它。
+        let content = ActivityContent(state: state,
+                                      staleDate: dueAt,
+                                      relevanceScore: Self.countdownRelevance)
+        let alert = AlertConfiguration(
+            title: "\(attrs.title)",
+            body: "还有 \(Int(Self.window / 60)) 分钟到\(attrs.milestoneLabel)，倒计时已开始。",
+            sound: nil)
+
+        do {
+            let scheduled = try Activity.request(attributes: attrs,
+                                                 content: content,
+                                                 pushType: nil,
+                                                 style: .standard,
+                                                 alertConfiguration: alert,
+                                                 start: start)
+            defaults.set(scheduled.id, forKey: Self.scheduledCountdownIDKey)
+            defaults.set(attrs.recordID, forKey: Self.scheduledCountdownRecordKey)
+            defaults.set(start, forKey: Self.scheduledCountdownStartKey)
+            NSLog("ExpiryActivityManager: 已预定倒计时 \(attrs.title) @ \(start)")
+        } catch {
+            NSLog("ExpiryActivityManager: 倒计时预定失败 \(error.localizedDescription)")
+        }
+    }
+
+    /// 撤掉预定的倒计时（A）—— 不影响 B。
+    private func cancelScheduledCountdown() async {
+        let defaults = UserDefaults.standard
+        guard let id = defaults.string(forKey: Self.scheduledCountdownIDKey) else { return }
+        for item in Activity<ExpiryActivityAttributes>.activities where item.id == id {
+            await item.end(nil, dismissalPolicy: .immediate)
+        }
+        defaults.removeObject(forKey: Self.scheduledCountdownIDKey)
+        defaults.removeObject(forKey: Self.scheduledCountdownRecordKey)
+        defaults.removeObject(forKey: Self.scheduledCountdownStartKey)
+    }
+
+    /// 预定的「到点警报」（B）是不是**已经开响**（目标时刻已过、还在宽限期内）。
+    ///
+    /// ★ 两个用途（第十七轮抽出这个函数）：
+    ///   · `scheduleAlert` 的「已开响就别动它」短路；
+    ///   · `scheduleUpcoming` 在「没有下一条」时判断「能不能撤 B」——
+    ///     正在响的那条不能撤。
+    private func scheduledAlertFiredRecently() -> Bool {
+        guard let fired = UserDefaults.standard.object(forKey: Self.scheduledAlertDueKey) as? Date
+        else { return false }
+        return fired <= Date() && fired > Date().addingTimeInterval(-Self.graceWindow)
+    }
+
+    /// 某个 id 的预定活动是否**还活着**（未启动 / 已启动 / 已过期但仍在显示）。
+    ///
+    /// ⚠️ 别只用「id 在不在 `Activity.activities` 列表里」判断 —— 已结束
+    ///   （ended / dismissed）的条目可能短暂残留，会骗过幂等短路，
+    ///   让该次重排被跳过 → 提醒静默丢失。
+    ///   ➜ 白名单式判断：只认 `active` / `stale` / `pending` 三个状态。
+    private static func isScheduledActivityAlive(_ id: String) -> Bool {
+        Activity<ExpiryActivityAttributes>.activities.contains { item in
+            item.id == id
+                && (item.activityState == .active
+                    || item.activityState == .stale
+                    || item.activityState == .pending)
+        }
     }
 
     /// 预定一条「到点那一刻由系统自动拉起并弹出」的活动。
@@ -407,9 +573,17 @@ final class ExpiryActivityManager {
 
         // 上一条已经**开响**（目标时刻已过、但还在宽限期内）→ 别动它。
         // 那一刻岛上正是用户要看的「到点展开态」，重排会把它粗暴收掉。
-        if let fired = defaults.object(forKey: Self.scheduledAlertDueKey) as? Date,
-           fired <= Date(),
-           fired > Date().addingTimeInterval(-Self.graceWindow) {
+        if scheduledAlertFiredRecently() {
+            return
+        }
+
+        // ★★★【第十七轮】同目标短路：目标没变 + 活动还在 → 不动它。
+        //   `sync` 会被频繁调用，没有这条的话每次都会「撤掉→重排」一遍，
+        //   中间那一小段「既没有旧的、也没排上新的」窗口纯属白送的丢活动风险。
+        if let saved = defaults.object(forKey: Self.scheduledAlertDueKey) as? Date,
+           abs(saved.timeIntervalSince(dueAt)) < 1,
+           let id = defaults.string(forKey: Self.scheduledAlertIDKey),
+           Self.isScheduledActivityAlive(id) {
             return
         }
 
@@ -462,7 +636,7 @@ final class ExpiryActivityManager {
         defaults.removeObject(forKey: Self.scheduledAlertDueKey)
     }
 
-    /// **只**收掉倒计时那条活动，保留预定的到点警报。
+    /// **只**收掉倒计时那条活动，保留预定的到点警报（B）。
     ///
     /// ★ 为什么不能直接用 `endAll()`：`endAll()` 会把 `Activity.activities` 里
     ///   每一条都收掉 —— 包括系统托管的那条警报。而「换目标时清理」这个场景
@@ -470,12 +644,38 @@ final class ExpiryActivityManager {
     ///
     /// ★ 兜底那一段（按 `scheduledAlertIDKey` 过滤）是为了覆盖「App 重启后
     ///   `activity` 内存变量是 nil、但岛上还挂着上次启动留下的活动」。
+    ///
+    /// ★★★【第十七轮】又加了一条排除：**「还没到启动时刻」的预定倒计时（A）**
+    ///   必须原地保留 ——
+    ///     · 它是「提前 5 分钟系统自动上岛」的唯一载体，误杀 = 那一次提醒
+    ///       彻底丢失（用户再也等不到倒计时）；
+    ///     · `pending` + `start 在未来` 两个条件同时满足才算「还没到启动时刻」。
+    ///       若 `start` 已过还 `pending`（系统延迟启动中）**不保留** ——
+    ///       那一刻我们会走「即时显示」的路子重建它，留着会出两条。
+    ///   ⚠️ 「换目标 / 到点退场 / 窗口外清理」三条路都走这个函数：
+    ///      · 换目标：旧预定（若目标没变）由 `scheduleUpcoming` 的幂等短路
+    ///        继续沿用；若目标变了，`scheduleUpcoming` 里会用
+    ///        `cancelScheduledCountdown()` 精确撤掉再排新的；
+    ///      · 到点退场：下一条的预定 A 安然存活，用户处理完这条后
+    ///        下一条照常在「提前 5 分钟」自动上岛；
+    ///      · 窗口外：`pending` 的预定 A 本来就该留着。
     private func endCountdownOnly() async {
+        let defaults = UserDefaults.standard
+        let alertID = defaults.string(forKey: Self.scheduledAlertIDKey)
+        let countdownID = defaults.string(forKey: Self.scheduledCountdownIDKey)
+        let countdownStart = defaults.object(forKey: Self.scheduledCountdownStartKey) as? Date
+
         if let activity {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
-        let scheduledID = UserDefaults.standard.string(forKey: Self.scheduledAlertIDKey)
-        for item in Activity<ExpiryActivityAttributes>.activities where item.id != scheduledID {
+        for item in Activity<ExpiryActivityAttributes>.activities {
+            // B（到点警报）有独立的生命周期，永远不在这里收。
+            if item.id == alertID { continue }
+            // 未来才启动的预定 A：保留（见函数头注释）。
+            if item.id == countdownID, item.activityState == .pending,
+               let start = countdownStart, start > Date() {
+                continue
+            }
             await item.end(nil, dismissalPolicy: .immediate)
         }
         activity = nil
@@ -575,6 +775,12 @@ final class ExpiryActivityManager {
             await cancelScheduledAlert()
         }
 
+        // ★★★【第十七轮】预定的倒计时（A）同样处理：如果它属于这条记录，
+        //   撤掉 + 清缓存 —— 否则「提前 5 分钟」还会为一条已被处理的记录亮岛。
+        if UserDefaults.standard.string(forKey: Self.scheduledCountdownRecordKey) == recordID {
+            await cancelScheduledCountdown()
+        }
+
         // ★★★【第十三轮】改成「按 recordID 遍历系统里的全部活动」再收。
         //   原因：A 可能已被 `sync` 收掉，而 `Activity.activities` 里还可能留着
         //   孤儿（App 重启后内存变量 `activity` 是 nil，只收它会漏掉）。
@@ -608,6 +814,10 @@ final class ExpiryActivityManager {
         defaults.removeObject(forKey: Self.scheduledAlertIDKey)
         defaults.removeObject(forKey: Self.scheduledAlertRecordKey)
         defaults.removeObject(forKey: Self.scheduledAlertDueKey)
+        // ★【第十七轮】预定的倒计时（A）也要清干净。
+        defaults.removeObject(forKey: Self.scheduledCountdownIDKey)
+        defaults.removeObject(forKey: Self.scheduledCountdownRecordKey)
+        defaults.removeObject(forKey: Self.scheduledCountdownStartKey)
     }
 
     // MARK: - 辅助（第十三轮新增）
