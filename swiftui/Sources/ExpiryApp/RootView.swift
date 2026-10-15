@@ -151,6 +151,9 @@ struct RootView: View {
             //   `rescheduleReminders` 会整批清掉再按当前代码逻辑重排，
             //   天然完成「升级迁移」，不用专门写判断。
             store.rescheduleReminders()
+            // ★★★ 2026-10-15【数据保护事故修复】：界面出现 = 已解锁。
+            //   若 `init` 时的加载被数据保护拦过（锁屏唤醒场景），在这里补一次。
+            store.retryLoadIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
             // ★ 回到前台时重算一次：
@@ -159,6 +162,9 @@ struct RootView: View {
             //     倒计时（提前 5 分钟自动上岛）与到点警报（到点自动弹出），
             //     见 `ExpiryActivityManager.scheduleUpcoming`。
             guard phase == .active else { return }
+            // ★★★ 2026-10-15【数据保护事故修复】：解锁回到前台 ——
+            //   若上次 `load()` 被数据保护拦过（锁屏），这里补一次。
+            store.retryLoadIfNeeded()
             syncLiveActivity()
         }
         // ★★★【第十轮·用户图5】把外部 entry 送进来的「要去哪」落到实处。

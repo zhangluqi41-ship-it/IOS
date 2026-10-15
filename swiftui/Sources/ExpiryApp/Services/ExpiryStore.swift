@@ -54,6 +54,13 @@ final class ExpiryStore: ObservableObject {
 
     /// 全部记录（新→旧）。
     @Published private(set) var records: [LabelRecord] = []
+    /// 本次进程是否成功加载过数据。
+    ///
+    /// ★★★ 2026-10-15【数据保护事故修复】：锁屏时 `load()` 可能被数据保护
+    ///   拦下（文件读不了、但**文件是好的**）—— 这时保持 `false`：
+    ///   · `persist` 一律跳过（空表绝不能覆盖磁盘上的真数据）；
+    ///   · App 回到前台时用 `retryLoadIfNeeded()` 补一次加载。
+    private(set) var loadSucceeded = false
     /// 到期提醒开关（持久化）。
     @Published private(set) var reminderEnabled: Bool = false
     /// 系统通知权限是否被拒（用来给用户一个「去设置」的入口）。
@@ -602,32 +609,70 @@ final class ExpiryStore: ObservableObject {
     }
 
     private func persist(_ list: [LabelRecord]) {
+        // ★★★ 2026-10-15【数据保护事故修复】：加载没成功过就绝不写盘 ——
+        //   否则「锁屏时读取被数据保护拦下、内存里只有空表」的状态一旦 persist，
+        //   会把磁盘上的真数据覆盖掉（那才是真的丢数据）。
+        guard loadSucceeded else {
+            NSLog("ExpiryStore: 数据尚未成功加载，本次写入跳过（防覆盖）")
+            return
+        }
         let url = fileURL
         io.async {
             do {
                 let data = try JSONEncoder().encode(list)
-                try data.write(to: url, options: [.atomic, .completeFileProtection])
+                // ★★★ 2026-10-15：写入保护等级从 `.completeFileProtection`
+                //   降为 `.completeFileProtectionUntilFirstUserAuthentication` ——
+                //   后者「重启后首次解锁起，锁屏状态下也可读」；
+                //   前者「锁屏即不可读」正是本次事故的导火索
+                //   （锁屏被唤醒 → 读文件被拒 → 被误判损坏 → 隔离）。
+                try data.write(
+                    to: url,
+                    options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             } catch {
                 NSLog("ExpiryStore: 记录写入失败 \(error.localizedDescription)")
             }
         }
     }
 
+    /// ★★★ 2026-10-15【数据保护事故修复】：App 回到前台 / 界面出现时补一次加载。
+    ///
+    /// 场景：App 在**锁屏**状态被系统唤醒（通知动作 / 灵动岛按钮 / 系统预启动），
+    /// `init` 里的 `load()` 被 iOS 数据保护拒绝 —— 此时**文件是好的**，
+    /// 绝不能隔离它；等用户解锁回到 App，用这里再读一遍。
+    /// 幂等：已加载成功时零开销。
+    func retryLoadIfNeeded() {
+        guard !loadSucceeded else { return }
+        load()
+        if loadSucceeded { rescheduleReminders() }
+    }
+
     private func load() {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             records = []
+            loadSucceeded = true
             return
         }
         do {
             let data = try Data(contentsOf: fileURL)
             records = try JSONDecoder().decode([LabelRecord].self, from: data)
-        } catch {
-            // 不让坏文件把 App 拖死：留证据、起空表
+            loadSucceeded = true
+        } catch let error as DecodingError {
+            // 真·解析失败（文件内容确实坏了）：留证据、起空表。
             NSLog("ExpiryStore: 记录解析失败 \(error.localizedDescription)")
             let backup = fileURL.appendingPathExtension("corrupt")
             try? FileManager.default.removeItem(at: backup)
             try? FileManager.default.moveItem(at: fileURL, to: backup)
             records = []
+            loadSucceeded = true
+        } catch {
+            // ★★★ 2026-10-15【数据保护事故修复】：读取层失败（数据保护 / IO）
+            //    ≠ 文件损坏 —— 文件多半完好，只是现在不让读：
+            //    **不动文件、不起空表**，保持 `loadSucceeded = false`，
+            //    等前台 `retryLoadIfNeeded()` 重试。
+            //    （事故：锁屏唤醒 → 完好的 records.json 被误改名 .corrupt、
+            //     界面从空表开始 —— 用户看到「数据全丢」。）
+            NSLog("ExpiryStore: 暂不能读取记录文件（数据保护/IO），跳过本次加载 "
+                  + "\(error.localizedDescription)")
         }
     }
 

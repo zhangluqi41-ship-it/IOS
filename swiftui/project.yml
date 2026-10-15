@@ -554,8 +554,20 @@ targets:
         #        完成时间**直接读 `expireAt`**（不再由 createdAt 现算：扫码合并后
         #        createdAt 会变成扫码时刻，现算出来是错的）。
         #   ⚠️ 标签版式、二维码格式、日期规则未变。
-        CURRENT_PROJECT_VERSION: 58
-        MARKETING_VERSION: 1.1.16
+        # ★ 2026-10-15：**数据保护误隔离事故修复**（用户报「数据全丢」的根因）——
+        #   ① `load()` 不再把「数据保护 / IO 读取失败」当成「文件损坏」：
+        #      只有真正的 `DecodingError` 才隔离 `.corrupt`；读取失败时
+        #      **原封不动、保持未加载状态、等前台重试**。
+        #      新增 `retryLoadIfNeeded()`，挂在 `RootView.onAppear` 与
+        #      `scenePhase == .active`（解锁回到前台时补加载）。
+        #   ② 写盘保护等级 `.completeFileProtection` →
+        #      `.completeFileProtectionUntilFirstUserAuthentication`
+        #      （重启后首次解锁起、锁屏状态下也可读 —— 锁屏唤醒不再读失败）。
+        #   ③ 新增 `loadSucceeded` 门闩：加载未成功时 `persist` 一律跳过，
+        #      内存空表永远不会覆盖磁盘上的真数据。
+        #   另一处小改：猪肉部位菜单新增「里脊」。
+        CURRENT_PROJECT_VERSION: 59
+        MARKETING_VERSION: 1.1.17
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -607,8 +619,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.16
-        CURRENT_PROJECT_VERSION: 58
+        MARKETING_VERSION: 1.1.17
+        CURRENT_PROJECT_VERSION: 59
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
