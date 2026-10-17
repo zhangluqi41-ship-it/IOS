@@ -22,11 +22,26 @@ struct KombuchaSecondView: View {
     @State private var fruit = ""
     @State private var maker = Prefs.lastMaker
     @State private var showFruitAlert = false
+    /// ★★★ 2026-10-17（用户功能 2）：**原材料（一发那瓶）是否已用完**。
+    ///   用户要求「扫描二维码后再加工的标签…增加『原材料是否用完』选项，
+    ///   放在扫描后页面的最上面」；康普茶同理 —— 二发起发时把一发记录标用完。
+    ///   默认**关**；开启且打印成功后 `consumeSourceRecord()` 才动数据。
+    @State private var consumeSource = false
     /// ★ 第一方焦点（第十九轮）：收键盘走 `focused = nil`，键盘才有系统动画。
     @FocusState private var focus: AnyHashable?
 
     var body: some View {
         List {
+            // ★★★ 2026-10-17（功能 2）：**放在页面最上面**（用户明确要求）。
+            Section {
+                Toggle(isOn: $consumeSource) {
+                    Label("原材料已用完", systemImage: "checkmark.circle")
+                }
+            } footer: {
+                Text("开启并打印后，会把效期管理里「\(first.title)」这条一发记录标记为已用完；"
+                     + "关闭则不动它。")
+            }
+
             Section {
                 LabeledContent("一发标题", value: first.title)
                 LabeledContent("完成时间", value: LabelTemplate.fmtDateTime(first.finished))
@@ -70,10 +85,24 @@ struct KombuchaSecondView: View {
         .navigationTitle("康普茶 · 二发")
         .navigationBarTitleDisplayMode(.inline)
         .keyboardDismissible(focus: $focus)
-        .modifier(LabelActions(build: buildDraft))
+        // ★ 功能 2：打印成功后再消耗原材料（失败不处理）。
+        .modifier(LabelActions(build: buildDraft, onConfirmed: consumeSourceRecord))
         .alert("请先填写水果名称", isPresented: $showFruitAlert) {
             Button("好", role: .cancel) {}
         }
+    }
+
+    /// ★★★ 2026-10-17（功能 2）：把「这一发的那瓶」在效期管理里标为已用完。
+    ///
+    ///   定位方式：扫码时 `ScanView` 用**同一个二维码原文** `add()` 入库
+    ///   （按 `qrText` 去重），所以 `qrText == first.sourceQR` 就是那条一发记录。
+    ///   ⚠️ 只在 `consumeSource == true` 时执行。
+    private func consumeSourceRecord() {
+        guard consumeSource, !first.sourceQR.isEmpty else { return }
+        guard let record = ExpiryStore.shared.records.first(where: {
+            $0.qrText == first.sourceQR
+        }) else { return }
+        ExpiryStore.shared.markUsed(record)
     }
 
     private func buildDraft() -> LabelDraft? {

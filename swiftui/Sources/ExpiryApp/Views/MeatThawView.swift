@@ -23,6 +23,16 @@ struct MeatThawView: View {
 
     @State private var maker = Prefs.lastMaker
     @State private var flash: String?
+    /// ★★★ 2026-10-17（用户功能 2）：**原材料（这块冷冻肉）是否已用完**。
+    ///
+    ///   用户原话：「扫描二维码后再加工的标签，在确认打印前，增加一个
+    ///   『原材料是否用完』的选项，可以放在扫描后页面的最上面，如果确认
+    ///   原材料已用完，从效期管理系统里选择已用完。（比如扫描冷冻的肉，
+    ///   进行解冻，会确认原冷冻肉是否用完，未用完不处理，已用完就在
+    ///   效期管理系统里选择已用完）」
+    ///   ➜ 默认**关**（未用完不动）；开启且打印成功后 →
+    ///     `consumeSourceRecord()` 把那条冷冻记录标为已用完。
+    @State private var consumeSource = false
     /// ★ 第一方焦点（第十九轮）：收键盘走 `focused = nil`，键盘才有系统动画。
     @FocusState private var focus: AnyHashable?
 
@@ -34,6 +44,16 @@ struct MeatThawView: View {
 
     var body: some View {
         List {
+            // ★★★ 2026-10-17（功能 2）：**放在页面最上面**（用户明确要求）。
+            Section {
+                Toggle(isOn: $consumeSource) {
+                    Label("原材料已用完", systemImage: "checkmark.circle")
+                }
+            } footer: {
+                Text("开启并打印后，会把效期管理里「\(meat.title)」这条记录标记为已用完；"
+                     + "关闭则不动它。")
+            }
+
             Section {
                 LabeledContent("品名", value: meat.baseName)
                 LabeledContent("保存类型", value: meat.storage.label)
@@ -73,7 +93,22 @@ struct MeatThawView: View {
         .navigationTitle("肉类 · 解冻")
         .navigationBarTitleDisplayMode(.inline)
         .keyboardDismissible(focus: $focus)
-        .modifier(LabelActions(build: buildDraft))
+        // ★ 功能 2：打印成功后再消耗原材料（失败不处理）。
+        .modifier(LabelActions(build: buildDraft, onConfirmed: consumeSourceRecord))
+    }
+
+    /// ★★★ 2026-10-17（功能 2）：把「这块冷冻肉」在效期管理里标为已用完。
+    ///
+    ///   定位方式：扫码时 `ScanView.handleMeat` 用**同一个二维码原文**
+    ///   `add()` 入库（按 `qrText` 去重），所以 `qrText == meat.sourceQR`
+    ///   就是那条冷冻记录。
+    ///   ⚠️ 只在 `consumeSource == true` 时执行；未开启「原材料已用完」不动任何数据。
+    private func consumeSourceRecord() {
+        guard consumeSource, !meat.sourceQR.isEmpty else { return }
+        guard let record = ExpiryStore.shared.records.first(where: {
+            $0.qrText == meat.sourceQR
+        }) else { return }
+        ExpiryStore.shared.markUsed(record)
     }
 
     private func buildDraft() -> LabelDraft? {

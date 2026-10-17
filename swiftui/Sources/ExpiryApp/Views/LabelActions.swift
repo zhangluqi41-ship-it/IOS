@@ -326,6 +326,12 @@ enum LabelReprint {
 ///      键盘上方应该只有系统键盘自己。
 struct LabelActions: ViewModifier {
     let build: () -> LabelDraft?
+    /// ★★★ 2026-10-17 新增（用户功能 2）：**确认打印并发送成功后**回调。
+    ///
+    ///   加工页（解冻 / 二发）用它把「原材料」记录标为已用完 ——
+    ///   用户要求「确认打印前增加『原材料是否用完』选项，已用完就在效期管理里选择已用完」。
+    ///   ⚠️ 只在**打印成功**后调用（失败不消耗原材料）。
+    var onConfirmed: (() -> Void)? = nil
 
     @ObservedObject private var printer = PrinterService.shared
 
@@ -334,6 +340,15 @@ struct LabelActions: ViewModifier {
     @AppStorage("paperType") private var paperType: Int = 1
 
     @State private var notice: Notice?
+    /// ★★★ 2026-10-17（用户功能 1）：待确认的打印草稿。
+    ///   非 nil → 弹「确认打印」窗（文字预览 + 份数）；确认后才真正发送。
+    @State private var pendingPrint: PendingPrint?
+
+    /// `.sheet(item:)` 要求 Identifiable —— 给草稿套一层壳（每次弹窗都是新 id）。
+    private struct PendingPrint: Identifiable {
+        let id = UUID()
+        let draft: LabelDraft
+    }
 
     func body(content: Content) -> some View {
         content
@@ -356,6 +371,14 @@ struct LabelActions: ViewModifier {
             } message: {
                 Text(notice?.body ?? "")
             }
+            // ★★★ 2026-10-17（用户功能 1）：点「打印」先弹确认窗（预览 + 份数），
+            //   不再直接发送到打印机。
+            .sheet(item: $pendingPrint) { item in
+                PrintConfirmSheet(draft: item.draft,
+                                  initialCopies: copies) { chosen in
+                    confirmPrint(item.draft, copies: chosen)
+                }
+            }
     }
 
     // MARK: 动作
@@ -366,21 +389,126 @@ struct LabelActions: ViewModifier {
                             body: "请到「打印机」标签页扫描并连接硕方 T50 Pro，再回来打印。")
             return
         }
+        // 校验（必填项）仍在这一步 —— 校验不过时页面自己会弹提示。
         guard let draft = build() else { return }
+        // ★ 不再直接打印：先让用户确认份数、核对内容（功能 1）。
+        pendingPrint = PendingPrint(draft: draft)
+    }
+
+    /// 用户在确认窗里点了「打印 N 份」。
+    private func confirmPrint(_ draft: LabelDraft, copies chosen: Int) {
+        let count = max(1, chosen)
+        // ★ 记住这次选的份数（下次弹窗默认用它）。
+        copies = count
+        // ★ 先把 sheet 关掉，再把任务发给打印机 —— 否则等待期间弹窗还挂着。
+        pendingPrint = nil
 
         printer.printLabel(pdf: draft.pdf(),
                            fileName: draft.fileName,
-                           copies: copies,
+                           copies: count,
                            density: density,
                            paperType: paperType,
                            record: draft.record) { ok, message in
             if ok {
+                // ★ 功能 2：打印成功后才消耗「原材料」。
+                onConfirmed?()
                 notice = Notice(title: "已发送到打印机",
-                                body: "\(draft.data.title)\n份数 \(copies) · 浓度 \(density == 0 ? "自动" : "\(density)")")
+                                body: "\(draft.data.title)\n份数 \(count) · 浓度 \(density == 0 ? "自动" : "\(density)")")
             } else {
                 notice = Notice(title: "打印失败",
                                 body: message.orFallback("请检查打印机状态后重试。"))
             }
         }
+    }
+}
+
+// MARK: - 打印确认窗（★ 2026-10-17 新增，用户功能 1）
+
+/// 打印前的确认窗：**文字预览（与标签模板一致）+ 份数选择**。
+///
+/// 用户原话：「点击打印后弹出提示窗，确认打印份数（这个页面也可以增加预览，
+/// 用文字描述，就和现在打印的模板一致（只用文字描述））」。
+///
+/// ★ 预览直接用 `LabelDraft.data` 的三块内容（标题 / 各行 / 制作人）——
+///   与 `LabelRenderer` 画到纸上的文字**同源**（都来自 `LabelData`），
+///   所以「预览 = 实际打出来的内容」不会漂移。
+/// ⚠️ `LabelRow.label` 自带全角冒号（"解冻时间："），这里不要再补一个。
+struct PrintConfirmSheet: View {
+    let draft: LabelDraft
+    let initialCopies: Int
+    /// 点了「打印 N 份」。(份数) -> Void；由外层负责关窗 + 发送。
+    let onConfirm: (Int) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var copies: Int
+
+    init(draft: LabelDraft,
+         initialCopies: Int,
+         onConfirm: @escaping (Int) -> Void) {
+        self.draft = draft
+        self.initialCopies = initialCopies
+        self.onConfirm = onConfirm
+        _copies = State(initialValue: max(1, initialCopies))
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(draft.data.title)
+                        .font(.headline)
+                    ForEach(Array(draft.data.rows.enumerated()), id: \.offset) { _, row in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(row.label)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Text(row.value)
+                                .monospacedDigit()
+                        }
+                        .font(.subheadline)
+                    }
+                    HStack {
+                        Text("制作人")
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Text(draft.data.maker)
+                    }
+                    .font(.subheadline)
+                } header: {
+                    Text("标签内容（与打印一致）")
+                }
+
+                Section {
+                    Stepper(value: $copies, in: 1...20) {
+                        HStack {
+                            Text("打印份数")
+                            Spacer(minLength: 8)
+                            Text("\(copies)")
+                                .font(.title3.bold())
+                                .monospacedDigit()
+                        }
+                    }
+                } header: {
+                    Text("份数")
+                } footer: {
+                    Text("会记住这次的份数，下次默认用它。")
+                }
+            }
+            .navigationTitle("确认打印")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        onConfirm(copies)
+                    } label: {
+                        Text("打印 \(copies) 份").fontWeight(.semibold)
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

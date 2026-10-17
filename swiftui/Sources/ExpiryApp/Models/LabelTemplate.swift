@@ -69,6 +69,12 @@ struct KombuchaFirstLabel: Hashable {
     let finished: Date
     let bestBefore: Date
     let maker: String
+    /// ★★★ 2026-10-17 新增（用户功能 2）：**扫到的那段二维码原文**。
+    ///
+    /// 用途：二发页的「原材料是否用完」勾选 —— 确认打印后按它在效期管理里
+    /// 找到「这一发的那瓶」记录并标为已用完（扫码时 `ScanView` 用同一个 `code`
+    /// 入库，`qrText == sourceQR` 即那条记录）。默认空串，老构造点不用改。
+    var sourceQR: String = ""
 
     /// 茶叶品种（标题里第一个「-」之后的部分）。
     var variety: String {

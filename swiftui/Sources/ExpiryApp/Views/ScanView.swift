@@ -598,7 +598,7 @@ struct ScanView: View {
         guard let code, !code.isEmpty else { return }
 
         // ① 康普茶一发标签 → 进二发
-        if let first = LabelTemplate.parseKombuchaQr(code) {
+        if var first = LabelTemplate.parseKombuchaQr(code) {
             // 扫到的物料同样进「效期管理」；同一条码重复扫会按 qrText 合并
             ExpiryStore.shared.add(
                 LabelRecord(title: first.title,
@@ -612,6 +612,10 @@ struct ScanView: View {
                             qrText: code,
                             source: .scanned)
             )
+            // ★ 2026-10-17（用户功能 2）：把**二维码原文**带上 ——
+            //   二发页的「原材料是否用完」靠它在效期管理里定位这条一发记录
+            //   （上面 add 用的就是同一个 `code`，所以 `qrText == sourceQR`）。
+            first.sourceQR = code
             path.append(ScanRoute.secondFermentation(first))
             return
         }
@@ -688,7 +692,12 @@ struct ScanView: View {
         }
 
         // 冷冻 + 未解冻 → 进解冻页
-        path.append(ScanRoute.thaw(meat))
+        // ★ 2026-10-17（用户功能 2）：把二维码原文带上 —— 解冻页的
+        //   「原材料是否用完」靠它在效期管理里定位这条冷冻记录
+        //   （上面 add 用的就是同一个 `code`，所以 `qrText == sourceQR`）。
+        var info = meat
+        info.sourceQR = code
+        path.append(ScanRoute.thaw(info))
     }
 
     private func showAlert(title: String, message: String) {

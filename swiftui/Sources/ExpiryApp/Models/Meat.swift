@@ -157,4 +157,12 @@ struct MeatLabelInfo: Hashable {
     let bestBefore: Date
     /// 原冷冻标签「原始保质期」那一行的**原文**（仅用于解冻页的信息展示）。
     let expireRaw: String
+    /// ★★★ 2026-10-17 新增（用户功能 2）：**扫到的那段二维码原文**。
+    ///
+    /// 用途：解冻页的「原材料是否用完」勾选 —— 确认打印后要按它在效期管理里
+    /// 找到「这条冷冻肉」的记录并标为已用完。
+    /// 扫码时 `ScanView.handleMeat` 会用**同一个 `code`** 调 `ExpiryStore.add`
+    /// 入库（按 `qrText` 去重），所以 `qrText == sourceQR` 就是那条记录。
+    /// 默认空串 → 老构造点（Preview / 测试）不用改。
+    var sourceQR: String = ""
 }

@@ -589,8 +589,15 @@ targets:
         #   纯半透明白太素 → **恢复带色底但保持半透明**：
         #   完成类 `Color.green.opacity(0.30)` / 稍后提醒 `Color.orange.opacity(0.30)`，
         #   仍 `.plain`（系统不叠背景，一层）。
-        CURRENT_PROJECT_VERSION: 63
-        MARKETING_VERSION: 1.1.21
+        # ★ 2026-10-17 第五轮（用户新增 2 个功能）：
+        #   ① 打印前弹「确认打印」窗：**文字预览（标题 / 各行 / 制作人，与标签同源）
+        #      + 份数选择（1~20，记住上次）** —— `LabelActions` + `PrintConfirmSheet`；
+        #   ② 扫码加工页（解冻 / 二发）**最上面**加「原材料已用完」开关：
+        #      开启且打印成功后，把效期管理里对应记录标为已用完
+        #      （按扫码原文 `qrText == sourceQR` 定位；`MeatLabelInfo` /
+        #       `KombuchaFirstLabel` 新增 `sourceQR` 字段）。
+        CURRENT_PROJECT_VERSION: 64
+        MARKETING_VERSION: 1.1.22
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -642,8 +649,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.21
-        CURRENT_PROJECT_VERSION: 63
+        MARKETING_VERSION: 1.1.22
+        CURRENT_PROJECT_VERSION: 64
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
