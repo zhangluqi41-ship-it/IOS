@@ -339,8 +339,13 @@ struct ExpiryLiveActivityWidget: Widget {
                 //     —— 用户图2 原话「绿框的时间应该平移到红框的日期后面」。
                 //     所以本区域现在只剩一个数字，与左侧一行类别**对称**。
                 DynamicIslandExpandedRegion(.trailing) {
+                    // ★★★ 2026-10-17 第二轮（用户图1 蓝框）：
+                    //   「蓝框倒计时的数字可以再大一点」→ **26pt → 32pt**。
+                    //   32pt 在 `44:47`（5 字符）下约占 96pt 宽，
+                    //   系统给 `.trailing` 的空间够；仍保留 `minimumScaleFactor`
+                    //   兜底（万一是 `1:03:20` 这种长格式会自动缩）。
                     ExpandedCountdownText(state: context.state)
-                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
@@ -368,18 +373,25 @@ struct ExpiryLiveActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         // 第一排：标题（放大）
+                        // ★★★ 2026-10-17 第二轮（用户图1 红框）：
+                        //   「红框字体太小了，不改变整体大小情况下能不能放大字体？」
+                        //   ➜ `.headline`(17pt) → **`.title3`(20pt)**；
+                        //     `minimumScaleFactor` 从 0.6 提到 **0.8** ——
+                        //     原来一旦宽度紧张就缩到 6 折（比第二排还小），
+                        //     现在最多只缩 20%，视觉大小有保证。
+                        //   ➜ 展开态高度是自适应的，只多 3pt —— 不改变整体观感。
                         Text(context.attributes.title)
-                            .font(.headline)
+                            .font(.title3)
                             .fontWeight(.semibold)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.6)
+                            .minimumScaleFactor(0.8)
                             .foregroundStyle(.white)
 
                         // 第二排：里程碑 + 日期 + 时刻（三合一，紧贴日期之后）
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
                             Text(context.attributes.milestoneLabel)
                                 .font(.caption)
-                                .foregroundStyle(.white.opacity(0.75))
+                                .foregroundStyle(.white.opacity(0.85))
                                 .lineLimit(1)
                             Text(ExpiryDateFormat.date(context.state.dueAt))
                                 .font(.caption)
@@ -627,20 +639,21 @@ private struct ActionButtons: View {
         attributes.milestoneLabel == ExpiryActivityAttributes.completionMilestoneLabel
     }
 
-    /// ★★★ 2026-10-17（用户第 4 条）：按钮尺寸对齐**苹果第一方灵动岛展开态**。
+    /// ★★★ 2026-10-17（用户第 4 条 + 第二轮第 3 条）：按钮尺寸对齐**苹果第一方灵动岛展开态**。
     ///
-    ///   用户原话：「灵动岛展开态的所有按钮（已完成、已完成使用、稍后提醒）
-    ///   改成苹果第一方灵动岛展开态的大小（上下长度变大，拉大灵动岛展开）」。
+    ///   第一轮用户要求：「按钮改成苹果第一方灵动岛展开态的大小（上下长度变大）」。
+    ///   ➜ 字号 `.caption`(12) → `.subheadline`(15)；加 `minHeight = 44pt`
+    ///     （HIG 触控目标高度，也是第一方展开态按钮的高度）。
     ///
-    ///   ➜ 三处改动：
-    ///     ① 字号 `.caption`（12pt）→ **`.subheadline`（15pt）**，图标同步变大；
-    ///     ② 加 `minHeight = 44pt`（Apple HIG 的触控目标高度，也正是第一方
-    ///        灵动岛展开态按钮的高度）—— 这就是「上下长度变大」；
-    ///     ③ 补一层**半透明胶囊底**（第一方的「玻璃按钮」观感），
-    ///        原来只有纯色文字，看着不像按钮。
-    ///   ⚠️ 展开态高度由内容决定 —— 按钮一高，整张展开卡自然跟着变高，
-    ///     这正是用户要的「拉大灵动岛展开」。
-    ///   ⚠️ 锁屏卡片共用本组件，因此也会同步变大（视觉一致，属预期）。
+    ///   ★★★ 第二轮用户（看图后）要求：「这个按钮太割裂了，你是在 iOS 原生按钮上
+    ///   加上了自己设计的按钮吗？**不要套娃**」。
+    ///   ➜ 原来我在 `Label` 上**手画了一层** `Color.green.opacity(0.22)` 的胶囊 ——
+    ///     叠在系统渲染出来的按钮上，就成了"双层按钮"，而且大片色块很割裂。
+    ///   ➜ 正解：**交给系统画** —— 去掉手绘背景，改用系统原生
+    ///     `.buttonStyle(.borderedProminent)`（系统填充胶囊，材质/圆角/高光
+    ///     全由苹果渲染，和灵动岛天然协调）。只保留字号与高度。
+    ///   ⚠️ 以后再想调按钮样子，先试系统 `buttonStyle` / `controlSize`，
+    ///     不要自己往上叠 background —— 那就是套娃。
     private static let buttonMinHeight: CGFloat = 44
 
     var body: some View {
@@ -661,8 +674,9 @@ private struct ActionButtons: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                     .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
-                    .background(Color.green.opacity(0.22), in: Capsule())
             }
+            // ★ 系统原生填充按钮（不是自己画的背景）—— 见 `buttonMinHeight` 上方注释。
+            .buttonStyle(.borderedProminent)
             .tint(.green)
 
             // ★ 「稍后提醒」只在**到点后**且**不是完成时间**时出现。
@@ -680,8 +694,9 @@ private struct ActionButtons: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                         .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
-                        .background(Color.orange.opacity(0.22), in: Capsule())
                 }
+                // ★ 同上：系统原生填充按钮，不叠自绘背景。
+                .buttonStyle(.borderedProminent)
                 .tint(.orange)
             }
         }

@@ -573,8 +573,14 @@ targets:
         #   ③ 灵动岛展开态按钮放大到第一方尺寸（`.subheadline` + 44pt 高 + 胶囊底）；
         #   ④ 扫码提速：只识别二维码 / 元数据回调移出主线程 / 识别区域限定取景框；
         #   ⑤ 猪肉部位新增「猪肉末」。
-        CURRENT_PROJECT_VERSION: 60
-        MARKETING_VERSION: 1.1.18
+        # ★ 2026-10-17 第二轮（用户看图 3 条，只在灵动岛展开态）：
+        #   ① 红框两排文字太小 → 第一排 `.headline` → **`.title3`** + 缩字下限 0.6→0.8
+        #      （第二排 `.caption` 保持，用户明确「第二排保持缩小」）；
+        #   ② 蓝框倒计时太小 → **26pt → 32pt**（`.trailing`）；
+        #   ③ 按钮「套娃/割裂」→ **去掉手绘 `Color.green.opacity(0.22)` 胶囊底**，
+        #      改用系统原生 `.buttonStyle(.borderedProminent)`（苹果自己渲染，只有一层）。
+        CURRENT_PROJECT_VERSION: 61
+        MARKETING_VERSION: 1.1.19
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -626,8 +632,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.18
-        CURRENT_PROJECT_VERSION: 60
+        MARKETING_VERSION: 1.1.19
+        CURRENT_PROJECT_VERSION: 61
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
