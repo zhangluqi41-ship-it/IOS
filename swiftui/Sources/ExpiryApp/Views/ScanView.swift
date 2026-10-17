@@ -71,6 +71,21 @@ final class QRScannerModel: NSObject, ObservableObject {
     /// ★ 必须自己持有 input 引用，否则换摄像头时无法 removeInput。
     private var currentInput: AVCaptureDeviceInput?
 
+    // MARK: 识别性能（★ 2026-10-17 用户第 5 条「扫码识别速度很慢」）
+
+    /// 元数据回调**不能挂在主队列**上。
+    ///
+    /// ★ 原来 `setMetadataObjectsDelegate(self, queue: .main)`：主线程还要跑
+    ///   SwiftUI 重绘（取景框里的扫描线是 `repeatForever` 动画），
+    ///   每一帧的识别结果都派回主线程排队 → 体感就是「对准了要等一两秒」。
+    ///   换成专用串行队列后，识别与 UI 互不阻塞。
+    private let metadataQueue = DispatchQueue(label: "com.xiaoqi.expiry.scanner.metadata",
+                                              qos: .userInitiated)
+    /// 元数据输出 —— 设 `rectOfInterest` 要用它，所以自己留一份引用。
+    private var metadataOutput: AVCaptureMetadataOutput?
+    /// 当前设置过的识别区域（避免每次布局都重复设置）。
+    private var interestRect: CGRect = .zero
+
     // MARK: 生命周期
 
     func start() {
@@ -212,13 +227,18 @@ final class QRScannerModel: NSObject, ObservableObject {
         let output = AVCaptureMetadataOutput()
         if session.canAddOutput(output) {
             session.addOutput(output)
-            output.setMetadataObjectsDelegate(self, queue: .main)
-            let desired: [AVMetadataObject.ObjectType] = [
-                .qr, .aztec, .pdf417, .ean13, .ean8, .code128, .code39,
-            ]
-            output.metadataObjectTypes = desired.filter {
-                output.availableMetadataObjectTypes.contains($0)
+            // ★★★ 2026-10-17（用户第 5 条）：回调改到**专用队列**（原来挂 `.main`，
+            //   会和 SwiftUI 重绘抢主线程 —— 见 `metadataQueue` 注释）。
+            output.setMetadataObjectsDelegate(self, queue: metadataQueue)
+            // ★★★ 2026-10-17（用户第 5 条）：**只识别二维码**。
+            //   原来同时扫 7 种码型（qr / aztec / pdf417 / ean13 / ean8 /
+            //   code128 / code39）—— 每帧都要跑 6 个用不上的检测器，
+            //   这是「识别慢」最大的一项开销。本 App 只印二维码；
+            //   扫到别的码也没有任何业务分支（最终都落到「无法识别」）。
+            if output.availableMetadataObjectTypes.contains(.qr) {
+                output.metadataObjectTypes = [.qr]
             }
+            metadataOutput = output
         } else {
             session.commitConfiguration()
             DispatchQueue.main.async { self.state = .failed("摄像头初始化失败") }
@@ -234,6 +254,29 @@ final class QRScannerModel: NSObject, ObservableObject {
             self.canUseTorch = camera.hasTorch
             // 回到后置时手电筒状态复位（前置没有闪光灯）
             self.torchOn = camera.hasTorch && camera.torchMode == .on
+        }
+    }
+
+    // MARK: 识别区域（★ 2026-10-17 用户第 5 条）
+
+    /// 把识别区域收窄到取景框（含 1.4 倍容错），只处理画面中间那一块。
+    ///
+    /// ★ 为什么能提速：`AVCaptureMetadataOutput` 默认扫**整帧 1080p**；
+    ///   限定区域后系统只处理该矩形内的像素，解码更快、更稳，
+    ///   也顺带抑制「画面边缘的别的码被误扫」。
+    ///
+    /// ⚠️ 参数必须是 `metadataOutputRectConverted(fromLayerRect:)` 的产物
+    ///   （归一化 0~1 坐标）—— 手算屏幕坐标直接丢进来会**永远扫不到**。
+    ///   换算在 `CameraHostView.layoutSubviews` 里做（它持有 previewLayer）。
+    /// ⚠️ 1.4 倍放大的理由：用户手抖、标签没完全放进框里时也能扫到，
+    ///   同时仍只处理画面中间一小块（比整帧快得多）。
+    func setInterestRect(_ rect: CGRect) {
+        guard rect.width > 0.02, rect.height > 0.02,
+              rect.width <= 1, rect.height <= 1 else { return }
+        guard rect != interestRect else { return }
+        interestRect = rect
+        sessionQueue.async { [weak self] in
+            self?.metadataOutput?.rectOfInterest = rect
         }
     }
 
@@ -317,13 +360,19 @@ extension QRScannerModel: AVCaptureMetadataOutputObjectsDelegate {
     func metadataOutput(_ output: AVCaptureMetadataOutput,
                         didOutput metadataObjects: [AVMetadataObject],
                         from connection: AVCaptureConnection) {
+        // ⚠️ 本回调现在跑在 `metadataQueue` 上（不是主线程）。
+        //    · `isHandling` 只在本队列读写 → 天然串行，不需要额外加锁；
+        //    · `@Published lastCode` **必须回主线程写**，否则 SwiftUI 会
+        //      在后台改状态（紫色运行期告警，严重时崩溃）。
         guard !isHandling else { return }
         for object in metadataObjects {
             guard let readable = object as? AVMetadataMachineReadableCodeObject,
                   let value = readable.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !value.isEmpty else { continue }
             isHandling = true
-            lastCode = value
+            DispatchQueue.main.async { [weak self] in
+                self?.lastCode = value
+            }
             stop()
             return
         }
@@ -335,12 +384,18 @@ extension QRScannerModel: AVCaptureMetadataOutputObjectsDelegate {
 /// 相机预览层（标签预览页 `PreviewView` 已删除，本名字无冲突顾虑）。
 struct ScannerCameraView: UIViewRepresentable {
     let session: AVCaptureSession
+    /// 取景框边长（用来换算识别区域）。
+    var interestSide: CGFloat = 250
+    /// 换算好的识别区域（归一化坐标）回调。
+    var onInterestRect: ((CGRect) -> Void)? = nil
 
     func makeUIView(context: Context) -> CameraHostView {
         let view = CameraHostView()
         view.backgroundColor = .black
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
+        view.interestSide = interestSide
+        view.onInterestRectChange = onInterestRect
         return view
     }
 
@@ -348,6 +403,8 @@ struct ScannerCameraView: UIViewRepresentable {
         if uiView.previewLayer.session !== session {
             uiView.previewLayer.session = session
         }
+        uiView.interestSide = interestSide
+        uiView.onInterestRectChange = onInterestRect
     }
 }
 
@@ -357,6 +414,41 @@ final class CameraHostView: UIView {
     var previewLayer: AVCaptureVideoPreviewLayer {
         // layerClass 已保证类型正确
         layer as! AVCaptureVideoPreviewLayer
+    }
+
+    /// 取景框边长（与 `ScanView.boxSide` 一致）。
+    var interestSide: CGFloat = 250 {
+        didSet { if oldValue != interestSide { setNeedsLayout() } }
+    }
+    /// 换算结果回调（SwiftUI 层接到后转给 `QRScannerModel.setInterestRect`）。
+    var onInterestRectChange: ((CGRect) -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
+        // ★★★ 2026-10-17（用户第 5 条）：把「屏幕上的取景框」换算成
+        //   `AVCaptureMetadataOutput.rectOfInterest` 需要的归一化坐标。
+        //
+        //   这一步**必须**由持有 `previewLayer` 的 UIView 来做 —— SwiftUI 层
+        //   拿不到 layer 坐标。必须用官方换算 API：
+        //     `metadataOutputRectConverted(fromLayerRect:)`
+        //   它会自动处理 `resizeAspectFill` 的填充比例与预览方向；
+        //   手算屏幕坐标直接塞给 `rectOfInterest` 会**永远扫不到**。
+        //
+        //   ★ 放大 1.4 倍作容错：手抖、标签没完全放进框里也能扫到，
+        //     同时仍然只处理画面中间那一块（比整帧快得多）。
+        let side = min(interestSide * 1.4, min(bounds.width, bounds.height))
+        let rect = CGRect(x: (bounds.width - side) / 2,
+                          y: (bounds.height - side) / 2,
+                          width: side,
+                          height: side)
+        let meta = previewLayer.metadataOutputRectConverted(fromLayerRect: rect)
+        // 防御：session 还没挂上 / 预览尺寸为 0 时换算结果可能是 0 或越界，
+        // 这种值设进去会让识别彻底失效 —— 直接丢弃。
+        guard meta.width > 0.02, meta.height > 0.02,
+              meta.width <= 1, meta.height <= 1 else { return }
+        onInterestRectChange?(meta)
     }
 }
 
@@ -377,7 +469,13 @@ struct ScanView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                ScannerCameraView(session: scanner.session)
+                // ★ 2026-10-17（用户第 5 条）：把取景框换算成识别区域传下去 ——
+                //   只扫框内那一块，比整帧 1080p 快得多。
+                ScannerCameraView(session: scanner.session,
+                                  interestSide: boxSide,
+                                  onInterestRect: { rect in
+                                      scanner.setInterestRect(rect)
+                                  })
                     .ignoresSafeArea()
 
                 overlay

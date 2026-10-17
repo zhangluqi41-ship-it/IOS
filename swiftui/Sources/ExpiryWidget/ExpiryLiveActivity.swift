@@ -627,8 +627,24 @@ private struct ActionButtons: View {
         attributes.milestoneLabel == ExpiryActivityAttributes.completionMilestoneLabel
     }
 
+    /// ★★★ 2026-10-17（用户第 4 条）：按钮尺寸对齐**苹果第一方灵动岛展开态**。
+    ///
+    ///   用户原话：「灵动岛展开态的所有按钮（已完成、已完成使用、稍后提醒）
+    ///   改成苹果第一方灵动岛展开态的大小（上下长度变大，拉大灵动岛展开）」。
+    ///
+    ///   ➜ 三处改动：
+    ///     ① 字号 `.caption`（12pt）→ **`.subheadline`（15pt）**，图标同步变大；
+    ///     ② 加 `minHeight = 44pt`（Apple HIG 的触控目标高度，也正是第一方
+    ///        灵动岛展开态按钮的高度）—— 这就是「上下长度变大」；
+    ///     ③ 补一层**半透明胶囊底**（第一方的「玻璃按钮」观感），
+    ///        原来只有纯色文字，看着不像按钮。
+    ///   ⚠️ 展开态高度由内容决定 —— 按钮一高，整张展开卡自然跟着变高，
+    ///     这正是用户要的「拉大灵动岛展开」。
+    ///   ⚠️ 锁屏卡片共用本组件，因此也会同步变大（视觉一致，属预期）。
+    private static let buttonMinHeight: CGFloat = 44
+
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             // ★★★ 2026-10-13（用户第 6 条）：按**里程碑**决定文案与数量 ——
             //   · 「完成时间」→ 只有一个「已完成」，点击**数据零操作**
             //     （完成 = 解冻成功 / 二发完成，是"可以开始用"的确认，不是"吃掉"）；
@@ -640,9 +656,12 @@ private struct ActionButtons: View {
                                                 milestoneLabel: attributes.milestoneLabel)) {
                 Label(isCompletion ? "已完成" : "已完成使用",
                       systemImage: "checkmark.circle.fill")
-                    .font(.caption)
+                    .font(.subheadline)
                     .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
+                    .background(Color.green.opacity(0.22), in: Capsule())
             }
             .tint(.green)
 
@@ -656,9 +675,12 @@ private struct ActionButtons: View {
                 Button(intent: ExpirySnoozeIntent(recordID: attributes.recordID,
                                                   dueAt: state.dueAt)) {
                     Label("稍后提醒", systemImage: "clock.arrow.circlepath")
-                        .font(.caption)
+                        .font(.subheadline)
                         .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
+                        .background(Color.orange.opacity(0.22), in: Capsule())
                 }
                 .tint(.orange)
             }

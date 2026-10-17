@@ -126,7 +126,8 @@ enum MeatAnimal: String, CaseIterable, Identifiable {
         case .chicken:
             return ["鸡胸", "鸡腿"]
         case .pork:
-            return ["梅花肉", "五花肉", "后腿肉", "里脊", "排骨", "筒骨", "猪颈肉"]
+            // ★ 2026-10-15 加「里脊」；2026-10-17 加「猪肉末」（用户要求）。
+            return ["梅花肉", "五花肉", "后腿肉", "里脊", "排骨", "筒骨", "猪颈肉", "猪肉末"]
         case .beef:
             return ["牛腩", "牛肋条", "牛腱", "菲力（里脊）", "眼肉",
                     "西冷（外脊）", "板腱", "上脑"]

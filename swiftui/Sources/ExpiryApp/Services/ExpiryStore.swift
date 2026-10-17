@@ -13,14 +13,18 @@
 //    · 解码失败不让 App 崩，退回空表并保留坏文件（改名 `.corrupt`）便于排查；
 //    · 写盘放到 utility 队列，不占主线程。
 //
-//  通知策略（2026-10-13 起为**单档**）：
-//    每个「里程碑」（完成时间 / 最佳使用时间 / 原始保质期，按标签类型）
-//    只排 **1 条**通知 —— **提前 5 分钟**提醒一次：
-//      · `interruptionLevel = .timeSensitive`（穿透专注模式）；
-//      · 动作按钮**按里程碑**定制：「完成时间」→ 只有「已完成」（点击数据零操作）；
-//        其余 → 「已完成使用 + 稍后提醒」（点击标用完）。
-//    到时间那一刻由系统托管的「到点警报」灵动岛承担（见 `ExpiryActivityManager`），
-//    不再另发通知。
+//  通知策略（★ 2026-10-17 起：**每天早 8 点一条汇总**）：
+//    用户第 3 条原话：「弹窗通知只改成每天早上 8 点的提醒，取消其他时间的
+//    倒计时（取消快到时间的倒计时，不和灵动岛通知冲突）」。
+//    ➜ 每天 **08:00** 一条「今天到期 / 已过期未处理」的汇总通知：
+//      · `interruptionLevel = .timeSensitive`（穿透专注模式）+ 带声音；
+//      · 当天没有物料需要处理 → **不发**（绝不打扰）；
+//      · 不带动作按钮（多条物料点「已完成使用」没有意义）。
+//    ➜ **不再有**「每个里程碑提前 5 分钟一条」的通知（v1.1.12~1.1.17 的做法）——
+//      那些时间点会和灵动岛（提前 1 小时上岛 + 到点弹出）撞车。
+//    ➜ 到点那一刻的提醒由**灵动岛**承担（见 `ExpiryActivityManager`）。
+//    ➜ 「稍后提醒」的每 5 分钟重复（`startSnooze`）仍然保留 —— 它只在用户
+//      **主动点**了灵动岛展开态上的按钮后才出现，不属于常规排程。
 //
 //  ★★★ 2026-10-13（用户第 2 条）改版说明 ——
 //    旧版是「前一天 09:00 / 当天 09:00 / 提前 1 小时 / 提前 10 分钟 / 到点」五档阶梯。
@@ -80,9 +84,21 @@ final class ExpiryStore: ObservableObject {
     /// ⚠️ 保留 3（而不是收到 2）：多出来的槽位用于**清理旧版本留下的残留**
     ///   （v1.1.13 及更早给肉类解冻排过 slot 2 的「原始保质期」通知）。
     private static let notificationsPerRecord = 3
-    /// ★★★ 2026-10-13（用户第 2 条）：**提前多久提醒** —— 统一 5 分钟。
-    ///   （旧版的 1 小时 / 10 分钟两档随五档阶梯一起删除。）
-    private static let reminderLead: TimeInterval = 5 * 60
+    /// ★★★ 2026-10-17（用户第 3 条）：**通知只剩每天早上 8:00 一条汇总**。
+    ///
+    ///   用户原话：「弹窗通知只改成每天早上 8 点的提醒，取消其他时间的倒计时
+    ///   （取消快到时间的倒计时，不和灵动岛通知冲突）」。
+    ///   ➜ 旧的「每个里程碑提前 5 分钟一条」（v1.1.12~1.1.17）全部取消 ——
+    ///     那些时间点会跟灵动岛（提前 1 小时上岛 + 到点弹出）撞车。
+    ///   ➜ 现在的通知模型：每天 08:00 汇总「今天到期 / 已过期未处理」的物料。
+    ///     ⚠️ **只在当天真有物料需要处理时才排**（没物料绝不打扰）。
+    ///     ⚠️ 汇总通知**不带动作按钮**（多条物料点「已完成使用」无意义）；
+    ///        点通知本体照常拉起 App。
+    private static let dailyHour = 8
+    private static let dailyMinute = 0
+    /// 预排多少天的早 8 点提醒（每次 `rescheduleReminders` 会整批重建，
+    /// 所以只要覆盖「用户可能很久不打开 App」的时长即可）。
+    private static let dailyHorizonDays = 14
     /// 「稍后提醒」的重复间隔。
     static let snoozeInterval: TimeInterval = 5 * 60             // 5 分钟
 
@@ -271,17 +287,13 @@ final class ExpiryStore: ObservableObject {
         }
     }
 
-    /// 重排所有到期提醒；记录变化后调用。
+    /// 重排所有到期提醒；记录变化后调用（启动 / 记录增删改 / 提醒开关）。
     ///
-    /// ★ 提醒覆盖的时刻（2026-10-13 用户第 2 条）：
-    ///     · 最佳使用时间 —— 所有模板都有；
-    ///     · 原始保质期 —— 通用 / 奶制品 / 肉类有；康普茶没有（它的第二组
-    ///       时间是「完成时间」）；
-    ///     · 完成时间 —— 康普茶（`expireAt` 槽位）与肉类解冻（= 解冻 + 1 天）。
-    ///   每个时刻在**提前 5 分钟**提醒一条（见文件头）。
-    ///
-    /// ★ 候选通知先全部生成，再**按触发时刻排序取前 60 条** ——
-    ///   快到期的物料永远排在前面。
+    /// ★★★ 2026-10-17（用户第 3 条）：现在只排**每天早 8:00 的汇总** ——
+    ///   见 `dailyCandidates`。旧的「每里程碑提前 5 分钟一条」已删除。
+    /// ★ 每次先 `removeAllPendingNotificationRequests()` 整批清掉再重建 ——
+    ///   也顺手清掉旧版本（≤1.1.17）排下的「提前 5 分钟」残留通知，
+    ///   以及上一轮的「稍后提醒」重复通知。
     func rescheduleReminders() {
         let center = UNUserNotificationCenter.current()
         // 本 App 是这些通知的唯一来源，整批清掉最干净 ——
@@ -297,13 +309,9 @@ final class ExpiryStore: ObservableObject {
         guard reminderEnabled else { return }
         let now = Date()
 
-        // ★★★ 2026-10-13（用户第 2 条）：提醒唯一一条，**必须带声音** ——
-        //   旧的「有岛上胶囊时静默横幅」规则（第十二轮）随五档阶梯一并删除。
-        var candidates: [Candidate] = []
-        for record in records where record.usedAt == nil {
-            candidates.append(contentsOf: Self.candidates(for: record, now: now))
-        }
-        candidates.sort { $0.fire < $1.fire }
+        // ★★★ 2026-10-17（用户第 3 条）：通知只剩「每天早上 8:00」的汇总 ——
+        //   旧的「每个里程碑提前 5 分钟一条」整段取消（与灵动岛撞车）。
+        let candidates = Self.dailyCandidates(records: records, now: now)
 
         for item in candidates.prefix(Self.maxPendingNotifications) {
             center.add(UNNotificationRequest(identifier: item.id,
@@ -320,54 +328,69 @@ final class ExpiryStore: ObservableObject {
         let trigger: UNNotificationTrigger
     }
 
-    /// 为一条记录生成全部候选通知。
+    /// 生成**未来 `dailyHorizonDays` 天、每天早 8:00** 的汇总通知候选。
     ///
-    /// identifier 的下标规则：`slot`（里程碑序号，见 `milestones(of:)` 的固定顺序）
-    /// —— `cancelNotifications(for:)` 靠同一套规则整组删。
+    /// 每天只发一条，内容是那天的物料状况：
+    ///   · **当天到期**（`dueDate` 落在当天）→ 列出前 3 个名字（多了报总数）；
+    ///   · **已过期未处理**（`dueDate` 早于当天 0 点、且没标用完）→ 只报数量。
+    /// 当天既没到期、也没有过期的 → **不排**（不打扰）。
     ///
-    /// ★★★ 2026-10-13（用户第 2 条）**重新定版：每个里程碑只排一条** ——
-    ///   **提前 5 分钟**（`reminderLead`）提醒；旧五档阶梯（前一天 09:00 /
-    ///   当天 09:00 / 提前 1 小时 / 提前 10 分钟 / 到点）全部删除，
-    ///   到点那一刻由系统托管的「到点警报」灵动岛承担，不再另发通知。
-    private static func candidates(for record: LabelRecord, now: Date) -> [Candidate] {
+    /// ★ identifier 形如 `expiry.daily.2026-10-18`，每天固定一条；
+    ///   重排时 `rescheduleReminders` 会整批 `removeAllPendingNotificationRequests()`
+    ///   再重建，所以不会堆叠。
+    /// ★ 判据用 `dueDate`（= 康普茶取 max(最佳, 完成)，其余取最佳使用时间）——
+    ///   与列表分组 / 角标**同一套口径**，不会出现「通知说今天到期、列表没显示」。
+    private static func dailyCandidates(records: [LabelRecord], now: Date) -> [Candidate] {
+        let cal = AppCalendar.shared
+        let live = records.filter { $0.usedAt == nil }
+        let todayStart = cal.startOfDay(for: now)
+
+        let fmt = DateFormatter()
+        fmt.calendar = cal
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd"
+
         var out: [Candidate] = []
-        let ids = ids(for: record)
-        let kindLabel = record.kind.label
+        for offset in 0..<dailyHorizonDays {
+            guard let dayStart = cal.date(byAdding: .day, value: offset, to: todayStart),
+                  let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart),
+                  let fire = cal.date(bySettingHour: dailyHour,
+                                      minute: dailyMinute,
+                                      second: 0,
+                                      of: dayStart),
+                  fire > now else { continue }
 
-        for (slot, milestone) in milestones(of: record).enumerated() {
-            let fire = milestone.date.addingTimeInterval(-reminderLead)
-            guard fire > now else { continue }
-
-            // ★★★ 2026-10-13（用户第 6 条）：分类按**里程碑**选（不是按记录）——
-            //   「完成时间」→ `categoryDueComplete`（按钮只有「已完成」、点击零操作）；
-            //   其余（最佳使用时间 / 原始保质期）→ `categoryDue`
-            //   （「已完成使用」→ 标用完）。
-            //   ⚠️ 肉类解冻记录同时挂这两种里程碑，原来按记录判会让它的
-            //     「最佳使用时间」也变成"已完成 + 点击无操作" —— 用户明确否掉。
-            let category = milestone.label == ExpiryActivityAttributes.completionMilestoneLabel
-                ? categoryDueComplete
-                : categoryDue
+            let dueThatDay = live.filter { $0.dueDate >= dayStart && $0.dueDate < dayEnd }
+            let overdue = live.filter { $0.dueDate < dayStart }
+            guard !dueThatDay.isEmpty || !overdue.isEmpty else { continue }
 
             let content = UNMutableNotificationContent()
-            content.title = "还有 \(Int(Self.reminderLead / 60)) 分钟到\(milestone.label)"
-            content.body = "\(record.title)（\(kindLabel)）"
+            var lines: [String] = []
+            if !dueThatDay.isEmpty {
+                let names = dueThatDay.prefix(3).map(\.title).joined(separator: "、")
+                let more = dueThatDay.count > 3 ? " 等 \(dueThatDay.count) 件" : ""
+                lines.append("今天到期：\(names)\(more)")
+            }
+            if !overdue.isEmpty {
+                lines.append("另有 \(overdue.count) 件已过期未处理")
+            }
+            content.title = dueThatDay.isEmpty
+                ? "有 \(overdue.count) 件物料已过期"
+                : "今天 \(dueThatDay.count) 件物料到期"
+            content.body = lines.joined(separator: "\n")
             content.sound = .default
-            content.categoryIdentifier = category
             // 时效性：能穿透专注模式（免费账号能拿到的最强级别）。
             content.interruptionLevel = .timeSensitive
-            content.userInfo = [
-                Self.userInfoRecordID: record.id.uuidString,
-                Self.userInfoDueAt: milestone.date.timeIntervalSince1970,
-                // ★ 里程碑名一并带上 —— 点按钮时的数据行为按它判定（见 `completeOrUse`）。
-                Self.userInfoMilestone: milestone.label,
-            ]
+            // ★ 不带 `categoryIdentifier` —— 汇总通知没有动作按钮。
+            content.userInfo = [Self.userInfoDailyDay: fmt.string(from: dayStart)]
+
             out.append(Candidate(
-                id: ids[slot],
+                id: "expiry.daily.\(fmt.string(from: dayStart))",
                 fire: fire,
                 content: content,
                 trigger: UNCalendarNotificationTrigger(
-                    dateMatching: AppCalendar.shared.dateComponents(
-                        [.year, .month, .day, .hour, .minute], from: fire),
+                    dateMatching: cal.dateComponents([.year, .month, .day, .hour, .minute],
+                                                     from: fire),
                     repeats: false)))
         }
         return out
@@ -376,6 +399,10 @@ final class ExpiryStore: ObservableObject {
     /// 通知里携带的记录定位信息（点了按钮之后要用）。
     static let userInfoRecordID = "expiryRecordID"
     static let userInfoDueAt = "expiryDueAt"
+    /// ★ 2026-10-17：每日 08:00 汇总通知里带的「这是哪一天」（yyyy-MM-dd）——
+    ///   目前只用于排查 / 日志；它**没有** `userInfoRecordID`，
+    ///   `handleNotificationResponse` 会在第一道 guard 放行前自然忽略（安全）。
+    static let userInfoDailyDay = "expiryDailyDay"
     /// ★★★ 2026-10-13（用户第 6 条）：通知里一并带的**里程碑名** ——
     ///   点按钮时按它区分「已完成（数据零操作）」与「已完成使用（标用完）」。
     ///   ⚠️ 老通知（本版之前排下的）没有这个键 → 读取为 nil，

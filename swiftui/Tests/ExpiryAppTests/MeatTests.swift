@@ -59,12 +59,13 @@ final class MeatTests: XCTestCase {
 
     // MARK: - 部位清单（照抄用户原文，逐字比对）
 
-    /// ★ 2026-10-15：猪肉清单按用户要求新增「里脊」（插在「后腿肉」之后）——
+    /// ★ 2026-10-15：猪肉清单按用户要求新增「里脊」（插在「后腿肉」之后）；
+    ///   2026-10-17 再加「猪肉末」（追加在末尾）——
     ///   代码（`MeatAnimal.cuts`）与这里的期望值必须逐字同步。
     func testAnimalCutsMatchSpec() {
         XCTAssertEqual(MeatAnimal.chicken.cuts, ["鸡胸", "鸡腿"])
         XCTAssertEqual(MeatAnimal.pork.cuts,
-                       ["梅花肉", "五花肉", "后腿肉", "里脊", "排骨", "筒骨", "猪颈肉"])
+                       ["梅花肉", "五花肉", "后腿肉", "里脊", "排骨", "筒骨", "猪颈肉", "猪肉末"])
         XCTAssertEqual(MeatAnimal.beef.cuts,
                        ["牛腩", "牛肋条", "牛腱", "菲力（里脊）", "眼肉",
                         "西冷（外脊）", "板腱", "上脑"])
