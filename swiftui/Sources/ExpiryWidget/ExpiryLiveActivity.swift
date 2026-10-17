@@ -339,13 +339,12 @@ struct ExpiryLiveActivityWidget: Widget {
                 //     —— 用户图2 原话「绿框的时间应该平移到红框的日期后面」。
                 //     所以本区域现在只剩一个数字，与左侧一行类别**对称**。
                 DynamicIslandExpandedRegion(.trailing) {
-                    // ★★★ 2026-10-17 第二轮（用户图1 蓝框）：
-                    //   「蓝框倒计时的数字可以再大一点」→ **26pt → 32pt**。
-                    //   32pt 在 `44:47`（5 字符）下约占 96pt 宽，
-                    //   系统给 `.trailing` 的空间够；仍保留 `minimumScaleFactor`
-                    //   兜底（万一是 `1:03:20` 这种长格式会自动缩）。
+                    // ★★★ 2026-10-17 第三轮（用户看图 2 条）：
+                    //   「蓝框倒计时文字再放大点」→ **32pt → 38pt**。
+                    //   `6:04`（4 字符）@38pt 约 76pt 宽，`.trailing` 装得下；
+                    //   万一遇到 `1:03:20` 这种长格式，`minimumScaleFactor` 会自动缩。
                     ExpandedCountdownText(state: context.state)
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
@@ -639,22 +638,30 @@ private struct ActionButtons: View {
         attributes.milestoneLabel == ExpiryActivityAttributes.completionMilestoneLabel
     }
 
-    /// ★★★ 2026-10-17（用户第 4 条 + 第二轮第 3 条）：按钮尺寸对齐**苹果第一方灵动岛展开态**。
+    /// ★★★ 2026-10-17（用户第 4 条 + 第二/三轮）：按钮尺寸与质感对齐**苹果第一方**。
     ///
-    ///   第一轮用户要求：「按钮改成苹果第一方灵动岛展开态的大小（上下长度变大）」。
-    ///   ➜ 字号 `.caption`(12) → `.subheadline`(15)；加 `minHeight = 44pt`
-    ///     （HIG 触控目标高度，也是第一方展开态按钮的高度）。
+    ///   第一轮：「按钮改成苹果第一方灵动岛展开态的大小（上下长度变大）」
+    ///   ➜ 字号 `.caption`(12) → `.subheadline`(15)；`minHeight = 44pt`。
     ///
-    ///   ★★★ 第二轮用户（看图后）要求：「这个按钮太割裂了，你是在 iOS 原生按钮上
-    ///   加上了自己设计的按钮吗？**不要套娃**」。
-    ///   ➜ 原来我在 `Label` 上**手画了一层** `Color.green.opacity(0.22)` 的胶囊 ——
-    ///     叠在系统渲染出来的按钮上，就成了"双层按钮"，而且大片色块很割裂。
-    ///   ➜ 正解：**交给系统画** —— 去掉手绘背景，改用系统原生
-    ///     `.buttonStyle(.borderedProminent)`（系统填充胶囊，材质/圆角/高光
-    ///     全由苹果渲染，和灵动岛天然协调）。只保留字号与高度。
-    ///   ⚠️ 以后再想调按钮样子，先试系统 `buttonStyle` / `controlSize`，
-    ///     不要自己往上叠 background —— 那就是套娃。
+    ///   第二轮（看图）：「这个按钮太割裂了，你是在 iOS 原生按钮上加上了
+    ///   自己设计的按钮吗？**不要套娃**」
+    ///   ➜ 当时我手画了一层 `Color.green.opacity(0.22)` 叠在系统按钮上 = 双层。
+    ///   → 改成系统 `.buttonStyle(.borderedProminent)`（实心填充）。
+    ///
+    ///   ★★★ 第三轮（看图）：「已完成的**绿色质感很差**，应该不是 Apple 原生
+    ///   工具做的，比如在锁屏界面**他都不是透明的**」
+    ///   ➜ `borderedProminent` 渲染成**不透明亮绿实心块** —— 这正是"质感差"的来源：
+    ///     苹果第一方的灵动岛/锁屏按钮从来不是饱和实心色，而是**半透明白**，
+    ///     能透出背后的黑色卡片 / 锁屏壁纸（= 玻璃观感）。
+    ///   ➜ 最终做法：`.buttonStyle(.plain)`（**系统不再画任何背景**，杜绝套娃）
+    ///     + 自己铺一层 `Color.white.opacity(0.20)` 胶囊 + 白色文字/图标。
+    ///     只有这一层，且是半透明 —— 与第一方一致。
+    ///   ⚠️ 别再换回 `borderedProminent`（不透明，用户已两次否掉）。
+    ///   ⚠️ 也不要再用 `Color.green/ orange` 当底色（第一方没有这种饱和色按钮）。
     private static let buttonMinHeight: CGFloat = 44
+    /// 第一方玻璃按钮的底：**半透明白**（叠在黑色灵动岛卡片上 ≈ 灰色玻璃；
+    /// 叠在锁屏壁纸上则透出壁纸）。数值 0.20 参考第一方按钮的观感。
+    private static let buttonFill = Color.white.opacity(0.20)
 
     var body: some View {
         HStack(spacing: 10) {
@@ -673,11 +680,12 @@ private struct ActionButtons: View {
                     .fontWeight(.semibold)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
+                    // ★ 第一方玻璃底（半透明白）+ `.plain` 保证只有这一层 —— 见上方注释。
+                    .background(Self.buttonFill, in: Capsule())
             }
-            // ★ 系统原生填充按钮（不是自己画的背景）—— 见 `buttonMinHeight` 上方注释。
-            .buttonStyle(.borderedProminent)
-            .tint(.green)
+            .buttonStyle(.plain)
 
             // ★ 「稍后提醒」只在**到点后**且**不是完成时间**时出现。
             //   · 判据与倒计时**同源**（`countdownInterval == nil`）——
@@ -693,11 +701,12 @@ private struct ActionButtons: View {
                         .fontWeight(.semibold)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
+                        .background(Self.buttonFill, in: Capsule())
                 }
-                // ★ 同上：系统原生填充按钮，不叠自绘背景。
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
+                // ★ 同上：`.plain` + 半透明白底（第一方玻璃按钮，只有一层）。
+                .buttonStyle(.plain)
             }
         }
     }
