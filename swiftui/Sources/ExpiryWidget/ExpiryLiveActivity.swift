@@ -659,9 +659,18 @@ private struct ActionButtons: View {
     ///   ⚠️ 别再换回 `borderedProminent`（不透明，用户已两次否掉）。
     ///   ⚠️ 也不要再用 `Color.green/ orange` 当底色（第一方没有这种饱和色按钮）。
     private static let buttonMinHeight: CGFloat = 44
-    /// 第一方玻璃按钮的底：**半透明白**（叠在黑色灵动岛卡片上 ≈ 灰色玻璃；
-    /// 叠在锁屏壁纸上则透出壁纸）。数值 0.20 参考第一方按钮的观感。
-    private static let buttonFill = Color.white.opacity(0.20)
+    /// 第一方玻璃按钮的底。
+    ///
+    /// ★★★ 2026-10-17 第四轮（用户原话：「也不用无颜色哇，还是加个底色吧」）：
+    ///   v1.1.20 的**纯半透明白**虽然质感对了，但太素、丢了颜色语义 →
+    ///   恢复**带色底**，但**保持半透明**（不能回到 `borderedProminent`
+    ///   那种不透明实心块，那是用户前两轮否掉的）。
+    ///   ➜ `opacity 0.30` 的色底：叠在黑色灵动岛卡片上呈深色玻璃，
+    ///     叠在锁屏壁纸上则透出壁纸 —— 既有颜色、又是玻璃感。
+    ///   · 完成类（已完成 / 已完成使用）→ **绿**
+    ///   · 稍后提醒 → **橙**
+    private static let buttonFillDone = Color.green.opacity(0.30)
+    private static let buttonFillSnooze = Color.orange.opacity(0.30)
 
     var body: some View {
         HStack(spacing: 10) {
@@ -682,8 +691,8 @@ private struct ActionButtons: View {
                     .minimumScaleFactor(0.75)
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
-                    // ★ 第一方玻璃底（半透明白）+ `.plain` 保证只有这一层 —— 见上方注释。
-                    .background(Self.buttonFill, in: Capsule())
+                    // ★ 半透明绿底（保留「完成」的颜色语义）+ `.plain` 保证只有这一层。
+                    .background(Self.buttonFillDone, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -703,9 +712,9 @@ private struct ActionButtons: View {
                         .minimumScaleFactor(0.75)
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
-                        .background(Self.buttonFill, in: Capsule())
+                        .background(Self.buttonFillSnooze, in: Capsule())
                 }
-                // ★ 同上：`.plain` + 半透明白底（第一方玻璃按钮，只有一层）。
+                // ★ 同上：`.plain` + 半透明橙底（只有一层）。
                 .buttonStyle(.plain)
             }
         }

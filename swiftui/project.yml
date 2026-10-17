@@ -585,8 +585,12 @@ targets:
         #      **弃用 `borderedProminent`（不透明实心）**，改
         #      `.buttonStyle(.plain)` + `Color.white.opacity(0.20)` 胶囊 + 白字
         #      —— 第一方那种半透明玻璃按钮，且只有一层（不套娃）。
-        CURRENT_PROJECT_VERSION: 62
-        MARKETING_VERSION: 1.1.20
+        # ★ 2026-10-17 第四轮（用户：「也不用无颜色哇，还是加个底色吧」）：
+        #   纯半透明白太素 → **恢复带色底但保持半透明**：
+        #   完成类 `Color.green.opacity(0.30)` / 稍后提醒 `Color.orange.opacity(0.30)`，
+        #   仍 `.plain`（系统不叠背景，一层）。
+        CURRENT_PROJECT_VERSION: 63
+        MARKETING_VERSION: 1.1.21
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -638,8 +642,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.20
-        CURRENT_PROJECT_VERSION: 62
+        MARKETING_VERSION: 1.1.21
+        CURRENT_PROJECT_VERSION: 63
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
