@@ -621,8 +621,15 @@ targets:
         #      根本进不了 delegate（上一版那分支是死代码）。
         #      Vision 看到码 + 1.2s 没解码成功 → 才算「看到码读不出」→ 拉 4×；
         #   ② **双击预览在 2× / 4× 间切换**（手动兜底），文案显示当前倍率。
-        CURRENT_PROJECT_VERSION: 68
-        MARKETING_VERSION: 1.1.26
+        # ★ 2026-10-18 第四轮（用户 3 条）：
+        #   ① 扫码页两个按钮底色改用 **`.regularMaterial`**（与 TabBar 同源系统材质：
+        #      浅色白雾 / 深色深雾），文字 `Color.primary`，**开手电筒时 = `Theme.brand` 蓝**
+        #      （原来 `.glass` 会透出木桌的米棕色，和 TabBar 不一致）；
+        #   ② `ramp` 速率 3.0 → **8.0**（2→4 约 0.25 秒，原来 0.67 秒嫌慢）；
+        #   ③ **删除自动放大**（Vision + 自动 ramp 全删）—— 用户实测没生效且不要了，
+        #      只保留**双击**切 2×/4×。
+        CURRENT_PROJECT_VERSION: 69
+        MARKETING_VERSION: 1.1.27
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -674,8 +681,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.26
-        CURRENT_PROJECT_VERSION: 68
+        MARKETING_VERSION: 1.1.27
+        CURRENT_PROJECT_VERSION: 69
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
