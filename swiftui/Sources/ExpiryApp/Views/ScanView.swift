@@ -622,6 +622,17 @@ struct ScanView: View {
         .frame(width: boxSide, height: boxSide)
     }
 
+    /// 扫码页底部两个浮层按钮。
+    ///
+    /// ★★★ 2026-10-18 **最终铁律（第四次被纠正后定的，别再动）**：
+    ///   按钮**只能用苹果第一方的 `.liquidGlassButton()`**（= `.buttonStyle(.glass)`）。
+    ///   ❌ 绝不用 `.buttonStyle(.plain)` + `.background(...)` 自己拼一个胶囊 ——
+    ///     哪怕底是 `.regularMaterial` 这种系统材质也不行
+    ///     （用户原话：「按钮怎么又变成你自己写的了？不是要苹果第一方吗？怎么反反复复的」）。
+    ///   ✅ **能调的只有文字/图标的颜色**：
+    ///     · 常态 → `Color.primary`（浅色模式黑 / 深色模式白，与 TabBar 的图标色一致）；
+    ///     · 开手电筒 → `Theme.brand`（#007AFF，与 TabBar 选中色同一个系统蓝）。
+    ///   ⚠️ 玻璃的**底色**由系统渲染（会透出背后的画面），这是第一方的行为，改不了也不该改。
     private var controls: some View {
         HStack(spacing: 12) {
             Button {
@@ -631,21 +642,12 @@ struct ScanView: View {
                       systemImage: scanner.torchOn ? "flashlight.on.fill" : "flashlight.off.fill")
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    // ★★★ 2026-10-18（用户第 1 条）：
-                    //   「白天模式颜色和下面 tabbar 颜色不一致，可以颜色和 tabbar 统一，
-                    //    开启手电筒时高亮蓝色也和 tabbar 一致。视觉统一一下」
-                    //   ➜ 底色改用 **`.regularMaterial`**（系统材质，与 TabBar 同源：
-                    //     浅色模式是白雾、深色模式是深雾，自动跟随外观）——
-                    //     原来 `.glass` 是"透出背景"的薄玻璃，浅色木桌上会变成米棕色，
-                    //     跟 TabBar 的白雾完全不是一个观感。
-                    //   ➜ 文字：常态 `.primary`（浅色黑 / 深色白）；**开手电筒时 = `Theme.brand`**
-                    //     （#007AFF，与 TabBar 选中色同一个系统蓝）。
+                    // ★ 只改文字颜色：常态跟明暗（= TabBar 图标色）；开手电筒 = TabBar 选中蓝。
                     .foregroundStyle(scanner.torchOn ? Theme.brand : Color.primary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
             }
-            .buttonStyle(.plain)
+            .liquidGlassButton()
             .disabled(!scanner.state.isRunning || !scanner.canUseTorch)
             .opacity(scanner.canUseTorch ? 1 : 0.45)
 
@@ -659,9 +661,8 @@ struct ScanView: View {
                         .foregroundStyle(Color.primary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
-                        .background(.regularMaterial, in: Capsule())
                 }
-                .buttonStyle(.plain)
+                .liquidGlassButton()
                 .disabled(!scanner.state.isRunning)
             }
 
