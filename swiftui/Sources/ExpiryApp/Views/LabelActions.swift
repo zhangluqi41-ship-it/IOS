@@ -373,21 +373,26 @@ struct LabelActions: ViewModifier {
             }
             // ★★★ 2026-10-17（用户功能 1）：点「打印」先弹确认窗（预览 + 份数），
             //   不再直接发送到打印机。
-            // ★★★ 2026-10-18（用户第 5 条）：「确认打印的界面没问题，但是**不要从下往上**，
-            //   做成悬浮窗口（第一方工具哈！）」
-            //   ➜ `.sheet`（从底部上推）改成 **`.popover`**：这是苹果第一方的**悬浮气泡**，
-            //     `presentationCompactAdaptation(.popover)` 保证在 iPhone 上也保持气泡形态
-            //     （默认 compact 环境会把 popover 降级成 sheet，那样又变成"从下往上"了）。
-            //   ⚠️ 别改回 `.sheet` / `.confirmationDialog`（都是底部弹出）。
-            .popover(item: $pendingPrint,
-                     attachmentAnchor: .point(.center),
-                     arrowEdge: .bottom) { item in
-                PrintConfirmSheet(draft: item.draft,
-                                  initialCopies: copies) { chosen in
-                    confirmPrint(item.draft, copies: chosen)
+            // ★★★ 2026-10-18（用户第 5 条 + 再订正）：
+            //   · 「不要从下往上，做成**悬浮窗口**（第一方工具哈！）」→ 先试了 `.popover`；
+            //   · 再订正：「**不是从制作人这里弹出来，而是独立的窗口**，类似 SideStore 那个
+            //     Install App 弹窗」→ `.popover` 会带一个指向锚点的箭头，不行。
+            //   ➜ 现在用 **`.overlay` + 全屏遮罩 + 居中卡片**：
+            //     iOS 公开 API 里"居中弹窗"只有 `.alert`（放不下预览和份数 Stepper），
+            //     所以用**系统材质（`.thinMaterial`）+ 系统按钮**复现系统 alert 的观感 ——
+            //     材质、圆角、按钮全部来自第一方，没有自绘色块。
+            .overlay {
+                if let item = pendingPrint {
+                    PrintConfirmSheet(draft: item.draft,
+                                      initialCopies: copies,
+                                      onConfirm: { chosen in
+                                          confirmPrint(item.draft, copies: chosen)
+                                      },
+                                      onCancel: { pendingPrint = nil })
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
-                .presentationCompactAdaptation(.popover)
             }
+            .animation(.snappy(duration: 0.22), value: pendingPrint != nil)
     }
 
     // MARK: 动作
@@ -447,103 +452,114 @@ struct PrintConfirmSheet: View {
     let initialCopies: Int
     /// 点了「打印 N 份」。(份数) -> Void；由外层负责关窗 + 发送。
     let onConfirm: (Int) -> Void
+    /// 取消 / 点遮罩关闭。
+    let onCancel: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @State private var copies: Int
 
     init(draft: LabelDraft,
          initialCopies: Int,
-         onConfirm: @escaping (Int) -> Void) {
+         onConfirm: @escaping (Int) -> Void,
+         onCancel: @escaping () -> Void) {
         self.draft = draft
         self.initialCopies = initialCopies
         self.onConfirm = onConfirm
+        self.onCancel = onCancel
         _copies = State(initialValue: max(1, initialCopies))
     }
 
     var body: some View {
-        // ★★★ 2026-10-18（用户第 5 条）：改成**悬浮气泡**（外层用 `.popover`），
-        //   所以这里不再用 NavigationStack + List（那是"从底部上推的 sheet"的结构）。
-        //   新布局：标题 → 预览卡片（可滚动）→ 份数 → 两个第一方玻璃按钮。
-        VStack(spacing: 0) {
-            HStack {
+        // ★★★ 2026-10-18（用户再订正）：**独立居中窗口**，不是挂在某一行上的气泡。
+        //   · 遮罩 = 系统 alert 那种压暗（点空白处取消）；
+        //   · 卡片 = `.thinMaterial`（系统材质，深色模式下是半透明深灰，能透出背后）；
+        //   · **预览区背景是半透明的**（`Color.primary.opacity(0.06)`）——
+        //     用户明确要求：「可以加深色背景但是要透明」。
+        ZStack {
+            Color.black.opacity(0.35)
+                .ignoresSafeArea()
+                .onTapGesture { onCancel() }
+
+            VStack(spacing: 0) {
                 Text("确认打印")
                     .font(.headline)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 16)
-            .padding(.bottom, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                    .padding(.bottom, 12)
 
-            // ── 预览（与标签同源：标题 / 各行 / 制作人）──
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(draft.data.title)
-                        .font(.title3.bold())
-                    ForEach(Array(draft.data.rows.enumerated()), id: \.offset) { _, row in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(row.label)
-                                .foregroundStyle(.secondary)
-                            Spacer(minLength: 8)
-                            Text(row.value)
-                                .monospacedDigit()
+                // ── 预览（与标签同源：标题 / 各行 / 制作人）──
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(draft.data.title)
+                            .font(.title3.bold())
+                        ForEach(Array(draft.data.rows.enumerated()), id: \.offset) { _, row in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(row.label)
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: 8)
+                                Text(row.value)
+                                    .monospacedDigit()
+                            }
+                            .font(.subheadline)
                         }
-                        .font(.subheadline)
-                    }
-                    Divider()
-                    HStack {
-                        Text("制作人")
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 8)
+                        Divider()
+                        // ⚠️ `data.maker` 本身已经带「制作人：」前缀（`makerFooter` 加的），
+                        //   这里**不要再写一遍 label**，否则会显示成「制作人 制作人：张皓」。
                         Text(draft.data.maker)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .font(.subheadline)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // ★ 半透明（不是不透明的 secondarySystemBackground）—— 用户要求。
+                    .background(Color.primary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.horizontal, 20)
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.secondarySystemBackground),
-                            in: RoundedRectangle(cornerRadius: 14))
-                .padding(.horizontal, 18)
-            }
-            .frame(maxHeight: 290)
+                .frame(maxHeight: 280)
 
-            // ── 份数 ──
-            Stepper(value: $copies, in: 1...20) {
-                HStack {
-                    Text("打印份数")
-                    Spacer(minLength: 8)
-                    Text("\(copies)")
-                        .font(.title3.bold())
-                        .monospacedDigit()
+                // ── 份数 ──
+                Stepper(value: $copies, in: 1...20) {
+                    HStack {
+                        Text("打印份数")
+                        Spacer(minLength: 8)
+                        Text("\(copies)")
+                            .font(.title3.bold())
+                            .monospacedDigit()
+                    }
                 }
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 14)
+                .padding(.horizontal, 20)
+                .padding(.top, 14)
 
-            Text("会记住这次的份数，下次默认用它。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 18)
-                .padding(.top, 4)
+                Text("会记住这次的份数，下次默认用它。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
 
-            // ── 按钮：苹果第一方玻璃，两个等宽 ──
-            HStack(spacing: 12) {
-                Button("取消") { dismiss() }
-                    .frame(maxWidth: .infinity)
-                    .liquidGlassButton()
-
-                Button {
-                    onConfirm(copies)
-                } label: {
-                    Text("打印 \(copies) 份")
-                        .fontWeight(.semibold)
+                // ── 按钮：苹果第一方玻璃，两个等宽 ──
+                HStack(spacing: 12) {
+                    Button("取消") { onCancel() }
                         .frame(maxWidth: .infinity)
+                        .liquidGlassButton()
+
+                    Button {
+                        onConfirm(copies)
+                    } label: {
+                        Text("打印 \(copies) 份")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .liquidGlassProminentButton()
+                    .tint(Theme.brand)
                 }
-                .liquidGlassProminentButton()
-                .tint(Theme.brand)
+                .padding(20)
             }
-            .padding(18)
+            .frame(width: 330)
+            .background(.thinMaterial,
+                        in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
-        .frame(width: 330)
     }
 }

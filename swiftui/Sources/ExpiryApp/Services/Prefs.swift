@@ -14,6 +14,15 @@ enum Prefs {
         set { d.set(newValue, forKey: "lastMaker") }
     }
 
+    // MARK: - 模板磁贴顺序（★ 2026-10-18 用户要求「长按可以移动位置」）
+
+    /// 模板磁贴的显示顺序，存的是 `TemplateRoute.key` 的数组。
+    /// 空数组 = 用默认顺序（通用 / 康普茶 / 奶制品 / 肉类）。
+    static var templateOrder: [String] {
+        get { d.stringArray(forKey: "templateOrder") ?? [] }
+        set { d.set(newValue, forKey: "templateOrder") }
+    }
+
     // MARK: - 连接
 
     /// 打开 App 后是否自动连接上次连过的那台打印机。

@@ -11,15 +11,94 @@
 import SwiftUI
 
 /// 模板二级页路由。
-enum TemplateRoute: Hashable {
+enum TemplateRoute: Hashable, CaseIterable {
     case generic
     case kombucha
     case dairy
     case meat
+
+    /// 持久化用的稳定 key（拖动排序要存进 UserDefaults）。
+    var key: String {
+        switch self {
+        case .generic: return "generic"
+        case .kombucha: return "kombucha"
+        case .dairy: return "dairy"
+        case .meat: return "meat"
+        }
+    }
+
+    static func from(key: String) -> TemplateRoute? {
+        allCases.first { $0.key == key }
+    }
+
+    var title: String {
+        switch self {
+        case .generic: return "通用效期"
+        case .kombucha: return "康普茶"
+        case .dairy: return "奶制品"
+        case .meat: return "肉类"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .generic: return "自定标题与两个日期"
+        case .kombucha: return "自动算一发二发日期"
+        case .dairy: return "按品类套保质期"
+        case .meat: return "冷藏 / 冷冻自动算"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .generic: return "clock"
+        case .kombucha: return "drop.fill"
+        case .dairy: return "flask.fill"
+        case .meat: return "fork.knife"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .generic: return Theme.tplGenericTint
+        case .kombucha: return Theme.tplKombuchaTint
+        case .dairy: return Theme.tplDairyTint
+        case .meat: return Theme.tplMeatTint
+        }
+    }
+
+    var fill: Color {
+        switch self {
+        case .generic: return Theme.tplGenericFill
+        case .kombucha: return Theme.tplKombuchaFill
+        case .dairy: return Theme.tplDairyFill
+        case .meat: return Theme.tplMeatFill
+        }
+    }
 }
 
 struct TemplatesTab: View {
     @Binding var path: NavigationPath
+
+    /// 磁贴顺序 —— 长按拖动排序后写进 `Prefs.templateOrder`，下次启动保持。
+    @State private var order: [TemplateRoute] = TemplatesTab.loadOrder()
+
+    /// 读保存的顺序；**补上缺失的路由**（新增模板 / 老版本没有这个键时不会丢卡片）。
+    private static func loadOrder() -> [TemplateRoute] {
+        let saved = Prefs.templateOrder.compactMap { TemplateRoute.from(key: $0) }
+        let missing = TemplateRoute.allCases.filter { !saved.contains($0) }
+        return saved + missing
+    }
+
+    /// 按路由生成一张磁贴（4 张卡片的元数据都收在 `TemplateRoute` 里了）。
+    private func card(for route: TemplateRoute) -> some View {
+        TemplateCard(title: route.title,
+                     subtitle: route.subtitle,
+                     systemImage: route.systemImage,
+                     tint: route.tint,
+                     fill: route.fill,
+                     route: route)
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -27,45 +106,36 @@ struct TemplatesTab: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
+                    // ★★★ 2026-10-18（用户第 2 条）：
+                    //   「你只是把他做成磁贴样式了，但是是否使用了苹果第一方功能呢？
+                    //    **长按可以进行位置移动**，每个磁贴右上角那个箭头是什么意思呢？」
+                    //   ➜ ① 磁贴支持**长按拖动排序** —— 用苹果第一方的拖放 API
+                    //        `.draggable(_:preview:)` + `.dropDestination(for:)`，
+                    //        顺序写进 `Prefs.templateOrder`，下次启动保持；
+                    //     ② **右上角箭头已删除**（用户看不懂它的含义）。
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
                                         GridItem(.flexible(), spacing: 12)],
                               spacing: 12) {
-                        TemplateCard(
-                            title: "通用效期",
-                            subtitle: "自定标题与两个日期",
-                            systemImage: "clock",
-                            tint: Theme.tplGenericTint,
-                            fill: Theme.tplGenericFill,
-                            route: .generic
-                        )
-                        TemplateCard(
-                            title: "康普茶",
-                            subtitle: "自动算一发二发日期",
-                            systemImage: "drop.fill",
-                            tint: Theme.tplKombuchaTint,
-                            fill: Theme.tplKombuchaFill,
-                            route: .kombucha
-                        )
-                        TemplateCard(
-                            title: "奶制品",
-                            subtitle: "按品类套保质期",
-                            systemImage: "flask.fill",
-                            tint: Theme.tplDairyTint,
-                            fill: Theme.tplDairyFill,
-                            route: .dairy
-                        )
-                        // ★ 2026-10-09 新增（用户清单「一、模板二级菜单」第 4 条）：
-                        //   肉类模板「菜单和奶制品一样」，所以直接作为第 4 张卡片。
-                        //   ⚠️「解冻」**不是**卡片 —— 它只能由扫冷冻标签的二维码进入，
-                        //   见 `MeatThawView`。
-                        TemplateCard(
-                            title: "肉类",
-                            subtitle: "冷藏 / 冷冻自动算",
-                            systemImage: "fork.knife",
-                            tint: Theme.tplMeatTint,
-                            fill: Theme.tplMeatFill,
-                            route: .meat
-                        )
+                        ForEach(order, id: \.self) { route in
+                            card(for: route)
+                                .draggable(route.key) {
+                                    card(for: route)
+                                        .frame(width: 160)
+                                }
+                                .dropDestination(for: String.self) { items, _ in
+                                    guard let key = items.first,
+                                          let moving = TemplateRoute.from(key: key),
+                                          let from = order.firstIndex(of: moving),
+                                          let to = order.firstIndex(of: route),
+                                          from != to else { return false }
+                                    withAnimation(.snappy) {
+                                        let item = order.remove(at: from)
+                                        order.insert(item, at: to)
+                                    }
+                                    Prefs.templateOrder = order.map(\.key)
+                                    return true
+                                }
+                        }
                     }
 
                     howItWorks
@@ -139,17 +209,16 @@ struct TemplatesTab: View {
     }
 }
 
-/// 模板卡片（磁贴）。
+/// 模板磁贴。
 ///
-/// ★★★ 2026-10-18（用户第 2 条）：「把它们换成**苹果官方类似磁贴样式**，
-///   和上面这个苹果健身 App 内的一样的官方工具制作」
-///   ➜ 参照「健康」App 摘要页的卡片结构重做：
-///     · 左上 **图标**、右上 **圆形 chevron**（"可进入"的提示，健康 App 同款）；
-///     · 内容**左对齐**（原来居中），标题在上、副标题在下；
-///     · 底色用 **`.regularMaterial`**（系统材质，浅色白雾 / 深色深雾，随外观自动切换）
-///       —— 不再用 `secondarySystemGroupedBackground` 那种"列表分组底色"，
-///         磁贴要有明显的"悬浮块"层次；
-///     · 圆角放大到 20（健康 App 磁贴的观感）。
+/// ★★★ 2026-10-18（用户第 2 条，两轮订正后的最终口径）：
+///   · **删掉右上角的圆形箭头** —— 用户原话：「每个磁贴右上角那个箭头是什么意思呢？」
+///     （那是我照抄健康 App 的装饰，用户不需要，已移除）；
+///   · 底色用**系统语义色 `secondarySystemGroupedBackground`**（浅色=白卡、深色=#1C1C1E），
+///     这是健康 App 磁贴的真实底色 —— 不是 `.regularMaterial` 那种半透明材质
+///     （用户：「也不是苹果第一方磁贴样式」）；
+///   · 圆角 16（健康 App 的观感）；
+///   · **长按可拖动排序**由外层 `.draggable` / `.dropDestination` 提供（见 `TemplatesTab`）。
 ///   ⚠️ 这是**卡片/链接**（`NavigationLink`），不是按钮 —— 按钮仍守「只能第一方玻璃」的规矩。
 struct TemplateCard: View {
     let title: String
@@ -162,20 +231,11 @@ struct TemplateCard: View {
     var body: some View {
         NavigationLink(value: route) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top) {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(tint)
-                        .frame(width: 46, height: 46)
-                        .background(fill, in: RoundedRectangle(cornerRadius: 12))
-                    Spacer(minLength: 8)
-                    // 健康 App 磁贴右上角那颗"可进入"的小圆箭头。
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.tertiary)
-                        .frame(width: 24, height: 24)
-                        .background(Color(.tertiarySystemFill), in: Circle())
-                }
+                Image(systemName: systemImage)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 46, height: 46)
+                    .background(fill, in: RoundedRectangle(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
@@ -190,7 +250,8 @@ struct TemplateCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
     }

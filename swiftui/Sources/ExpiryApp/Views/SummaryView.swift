@@ -14,6 +14,9 @@ import SwiftUI
 
 struct SummaryView: View {
     @ObservedObject private var store = ExpiryStore.shared
+    /// ★ 2026-10-18：磁贴**可点击** → 切到「效期管理」看完整列表
+    ///   （用户：「摘要页面只能看，什么都点不开吗？」）。
+    @ObservedObject private var router = AppRouter.shared
 
     private var now: Date { Date() }
 
@@ -114,7 +117,10 @@ struct SummaryView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .onTapGesture { router.goToExpiry() }
     }
 
     /// ② 小磁贴（今天到期 / 7 天内到期 / 已过期）
@@ -139,7 +145,10 @@ struct SummaryView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .onTapGesture { router.goToExpiry() }
     }
 
     /// ③ 总览
@@ -157,7 +166,10 @@ struct SummaryView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .onTapGesture { router.goToExpiry() }
     }
 
     // MARK: 文案
