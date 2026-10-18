@@ -285,11 +285,15 @@ struct TemplatesTab: View {
                     // ★ 兜底：拖到**磁贴之间的空白**松手时，`performDrop` 不会被调用，
                     //   `dragging` 会残留 → 那张磁贴永远透明、点不动（用户报的 bug）。
                     //   这里在网格层接住一次 drop，无论如何都把状态清掉。
-                    .onDrop(of: [.text]) { _ in
+                    //   ⚠️ 必须显式写 `isTargeted:perform:` —— 只写 `{ _ in }` 时编译器会把
+                    //     尾随闭包匹配到 `onDrop(of:delegate:)` 的 `delegate` 上（编译报错）。
+                    .onDrop(of: [.text],
+                            isTargeted: nil,
+                            perform: { _ in
                         dragging = nil
                         dropTarget = nil
                         return false
-                    }
+                    })
 
                     howItWorks
                 }
