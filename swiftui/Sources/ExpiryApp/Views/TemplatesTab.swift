@@ -87,6 +87,14 @@ struct TemplatesTab: View {
     /// ★ 2026-10-18（用户订正）：「长按应该**先呼出选项**，长按后移动才是移动」
     ///   → `moving == false` 时长按弹系统菜单；在菜单里选「移动排序」才进入拖动。
     @State private var moving = false
+    /// ★★★ 2026-10-18（用户报 bug）：固定/取消固定后**界面不立即刷新**。
+    ///   根因：`isPinned` 原来直接读 `Prefs.pinnedTemplates`（UserDefaults）——
+    ///   它**不是 SwiftUI 的响应式状态**。只有 `order` 变了才会重绘；
+    ///   而"固定的磁贴本来就在第一位"时 `order` 不变 → 不重绘 → 图钉图标不更新。
+    ///   ➜ 用 `@State` 镜像一份，任何固定操作都改它（必定触发重绘），再同步进 Prefs。
+    @State private var pinnedKeys: [String] = Prefs.pinnedTemplates
+    /// 同理：删除的磁贴也要响应式（toolbar 的「恢复全部」按钮靠它决定显示与否）。
+    @State private var hiddenKeys: [String] = Prefs.hiddenTemplates
     @State private var dragging: TemplateRoute?
     @State private var dropTarget: TemplateRoute?
 
@@ -197,7 +205,7 @@ struct TemplatesTab: View {
     }
 
     private func isPinned(_ route: TemplateRoute) -> Bool {
-        Prefs.pinnedTemplates.contains(route.key)
+        pinnedKeys.contains(route.key)
     }
 
     /// 固定 / 取消固定。
@@ -206,19 +214,21 @@ struct TemplatesTab: View {
     ///   **按固定顺序排先后**」
     ///   ➜ 存成数组：**先固定的排前面**，后固定的排后面。
     private func togglePin(_ route: TemplateRoute) {
-        var pinned = Prefs.pinnedTemplates
+        var pinned = pinnedKeys
         if let index = pinned.firstIndex(of: route.key) {
             pinned.remove(at: index)
         } else {
             pinned.append(route.key)
         }
+        // 先改 @State（保证界面立刻重绘），再落盘。
+        withAnimation(.snappy) { pinnedKeys = pinned }
         Prefs.pinnedTemplates = pinned
         applyPinOrder()
     }
 
     /// 按固定顺序把固定的磁贴排到最前（其余保持原有相对顺序）。
     private func applyPinOrder() {
-        let pinned = Prefs.pinnedTemplates.compactMap { TemplateRoute.from(key: $0) }
+        let pinned = pinnedKeys.compactMap { TemplateRoute.from(key: $0) }
         let rest = order.filter { !pinned.contains($0) }
         withAnimation(.snappy) { order = pinned + rest }
         Prefs.templateOrder = order.map(\.key)
@@ -226,9 +236,12 @@ struct TemplatesTab: View {
 
     /// 删除（隐藏）磁贴 —— 记进 `Prefs.hiddenTemplates`，可用「恢复全部」找回。
     private func remove(_ route: TemplateRoute) {
-        Prefs.pinnedTemplates = Prefs.pinnedTemplates.filter { $0 != route.key }
-        var hidden = Prefs.hiddenTemplates
+        let remaining = pinnedKeys.filter { $0 != route.key }
+        withAnimation(.snappy) { pinnedKeys = remaining }
+        Prefs.pinnedTemplates = remaining
+        var hidden = hiddenKeys
         if !hidden.contains(route.key) { hidden.append(route.key) }
+        withAnimation(.snappy) { hiddenKeys = hidden }
         Prefs.hiddenTemplates = hidden
         withAnimation(.snappy) {
             order.removeAll { $0 == route }
@@ -303,11 +316,14 @@ struct TemplatesTab: View {
             .navigationTitle("效期打印")
             .background(Color(.systemGroupedBackground))
             .toolbar {
-                if !Prefs.hiddenTemplates.isEmpty {
+                if !hiddenKeys.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("恢复全部") {
-                            Prefs.hiddenTemplates = []
-                            withAnimation(.snappy) { order = Self.loadOrder() }
+                            withAnimation(.snappy) {
+                                hiddenKeys = []
+                                Prefs.hiddenTemplates = []
+                                order = Self.loadOrder()
+                            }
                         }
                         .font(.footnote)
                     }
