@@ -33,9 +33,6 @@ struct GenericTemplateView: View {
                 //     （与 `MakerField` / `KombuchaTemplateView` 的写法保持一致）。
                 field(icon: "tag", placeholder: "输入物料名称", text: $title,
                       limit: LabelTemplate.maxTitleLength)
-                MakerField(maker: $maker, focused: $focus)
-            } footer: {
-                Text("会记住上次填写的操作人")
             }
 
             Section {
@@ -46,6 +43,17 @@ struct GenericTemplateView: View {
                 QuickDateChips(selection: $bestDate)
             } header: {
                 Text("日期")
+            }
+
+            // ★★★ 2026-10-18（用户第 2 条）：**制作人单独成块，放在日期下面**。
+            //   用户原话：「制作人位置应该如图在最下面单独列出来，
+            //   不应该和物料名称放一起，全部都按照图1修改」
+            //   ➜ 原来「物料名称 + 制作人」挤在同一个卡片里（图2 的样子）；
+            //     现在与奶制品页（图1）一致：**输入项 → 日期 → 制作人**，各自独立卡片。
+            Section {
+                MakerField(maker: $maker, focused: $focus)
+            } footer: {
+                Text("会记住上次填写的操作人")
             }
         }
         .navigationTitle("通用效期")

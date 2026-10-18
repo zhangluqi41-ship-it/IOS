@@ -602,8 +602,14 @@ targets:
         #   ② 扫码慢 → **仿微信自动变焦**：起始 2×，看不到码每 2s 升一档
         #      （2→4→6），「看到码但读不出」1.5s 就升档，每次升档**强制重新对焦**，
         #      12s 无码回落 2×；`resume()` 复位档位。`zoomLadder` 控制阶梯。
-        CURRENT_PROJECT_VERSION: 65
-        MARKETING_VERSION: 1.1.23
+        # ★ 2026-10-18（用户 2 条，模板页）：
+        #   ① 奶制品**选中类型即自动填推荐日期**（原来要点「按推荐填日期」按钮，
+        #      与肉类不一致；按钮保留供手动重套）；
+        #   ② 制作人**统一改成独立卡片、放在最下面**（图1 样式）——
+        #      通用 / 康普茶一发 / 康普茶二发 三处从原卡片里拆出
+        #      （奶制品 / 肉类 / 肉类解冻 本来就是独立块，不动）。
+        CURRENT_PROJECT_VERSION: 66
+        MARKETING_VERSION: 1.1.24
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -655,8 +661,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.23
-        CURRENT_PROJECT_VERSION: 65
+        MARKETING_VERSION: 1.1.24
+        CURRENT_PROJECT_VERSION: 66
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

@@ -58,6 +58,15 @@ struct DairyTemplateView: View {
         }
         .navigationTitle("奶制品")
         .navigationBarTitleDisplayMode(.inline)
+        // ★★★ 2026-10-18（用户第 1 条）：**选中类型就自动套用推荐日期** ——
+        //   用户原话：「奶制品点击完后，时间自动修改成推荐时间，目前肉类会自动
+        //   变成推荐时间但奶制品类不会」。
+        //   ➜ 原来只给了一个「按推荐填日期」按钮（**要点一下**才生效），
+        //     而肉类是选完自动填 —— 两个模板行为不一致。现在与肉类对齐。
+        //   ➜ 那个按钮**保留**：手动改过日期后，想回到推荐值仍可一键重套。
+        .onChange(of: kind) { _, newKind in
+            if let k = newKind { applyRule(k) }
+        }
         .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
         .alert("请先选择奶制品类型", isPresented: $showKindAlert) {

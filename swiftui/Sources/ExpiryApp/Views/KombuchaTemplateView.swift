@@ -27,7 +27,6 @@ struct KombuchaTemplateView: View {
                             }
                         }
                 }
-                MakerField(maker: $maker, focused: $focus)
             } footer: {
                 Text("标题自动为「康普茶-\(variety.isEmpty ? "品种" : variety)」")
             }
@@ -38,6 +37,14 @@ struct KombuchaTemplateView: View {
                 Label("最佳使用时间 = 制备 + 30 天", systemImage: "calendar.badge.checkmark")
             } header: {
                 Text("自动推算")
+            }
+
+            // ★★★ 2026-10-18（用户第 2 条）：**制作人单独成块，放在最下面**
+            //   （原来和「茶叶品种」挤在同一个卡片里，图2 那种样子）。
+            Section {
+                MakerField(maker: $maker, focused: $focus)
+            } footer: {
+                Text("会记住上次填写的操作人")
             }
         }
         .navigationTitle("康普茶 · 一发")

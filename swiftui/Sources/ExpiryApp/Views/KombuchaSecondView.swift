@@ -66,7 +66,6 @@ struct KombuchaSecondView: View {
                             }
                         }
                 }
-                MakerField(maker: $maker, focused: $focus)
             } header: {
                 Text("本次二发")
             } footer: {
@@ -80,6 +79,14 @@ struct KombuchaSecondView: View {
                 Label("最佳使用时间 = 沿用一发", systemImage: "calendar.badge.checkmark")
             } header: {
                 Text("自动推算")
+            }
+
+            // ★★★ 2026-10-18（用户第 2 条）：**制作人单独成块，放在最下面**
+            //   （原来和「水果名称」挤在同一个卡片里，图2 那种样子）。
+            Section {
+                MakerField(maker: $maker, focused: $focus)
+            } footer: {
+                Text("会记住上次填写的操作人")
             }
         }
         .navigationTitle("康普茶 · 二发")
