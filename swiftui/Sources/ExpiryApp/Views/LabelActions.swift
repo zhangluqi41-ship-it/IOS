@@ -525,111 +525,99 @@ struct PrintConfirmSheet: View {
         _copies = State(initialValue: max(1, initialCopies))
     }
 
+    /// ★★★ 2026-10-18（用户第 2 条，第二版）：
+    ///   「要的不是这样子的…要**这种套件**」—— 用户给的参考图就是**系统 alert**
+    ///   （`.alert` 那个「存在未过期物料」的样子）。
+    ///   ➜ 所以这里严格按 iOS 系统 alert 的**结构与尺寸**来做：
+    ///     · 宽 300、圆角 14（系统 alert 的几何）；
+    ///     · 标题 17 semibold **居中**；
+    ///     · 内容 13（footnote）左对齐；
+    ///     · **一条通栏分隔线**把内容区和按钮区隔开；
+    ///     · 按钮区：两个按钮**并排、各占一半、中间竖线分隔**、纯文字蓝色（系统 alert 就是这样）；
+    ///     · 底 = `.regularMaterial`（系统 alert 的毛玻璃材质）。
+    ///   ⚠️ 系统 alert 的按钮**没有胶囊底**（那是玻璃按钮的样式，不是 alert 的）。
     var body: some View {
-        // ★★★ 2026-10-18（用户再订正）：**独立居中窗口**，不是挂在某一行上的气泡。
-        //   · 遮罩 = 系统 alert 那种压暗（点空白处取消）；
-        //   · 卡片 = `.thinMaterial`（系统材质，深色模式下是半透明深灰，能透出背后）；
-        //   · **预览区背景是半透明的**（`Color.primary.opacity(0.06)`）——
-        //     用户明确要求：「可以加深色背景但是要透明」。
         ZStack {
-            // ★ 2026-10-18（用户第 3 条）：「页面整体应该是**半透明背景**，
-            //   苹果官方的套件都是透明的」→ 遮罩改用**系统材质**（毛玻璃、能透出背后内容），
-            //   不再是 `Color.black.opacity(0.35)` 那种死黑。
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .ignoresSafeArea()
                 .onTapGesture { onCancel() }
 
             VStack(spacing: 0) {
+                // ── 标题（居中，系统 alert 字号）──
                 Text("确认打印")
                     .font(.headline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
                     .padding(.top, 20)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 14)
 
-                // ── 预览（与标签同源：标题 / 各行 / 制作人）──
-                // ★ 2026-10-18：**去掉 ScrollView + 固定高度** —— 原来写死 `maxHeight: 280`，
-                //   内容只有 4 行时下面留一大片空白（用户圈了蓝框指出）。
-                //   现在让内容自己决定高度。
-                Group {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(draft.data.title)
-                            .font(.title3.bold())
-                        ForEach(Array(draft.data.rows.enumerated()), id: \.offset) { _, row in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(row.label)
-                                    .foregroundStyle(.secondary)
-                                Spacer(minLength: 8)
-                                Text(row.value)
-                                    .monospacedDigit()
-                            }
-                            .font(.subheadline)
+                // ── 内容 ──
+                VStack(alignment: .leading, spacing: 9) {
+                    Text(draft.data.title)
+                        .font(.subheadline.weight(.semibold))
+
+                    ForEach(Array(draft.data.rows.enumerated()), id: \.offset) { _, row in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(row.label)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Text(row.value)
+                                .monospacedDigit()
                         }
-                        Divider()
-                        // ⚠️ `data.maker` 本身已经带「制作人：」前缀（`makerFooter` 加的），
-                        //   这里**不要再写一遍 label**，否则会显示成「制作人 制作人：张皓」。
-                        Text(draft.data.maker)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        .font(.footnote)
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // ★ 半透明（不是不透明的 secondarySystemBackground）—— 用户要求。
-                    .background(Color.primary.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 14))
-                    .padding(.horizontal, 20)
+
+                    // ⚠️ `data.maker` 自带「制作人：」前缀，别再写 label。
+                    Text(draft.data.maker)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
 
                 // ── 份数 ──
                 Stepper(value: $copies, in: 1...20) {
                     HStack {
                         Text("打印份数")
+                            .font(.footnote)
                         Spacer(minLength: 8)
                         Text("\(copies)")
-                            .font(.title3.bold())
+                            .font(.subheadline.weight(.semibold))
                             .monospacedDigit()
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 14)
+                .padding(.bottom, 6)
 
                 Text("会记住这次的份数，下次默认用它。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 20)
-                    .padding(.top, 4)
+                    .padding(.bottom, 18)
 
-                // ── 按钮：苹果第一方玻璃，两个等宽 ──
-                // ★ 2026-10-18（用户第 3 条）：「红框按钮**比例失调**，应该用苹果第一方的大小，
-                //   并且**左右对称**」
-                //   ➜ 之前「取消」的 maxWidth 加在 Button 上、「打印」加在 label 里，
-                //     两种玻璃按钮的内边距又不同 → 一宽一窄、一高一矮。
-                //   ➜ 现在：都 `.controlSize(.large)`（系统标准大号）+ 都在 Button 外层
-                //     `.frame(maxWidth: .infinity)` → **严格等宽等高**。
-                HStack(spacing: 12) {
+                // ── 分隔线 + 两个并排按钮（系统 alert 布局）──
+                Divider()
+
+                HStack(spacing: 0) {
                     Button("取消") { onCancel() }
-                        .liquidGlassButton()
-                        .frame(maxWidth: .infinity)
+                        .font(.body)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+
+                    Divider()
+                        .frame(height: 50)
 
                     Button {
                         onConfirm(copies)
                     } label: {
                         Text("打印 \(copies) 份")
-                            .fontWeight(.semibold)
+                            .font(.body.weight(.semibold))
                     }
-                    .liquidGlassProminentButton()
-                    .tint(Theme.brand)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 50)
                 }
-                .controlSize(.large)
-                .padding(20)
             }
-            .frame(width: 330)
-            .background(.thinMaterial,
-                        in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .frame(width: 300)
+            .background(.regularMaterial,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 }

@@ -84,6 +84,9 @@ struct TemplatesTab: View {
 
     /// 磁贴顺序 —— 拖动排序后写进 `Prefs.templateOrder`，下次启动保持。
     @State private var order: [TemplateRoute] = TemplatesTab.loadOrder()
+    /// ★ 2026-10-18（用户订正）：「长按应该**先呼出选项**，长按后移动才是移动」
+    ///   → `moving == false` 时长按弹系统菜单；在菜单里选「移动排序」才进入拖动。
+    @State private var moving = false
     @State private var dragging: TemplateRoute?
     @State private var dropTarget: TemplateRoute?
 
@@ -105,29 +108,53 @@ struct TemplatesTab: View {
 
     // MARK: 磁贴（拖动 + 长按菜单 + 固定）
 
-    /// 单张磁贴：卡片 + 右上角菜单按钮 + **长按拖动**。
+    /// 单张磁贴：卡片 + 右上角菜单 + **长按先弹菜单 / 选「移动排序」后才可拖**。
     ///
-    /// ★★★ 2026-10-18 用户订正：
-    ///   「**按住不能调整位置了**，按住弹小菜单没问题，但是**移动超过一个幅度后应该是移动磁贴**」
-    ///   ➜ iOS 里「长按弹菜单」和「长按拖动」抢的是**同一个手势**，只能留一个。
-    ///     用户最在意的是拖动 → **长按 = 拖动**（`.onDrag`，移动超过系统阈值才开始，等价于
-    ///     "移动超过一个幅度"）；固定 / 删除改成**右上角小按钮弹出的系统 `Menu`**（仍是第一方）。
-    ///   ➜ 原「排序模式」已删除（不再需要）。
+    /// ★★★ 2026-10-18 用户两次订正后的最终口径：
+    ///   · 「按住的时候会**消失不见**……而且存在 bug，消失后**点不出来**」
+    ///     → 根因：`.onDrag` 一长按就触发，`dragging` 被设上，但**松手在空白处没有回调**
+    ///       （`performDrop` 不会调用）→ `dragging` 永远不清 → 磁贴永久透明、点不动。
+    ///   · 「长按应该**先呼出选项**，长按后移动才是移动」
+    ///     → 现在：**普通模式只挂 `.contextMenu`**（长按弹系统菜单，绝不改状态、不可能卡死）；
+    ///       在菜单里选「**移动排序**」→ `moving = true` → **这时才挂 `.onDrag`**。
+    ///     （iOS 里 `onDrag` 和 `contextMenu` 抢同一个长按手势，同时挂必然坏掉一个。）
+    @ViewBuilder
     private func tile(_ route: TemplateRoute) -> some View {
-        tileCore(route)
-            .onDrag {
-                dragging = route
-                return NSItemProvider(object: route.key as NSString)
-            } preview: {
-                // preview 是**不透明原样**，跟着手指走（源磁贴已 opacity 0 消失）。
-                card(for: route).frame(width: 160)
-            }
-            .onDrop(of: [.text], delegate: TileDropDelegate(
-                item: route,
-                order: $order,
-                dragging: $dragging,
-                dropTarget: $dropTarget
-            ))
+        if moving {
+            tileCore(route)
+                .onDrag {
+                    dragging = route
+                    return NSItemProvider(object: route.key as NSString)
+                } preview: {
+                    card(for: route).frame(width: 160)
+                }
+                .onDrop(of: [.text], delegate: TileDropDelegate(
+                    item: route,
+                    order: $order,
+                    dragging: $dragging,
+                    dropTarget: $dropTarget
+                ))
+        } else {
+            tileCore(route)
+                .contextMenu {
+                    Button {
+                        togglePin(route)
+                    } label: {
+                        Label(isPinned(route) ? "取消固定" : "固定",
+                              systemImage: isPinned(route) ? "pin.slash" : "pin")
+                    }
+                    Button {
+                        withAnimation(.snappy) { moving = true }
+                    } label: {
+                        Label("移动排序", systemImage: "arrow.up.arrow.down")
+                    }
+                    Button(role: .destructive) {
+                        remove(route)
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                }
+        }
     }
 
     private func tileCore(_ route: TemplateRoute) -> some View {
@@ -225,12 +252,43 @@ struct TemplatesTab: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
+                    if moving {
+                        HStack(spacing: 8) {
+                            Image(systemName: "hand.draw")
+                                .font(.footnote)
+                            Text("按住磁贴拖动排序")
+                                .font(.footnote)
+                            Spacer(minLength: 8)
+                            Button("完成") {
+                                withAnimation(.snappy) {
+                                    moving = false
+                                    dragging = nil
+                                    dropTarget = nil
+                                }
+                            }
+                            .font(.footnote.weight(.semibold))
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color(.secondarySystemGroupedBackground),
+                                    in: RoundedRectangle(cornerRadius: 12))
+                    }
+
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
                                         GridItem(.flexible(), spacing: 12)],
                               spacing: 12) {
                         ForEach(order, id: \.self) { route in
                             tile(route)
                         }
+                    }
+                    // ★ 兜底：拖到**磁贴之间的空白**松手时，`performDrop` 不会被调用，
+                    //   `dragging` 会残留 → 那张磁贴永远透明、点不动（用户报的 bug）。
+                    //   这里在网格层接住一次 drop，无论如何都把状态清掉。
+                    .onDrop(of: [.text]) { _ in
+                        dragging = nil
+                        dropTarget = nil
+                        return false
                     }
 
                     howItWorks

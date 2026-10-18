@@ -663,8 +663,14 @@ targets:
         #   ③ 确认窗：遮罩改 `.ultraThinMaterial`（毛玻璃，不再死黑）、
         #      两个按钮 `.controlSize(.large)` + 都外层等宽（比例对齐）、
         #      预览区去掉 ScrollView 与写死高度（消除大片空白）。
-        CURRENT_PROJECT_VERSION: 75
-        MARKETING_VERSION: 1.1.33
+        # ★ 2026-10-18 第十一轮（用户 2 条）：
+        #   ① 修拖动 bug（长按消失/点不动）：`onDrag` 一长按就置 dragging，松手在空白处
+        #      无回调 -> 永久透明。现在**普通模式只挂 contextMenu**（长按弹菜单，不动状态），
+        #      菜单里选「移动排序」才挂 onDrag；另加网格层 onDrop 兜底清状态。
+        #   ② 确认窗按**系统 alert 的套件**重做（宽 300 / 圆角 14 / 标题居中 /
+        #      通栏分隔线 / 两按钮并排各半 + 竖线分隔 / 纯文字蓝 / `.regularMaterial`）。
+        CURRENT_PROJECT_VERSION: 76
+        MARKETING_VERSION: 1.1.34
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -716,8 +722,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.33
-        CURRENT_PROJECT_VERSION: 75
+        MARKETING_VERSION: 1.1.34
+        CURRENT_PROJECT_VERSION: 76
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。
