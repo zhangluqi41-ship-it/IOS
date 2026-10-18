@@ -532,7 +532,11 @@ struct PrintConfirmSheet: View {
         //   · **预览区背景是半透明的**（`Color.primary.opacity(0.06)`）——
         //     用户明确要求：「可以加深色背景但是要透明」。
         ZStack {
-            Color.black.opacity(0.35)
+            // ★ 2026-10-18（用户第 3 条）：「页面整体应该是**半透明背景**，
+            //   苹果官方的套件都是透明的」→ 遮罩改用**系统材质**（毛玻璃、能透出背后内容），
+            //   不再是 `Color.black.opacity(0.35)` 那种死黑。
+            Rectangle()
+                .fill(.ultraThinMaterial)
                 .ignoresSafeArea()
                 .onTapGesture { onCancel() }
 
@@ -545,7 +549,10 @@ struct PrintConfirmSheet: View {
                     .padding(.bottom, 12)
 
                 // ── 预览（与标签同源：标题 / 各行 / 制作人）──
-                ScrollView {
+                // ★ 2026-10-18：**去掉 ScrollView + 固定高度** —— 原来写死 `maxHeight: 280`，
+                //   内容只有 4 行时下面留一大片空白（用户圈了蓝框指出）。
+                //   现在让内容自己决定高度。
+                Group {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(draft.data.title)
                             .font(.title3.bold())
@@ -574,7 +581,6 @@ struct PrintConfirmSheet: View {
                                 in: RoundedRectangle(cornerRadius: 14))
                     .padding(.horizontal, 20)
                 }
-                .frame(maxHeight: 280)
 
                 // ── 份数 ──
                 Stepper(value: $copies, in: 1...20) {
@@ -597,21 +603,28 @@ struct PrintConfirmSheet: View {
                     .padding(.top, 4)
 
                 // ── 按钮：苹果第一方玻璃，两个等宽 ──
+                // ★ 2026-10-18（用户第 3 条）：「红框按钮**比例失调**，应该用苹果第一方的大小，
+                //   并且**左右对称**」
+                //   ➜ 之前「取消」的 maxWidth 加在 Button 上、「打印」加在 label 里，
+                //     两种玻璃按钮的内边距又不同 → 一宽一窄、一高一矮。
+                //   ➜ 现在：都 `.controlSize(.large)`（系统标准大号）+ 都在 Button 外层
+                //     `.frame(maxWidth: .infinity)` → **严格等宽等高**。
                 HStack(spacing: 12) {
                     Button("取消") { onCancel() }
-                        .frame(maxWidth: .infinity)
                         .liquidGlassButton()
+                        .frame(maxWidth: .infinity)
 
                     Button {
                         onConfirm(copies)
                     } label: {
                         Text("打印 \(copies) 份")
                             .fontWeight(.semibold)
-                            .frame(maxWidth: .infinity)
                     }
                     .liquidGlassProminentButton()
                     .tint(Theme.brand)
+                    .frame(maxWidth: .infinity)
                 }
+                .controlSize(.large)
                 .padding(20)
             }
             .frame(width: 330)

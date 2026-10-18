@@ -30,10 +30,11 @@ enum Prefs {
         set { d.set(newValue, forKey: "hiddenTemplates") }
     }
 
-    /// ★ 2026-10-18：**固定（锁定位置）**的磁贴 key。空串 = 没有固定任何一个。
-    static var pinnedTemplate: String {
-        get { d.string(forKey: "pinnedTemplate") ?? "" }
-        set { d.set(newValue, forKey: "pinnedTemplate") }
+    /// ★ 2026-10-18（用户订正）：**固定的磁贴可以有多个**，按固定先后排在前面。
+    ///   （原来只允许 1 个，用户明确说「每个都可以固定，按固定顺序排先后」）
+    static var pinnedTemplates: [String] {
+        get { d.stringArray(forKey: "pinnedTemplates") ?? [] }
+        set { d.set(newValue, forKey: "pinnedTemplates") }
     }
 
     // MARK: - 连接
