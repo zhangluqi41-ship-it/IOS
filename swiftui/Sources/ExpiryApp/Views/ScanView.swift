@@ -646,6 +646,10 @@ struct ScanView: View {
                     .foregroundStyle(scanner.torchOn ? Theme.brand : Color.primary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
+                    // ★★★ 2026-10-18（用户第 4 条）：**两个按钮左右对称（等宽）**。
+                    //   `maxWidth: .infinity` 让 label 撑满 HStack 分到的一半，
+                    //   系统玻璃胶囊随之拉成同宽（"打开手电筒"5 字 vs "翻转"2 字不再一长一短）。
+                    .frame(maxWidth: .infinity)
             }
             .liquidGlassButton()
             .disabled(!scanner.state.isRunning || !scanner.canUseTorch)
@@ -661,6 +665,7 @@ struct ScanView: View {
                         .foregroundStyle(Color.primary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
                 }
                 .liquidGlassButton()
                 .disabled(!scanner.state.isRunning)

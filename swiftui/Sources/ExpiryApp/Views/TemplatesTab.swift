@@ -139,7 +139,18 @@ struct TemplatesTab: View {
     }
 }
 
-/// 模板卡片：色块图标 + 标题 + 副标题，系统语义背景。
+/// 模板卡片（磁贴）。
+///
+/// ★★★ 2026-10-18（用户第 2 条）：「把它们换成**苹果官方类似磁贴样式**，
+///   和上面这个苹果健身 App 内的一样的官方工具制作」
+///   ➜ 参照「健康」App 摘要页的卡片结构重做：
+///     · 左上 **图标**、右上 **圆形 chevron**（"可进入"的提示，健康 App 同款）；
+///     · 内容**左对齐**（原来居中），标题在上、副标题在下；
+///     · 底色用 **`.regularMaterial`**（系统材质，浅色白雾 / 深色深雾，随外观自动切换）
+///       —— 不再用 `secondarySystemGroupedBackground` 那种"列表分组底色"，
+///         磁贴要有明显的"悬浮块"层次；
+///     · 圆角放大到 20（健康 App 磁贴的观感）。
+///   ⚠️ 这是**卡片/链接**（`NavigationLink`），不是按钮 —— 按钮仍守「只能第一方玻璃」的规矩。
 struct TemplateCard: View {
     let title: String
     let subtitle: String
@@ -150,27 +161,36 @@ struct TemplateCard: View {
 
     var body: some View {
         NavigationLink(value: route) {
-            VStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 52, height: 52)
-                    .background(fill, in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 46, height: 46)
+                        .background(fill, in: RoundedRectangle(cornerRadius: 12))
+                    Spacer(minLength: 8)
+                    // 健康 App 磁贴右上角那颗"可进入"的小圆箭头。
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 24, height: 24)
+                        .background(Color(.tertiarySystemFill), in: Circle())
+                }
 
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-
-                Text(subtitle)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
-            .padding(.horizontal, 8)
-            .background(Color(.secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: Theme.cardRadius))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
         }
         .buttonStyle(.plain)
     }

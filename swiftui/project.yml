@@ -633,8 +633,16 @@ targets:
         #   `.plain` + `.regularMaterial` 自绘了一次，被否）。只保留**文字颜色**改动：
         #   常态 `Color.primary`、开手电筒 `Theme.brand`。
         #   ★★ 铁律：本 App 页面按钮**只准用苹果第一方样式**，禁止 `.plain` + 任何 background。
-        CURRENT_PROJECT_VERSION: 70
-        MARKETING_VERSION: 1.1.28
+        # ★ 2026-10-18 第六轮（用户 5 条，先做 4 条）：
+        #   ① **新增 Tab「摘要」（第 2 位）**：`SummaryView` —— 正在制作中（未到完成时间）/
+        #      今天到期 / 7 天内到期 / 已过期未处理 / 全部在用，口径复用 `ExpiryStatus`；
+        #   ② 模板卡片改 **Apple Health 磁贴**（`.regularMaterial` + 圆角 20 + 右上圆形 chevron）；
+        #   ③ （自定义模板 3 级菜单 —— 下一版做）；
+        #   ④ 扫码页两个按钮 `.frame(maxWidth: .infinity)` 左右等宽对称；
+        #   ⑤ 确认打印窗 `.sheet` → **`.popover` + `.presentationCompactAdaptation(.popover)`**
+        #      （第一方悬浮气泡，不再从底部上推），内部改为 VStack 布局。
+        CURRENT_PROJECT_VERSION: 71
+        MARKETING_VERSION: 1.1.29
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -686,8 +694,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.28
-        CURRENT_PROJECT_VERSION: 70
+        MARKETING_VERSION: 1.1.29
+        CURRENT_PROJECT_VERSION: 71
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

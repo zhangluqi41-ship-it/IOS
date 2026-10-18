@@ -373,11 +373,20 @@ struct LabelActions: ViewModifier {
             }
             // ★★★ 2026-10-17（用户功能 1）：点「打印」先弹确认窗（预览 + 份数），
             //   不再直接发送到打印机。
-            .sheet(item: $pendingPrint) { item in
+            // ★★★ 2026-10-18（用户第 5 条）：「确认打印的界面没问题，但是**不要从下往上**，
+            //   做成悬浮窗口（第一方工具哈！）」
+            //   ➜ `.sheet`（从底部上推）改成 **`.popover`**：这是苹果第一方的**悬浮气泡**，
+            //     `presentationCompactAdaptation(.popover)` 保证在 iPhone 上也保持气泡形态
+            //     （默认 compact 环境会把 popover 降级成 sheet，那样又变成"从下往上"了）。
+            //   ⚠️ 别改回 `.sheet` / `.confirmationDialog`（都是底部弹出）。
+            .popover(item: $pendingPrint,
+                     attachmentAnchor: .point(.center),
+                     arrowEdge: .bottom) { item in
                 PrintConfirmSheet(draft: item.draft,
                                   initialCopies: copies) { chosen in
                     confirmPrint(item.draft, copies: chosen)
                 }
+                .presentationCompactAdaptation(.popover)
             }
     }
 
@@ -452,11 +461,24 @@ struct PrintConfirmSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
+        // ★★★ 2026-10-18（用户第 5 条）：改成**悬浮气泡**（外层用 `.popover`），
+        //   所以这里不再用 NavigationStack + List（那是"从底部上推的 sheet"的结构）。
+        //   新布局：标题 → 预览卡片（可滚动）→ 份数 → 两个第一方玻璃按钮。
+        VStack(spacing: 0) {
+            HStack {
+                Text("确认打印")
+                    .font(.headline)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
+
+            // ── 预览（与标签同源：标题 / 各行 / 制作人）──
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
                     Text(draft.data.title)
-                        .font(.headline)
+                        .font(.title3.bold())
                     ForEach(Array(draft.data.rows.enumerated()), id: \.offset) { _, row in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(row.label)
@@ -467,6 +489,7 @@ struct PrintConfirmSheet: View {
                         }
                         .font(.subheadline)
                     }
+                    Divider()
                     HStack {
                         Text("制作人")
                             .foregroundStyle(.secondary)
@@ -474,41 +497,53 @@ struct PrintConfirmSheet: View {
                         Text(draft.data.maker)
                     }
                     .font(.subheadline)
-                } header: {
-                    Text("标签内容（与打印一致）")
                 }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: 14))
+                .padding(.horizontal, 18)
+            }
+            .frame(maxHeight: 290)
 
-                Section {
-                    Stepper(value: $copies, in: 1...20) {
-                        HStack {
-                            Text("打印份数")
-                            Spacer(minLength: 8)
-                            Text("\(copies)")
-                                .font(.title3.bold())
-                                .monospacedDigit()
-                        }
-                    }
-                } header: {
-                    Text("份数")
-                } footer: {
-                    Text("会记住这次的份数，下次默认用它。")
+            // ── 份数 ──
+            Stepper(value: $copies, in: 1...20) {
+                HStack {
+                    Text("打印份数")
+                    Spacer(minLength: 8)
+                    Text("\(copies)")
+                        .font(.title3.bold())
+                        .monospacedDigit()
                 }
             }
-            .navigationTitle("确认打印")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+            .padding(.horizontal, 18)
+            .padding(.top, 14)
+
+            Text("会记住这次的份数，下次默认用它。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.top, 4)
+
+            // ── 按钮：苹果第一方玻璃，两个等宽 ──
+            HStack(spacing: 12) {
+                Button("取消") { dismiss() }
+                    .frame(maxWidth: .infinity)
+                    .liquidGlassButton()
+
+                Button {
+                    onConfirm(copies)
+                } label: {
+                    Text("打印 \(copies) 份")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        onConfirm(copies)
-                    } label: {
-                        Text("打印 \(copies) 份").fontWeight(.semibold)
-                    }
-                }
+                .liquidGlassProminentButton()
+                .tint(Theme.brand)
             }
+            .padding(18)
         }
-        .presentationDetents([.medium, .large])
+        .frame(width: 330)
     }
 }

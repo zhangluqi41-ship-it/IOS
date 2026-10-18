@@ -18,6 +18,8 @@ import SwiftUI
 /// 四个一级页签。
 enum AppTab: Hashable, CaseIterable {
     case templates
+    /// ★ 2026-10-18 新增（用户第 1 条）：「tabbar 增加新功能『摘要』，**位置放在第二个**」
+    case summary
     case scan
     case expiry
     case printer
@@ -72,9 +74,10 @@ extension AppTab {
     var order: Int {
         switch self {
         case .templates: return 0
-        case .scan: return 1
-        case .expiry: return 2
-        case .printer: return 3
+        case .summary: return 1
+        case .scan: return 2
+        case .expiry: return 3
+        case .printer: return 4
         }
     }
 }
@@ -97,6 +100,10 @@ struct RootView: View {
         TabView(selection: $nav.selection) {
             Tab("效期打印", systemImage: "square.grid.2x2", value: AppTab.templates) {
                 TemplatesTab(path: $templatesPath)
+            }
+            // ★ 2026-10-18（用户第 1 条）：第二个位置 = 「摘要」。
+            Tab("摘要", systemImage: "chart.bar.doc.horizontal", value: AppTab.summary) {
+                SummaryView()
             }
             Tab("扫码", systemImage: "qrcode.viewfinder", value: AppTab.scan) {
                 ScanView(path: $scanPath)
