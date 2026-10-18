@@ -67,6 +67,7 @@ struct SummaryView: View {
 
     /// ① 正在制作中（主磁贴，带前 3 件明细）
     private var progressTile: some View {
+        GroupBox {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("正在制作中")
@@ -115,11 +116,9 @@ struct SummaryView: View {
                 }
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
         .onTapGesture { router.goToExpiry() }
     }
 
@@ -128,6 +127,7 @@ struct SummaryView: View {
                            _ value: Int,
                            icon: String,
                            tint: Color) -> some View {
+        GroupBox {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -143,16 +143,15 @@ struct SummaryView: View {
                 .font(.system(size: 30, weight: .bold, design: .rounded))
                 .foregroundStyle(value == 0 ? Color.secondary : Color.primary)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
         .onTapGesture { router.goToExpiry() }
     }
 
     /// ③ 总览
     private var totalTile: some View {
+        GroupBox {
         HStack(spacing: 10) {
             Image(systemName: "shippingbox.fill")
                 .font(.system(size: 13, weight: .semibold))
@@ -164,11 +163,9 @@ struct SummaryView: View {
                 .font(.subheadline.weight(.semibold))
                 .monospacedDigit()
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
         .onTapGesture { router.goToExpiry() }
     }
 

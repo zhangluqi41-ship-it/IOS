@@ -211,15 +211,13 @@ struct TemplatesTab: View {
 
 /// 模板磁贴。
 ///
-/// ★★★ 2026-10-18（用户第 2 条，两轮订正后的最终口径）：
-///   · **删掉右上角的圆形箭头** —— 用户原话：「每个磁贴右上角那个箭头是什么意思呢？」
-///     （那是我照抄健康 App 的装饰，用户不需要，已移除）；
-///   · 底色用**系统语义色 `secondarySystemGroupedBackground`**（浅色=白卡、深色=#1C1C1E），
-///     这是健康 App 磁贴的真实底色 —— 不是 `.regularMaterial` 那种半透明材质
-///     （用户：「也不是苹果第一方磁贴样式」）；
-///   · 圆角 16（健康 App 的观感）；
-///   · **长按可拖动排序**由外层 `.draggable` / `.dropDestination` 提供（见 `TemplatesTab`）。
-///   ⚠️ 这是**卡片/链接**（`NavigationLink`），不是按钮 —— 按钮仍守「只能第一方玻璃」的规矩。
+/// ★★★ 2026-10-18 定版（用户确认「A. GroupBox（系统容器）」）：
+///   磁贴容器改用**苹果系统自带的 `GroupBox`** ——
+///   背景、圆角、内边距**全部由系统渲染**，这里只负责内容排版。
+///   ❌ 不要再用 `.background(..., in: RoundedRectangle(...))` 自己画卡片外形
+///     （那是"用系统色块拼一个卡片"，不是系统组件）。
+///   ❌ 右上角的圆形箭头已按用户要求删除（他看不懂那是什么）。
+///   ✅ 长按拖动排序：外层 `.draggable` / `.dropDestination`（见 `TemplatesTab`）。
 struct TemplateCard: View {
     let title: String
     let subtitle: String
@@ -229,31 +227,32 @@ struct TemplateCard: View {
     let route: TemplateRoute
 
     var body: some View {
-        NavigationLink(value: route) {
-            VStack(alignment: .leading, spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 46, height: 46)
-                    .background(fill, in: RoundedRectangle(cornerRadius: 12))
+        GroupBox {
+            NavigationLink(value: route) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 46, height: 46)
+                        .background(fill, in: RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Text(subtitle)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // 让整块内容区都能点（否则只有文字本身响应）。
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(Color(.secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: 16))
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
     }
 }
 
