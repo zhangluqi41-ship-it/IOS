@@ -217,6 +217,8 @@ struct RootView: View {
     private func clearPath(_ tab: AppTab) {
         switch tab {
         case .templates: if !templatesPath.isEmpty { templatesPath = NavigationPath() }
+        // ★ 摘要页没有外部导航栈（`SummaryView` 内部自带的 NavigationStack 没绑 path）→ 无需重置。
+        case .summary: break
         case .scan: if !scanPath.isEmpty { scanPath = NavigationPath() }
         case .expiry: if !expiryPath.isEmpty { expiryPath = NavigationPath() }
         case .printer: if !printerPath.isEmpty { printerPath = NavigationPath() }
