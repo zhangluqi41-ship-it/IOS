@@ -14,9 +14,7 @@ import SwiftUI
 
 struct SummaryView: View {
     @ObservedObject private var store = ExpiryStore.shared
-    /// ★ 2026-10-18：磁贴**可点击** → 切到「效期管理」看完整列表
-    ///   （用户：「摘要页面只能看，什么都点不开吗？」）。
-    @ObservedObject private var router = AppRouter.shared
+
 
     private var now: Date { Date() }
 
@@ -45,13 +43,16 @@ struct SummaryView: View {
 
                     HStack(spacing: 14) {
                         smallTile("今天到期", count(.today),
-                                  icon: "clock.badge.exclamationmark", tint: .orange)
+                                  icon: "clock.badge.exclamationmark", tint: .orange,
+                                  filter: .dueToday)
                         smallTile("7 天内到期", count(.within3) + count(.within7),
-                                  icon: "calendar", tint: .blue)
+                                  icon: "calendar", tint: .blue,
+                                  filter: .withinSeven)
                     }
 
                     smallTile("已过期未处理", count(.expired),
-                              icon: "exclamationmark.triangle.fill", tint: .red)
+                              icon: "exclamationmark.triangle.fill", tint: .red,
+                              filter: .overdue)
 
                     totalTile
                 }
@@ -60,6 +61,10 @@ struct SummaryView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("摘要")
+            // ★ 2026-10-18（用户第 3 条）：点磁贴 → **独立二级页**（不再跳去效期管理）。
+            .navigationDestination(for: SummaryFilter.self) { filter in
+                SummaryDetailView(filter: filter)
+            }
         }
     }
 
@@ -68,6 +73,7 @@ struct SummaryView: View {
     /// ① 正在制作中（主磁贴，带前 3 件明细）
     private var progressTile: some View {
         GroupBox {
+            NavigationLink(value: SummaryFilter.inProgress) {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("正在制作中")
@@ -118,16 +124,19 @@ struct SummaryView: View {
         }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .onTapGesture { router.goToExpiry() }
     }
 
     /// ② 小磁贴（今天到期 / 7 天内到期 / 已过期）
     private func smallTile(_ title: String,
                            _ value: Int,
                            icon: String,
-                           tint: Color) -> some View {
+                           tint: Color,
+                           filter: SummaryFilter) -> some View {
         GroupBox {
+            NavigationLink(value: filter) {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -145,13 +154,15 @@ struct SummaryView: View {
         }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .onTapGesture { router.goToExpiry() }
     }
 
     /// ③ 总览
     private var totalTile: some View {
         GroupBox {
+            NavigationLink(value: SummaryFilter.all) {
         HStack(spacing: 10) {
             Image(systemName: "shippingbox.fill")
                 .font(.system(size: 13, weight: .semibold))
@@ -165,8 +176,9 @@ struct SummaryView: View {
         }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .onTapGesture { router.goToExpiry() }
     }
 
     // MARK: 文案
@@ -183,6 +195,123 @@ struct SummaryView: View {
     }
 }
 
-#Preview {
-    SummaryView()
+
+// MARK: - 摘要磁贴 → 独立二级页（★ 2026-10-18 用户第 3 条）
+
+/// 摘要磁贴对应的筛选条件。
+///
+/// 用户原话：「摘要点击后应该是**独立的新二级菜单**，而不是跳转到效期管理里，
+/// 但是**后台数据是相通的**」
+/// ➜ 点磁贴 push 到 `SummaryDetailView`；数据仍来自同一个 `ExpiryStore.shared`。
+enum SummaryFilter: Hashable {
+    case inProgress
+    case dueToday
+    case withinSeven
+    case overdue
+    case all
+
+    var title: String {
+        switch self {
+        case .inProgress: return "正在制作中"
+        case .dueToday: return "今天到期"
+        case .withinSeven: return "7 天内到期"
+        case .overdue: return "已过期未处理"
+        case .all: return "全部在用物料"
+        }
+    }
+
+    /// 与磁贴上的数字**同一套口径**（复用 `ExpiryStatus`，别另写判断）。
+    func records(from all: [LabelRecord], now: Date = Date()) -> [LabelRecord] {
+        let active = all.filter { $0.usedAt == nil }
+        switch self {
+        case .inProgress:
+            return active.filter { $0.expireAt > now }
+                .sorted { $0.expireAt < $1.expireAt }
+        case .dueToday:
+            return active.filter { ExpiryStatus.of($0, now: now).stage == .today }
+                .sorted { $0.dueDate < $1.dueDate }
+        case .withinSeven:
+            return active.filter {
+                let stage = ExpiryStatus.of($0, now: now).stage
+                return stage == .within3 || stage == .within7
+            }
+            .sorted { $0.dueDate < $1.dueDate }
+        case .overdue:
+            return active.filter { ExpiryStatus.of($0, now: now).stage == .expired }
+                .sorted { $0.dueDate < $1.dueDate }
+        case .all:
+            return active.sorted { $0.dueDate < $1.dueDate }
+        }
+    }
 }
+
+/// 摘要的二级列表页 —— 只读展示，点一行弹详情（与「效期管理」共用 `ExpiryDetailSheet`）。
+struct SummaryDetailView: View {
+    let filter: SummaryFilter
+
+    @ObservedObject private var store = ExpiryStore.shared
+    @State private var selected: LabelRecord?
+
+    private var list: [LabelRecord] {
+        filter.records(from: store.records)
+    }
+
+    var body: some View {
+        List {
+            if list.isEmpty {
+                ContentUnavailableView("没有相关物料",
+                                       systemImage: "checkmark.circle",
+                                       description: Text("这一栏现在是空的"))
+                    .listRowBackground(Color.clear)
+            } else {
+                ForEach(list) { record in
+                    Button {
+                        selected = record
+                    } label: {
+                        row(record)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .navigationTitle(filter.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $selected) { record in
+            ExpiryDetailSheet(record: record)
+        }
+    }
+
+    private func row(_ record: LabelRecord) -> some View {
+        let status = ExpiryStatus.of(record)
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(record.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                Text(status.label)
+                    .font(.caption)
+                    .foregroundStyle(status.isAlerting ? Color.red : Color.secondary)
+            }
+            Spacer(minLength: 8)
+            Text(dateText(filter == .inProgress ? record.expireAt : record.dueDate))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func dateText(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "MM/dd HH:mm"
+        return f.string(from: date)
+    }
+}
+
+#Preview {
+    NavigationStack {
+        SummaryDetailView(filter: .all)
+    }
+}
+

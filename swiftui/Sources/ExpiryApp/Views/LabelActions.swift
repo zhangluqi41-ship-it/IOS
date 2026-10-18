@@ -339,7 +339,11 @@ struct LabelActions: ViewModifier {
     @AppStorage("printDensity") private var density: Int = 0
     @AppStorage("paperType") private var paperType: Int = 1
 
-    @State private var notice: Notice?
+    /// ★★★ 2026-10-18（用户第 4 条）：**统一提示状态机**。
+    ///   为什么不继续用 `notice: Notice?` + 再加一个 `.alert`：
+    ///   **同一个视图上挂两个 `.alert` 会互相覆盖**（只有最后一个生效），
+    ///   所以把「普通提示」和「同名未过期确认」合并到同一个 alert 槽里。
+    @State private var prompt: Prompt?
     /// ★★★ 2026-10-17（用户功能 1）：待确认的打印草稿。
     ///   非 nil → 弹「确认打印」窗（文字预览 + 份数）；确认后才真正发送。
     @State private var pendingPrint: PendingPrint?
@@ -348,6 +352,29 @@ struct LabelActions: ViewModifier {
     private struct PendingPrint: Identifiable {
         let id = UUID()
         let draft: LabelDraft
+    }
+
+    /// 统一提示（一个 alert 槽同时承载「普通提示」和「同名物料确认」）。
+    private enum Prompt {
+        case notice(title: String, message: String)
+        /// ★ 2026-10-18（用户第 4 条）：首项 = 待打印草稿，次项 = 同名未过期记录。
+        case duplicate(LabelDraft, [LabelRecord])
+
+        var title: String {
+            switch self {
+            case .notice(let t, _): return t
+            case .duplicate: return "存在未过期物料"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .notice(_, let m): return m
+            case .duplicate(_, let list):
+                let names = Set(list.map(\.title)).joined(separator: "、")
+                return "「\(names)」还有 \(list.count) 条未过期。要把这批标记为已用完吗？"
+            }
+        }
     }
 
     func body(content: Content) -> some View {
@@ -364,12 +391,17 @@ struct LabelActions: ViewModifier {
             //   `.scrollDismissesKeyboard` 依然生效 —— 但那时 bar 上只有「完成」。
             //   既然「完成」也被用户点名删掉，索性整条 bar 拿掉，
             //   键盘上方只剩系统键盘自己，干扰最小。
-            .alert(notice?.title ?? "",
-                   isPresented: Binding(get: { notice != nil },
-                                        set: { if !$0 { notice = nil } })) {
-                Button("好", role: .cancel) {}
+            .alert(prompt?.title ?? "",
+                   isPresented: Binding(get: { prompt != nil },
+                                        set: { if !$0 { prompt = nil } })) {
+                if case .duplicate = prompt {
+                    Button("标记已用完") { finishDuplicate(useUp: true) }
+                    Button("不用", role: .cancel) { finishDuplicate(useUp: false) }
+                } else {
+                    Button("好", role: .cancel) {}
+                }
             } message: {
-                Text(notice?.body ?? "")
+                Text(prompt?.message ?? "")
             }
             // ★★★ 2026-10-17（用户功能 1）：点「打印」先弹确认窗（预览 + 份数），
             //   不再直接发送到打印机。
@@ -399,13 +431,38 @@ struct LabelActions: ViewModifier {
 
     private func printNow() {
         guard printer.isConnected else {
-            notice = Notice(title: "还没有连接打印机",
-                            body: "请到「打印机」标签页扫描并连接硕方 T50 Pro，再回来打印。")
+            prompt = .notice(title: "还没有连接打印机",
+                            message: "请到「打印机」标签页扫描并连接硕方 T50 Pro，再回来打印。")
             return
         }
         // 校验（必填项）仍在这一步 —— 校验不过时页面自己会弹提示。
         guard let draft = build() else { return }
-        // ★ 不再直接打印：先让用户确认份数、核对内容（功能 1）。
+
+        // ★★★ 2026-10-18（用户第 4 条）：
+        //   「打印**标题完全相同**的标签时，提示上一批物料是否已用完，
+        //     『存在未过期物料，是否已用完？』，**点击完后再弹打印的弹窗**」
+        //   ➜ 只查**同标题 + 未用完 + 未过期**的记录（已用完/已过期的不啰嗦）；
+        //     有 → 先弹 alert 问「要不要标记已用完」，答完再弹打印确认窗。
+        let sameTitle = ExpiryStore.shared.records.filter {
+            $0.title == draft.data.title
+                && $0.usedAt == nil
+                && $0.dueDate > Date()
+                && $0.id != draft.record.id
+        }
+        if sameTitle.isEmpty {
+            pendingPrint = PendingPrint(draft: draft)
+        } else {
+            prompt = .duplicate(draft, sameTitle)
+        }
+    }
+
+    /// 同名未过期物料的确认结果 → **答完再弹打印确认窗**（用户要求）。
+    private func finishDuplicate(useUp: Bool) {
+        guard case let .duplicate(draft, list) = prompt else { return }
+        if useUp {
+            list.forEach { ExpiryStore.shared.markUsed($0) }
+        }
+        prompt = nil
         pendingPrint = PendingPrint(draft: draft)
     }
 
@@ -426,11 +483,11 @@ struct LabelActions: ViewModifier {
             if ok {
                 // ★ 功能 2：打印成功后才消耗「原材料」。
                 onConfirmed?()
-                notice = Notice(title: "已发送到打印机",
-                                body: "\(draft.data.title)\n份数 \(count) · 浓度 \(density == 0 ? "自动" : "\(density)")")
+                prompt = .notice(title: "已发送到打印机",
+                                message: "\(draft.data.title)\n份数 \(count) · 浓度 \(density == 0 ? "自动" : "\(density)")")
             } else {
-                notice = Notice(title: "打印失败",
-                                body: message.orFallback("请检查打印机状态后重试。"))
+                prompt = .notice(title: "打印失败",
+                                message: message.orFallback("请检查打印机状态后重试。"))
             }
         }
     }

@@ -9,6 +9,8 @@
 //
 
 import SwiftUI
+// `.onDrop(of: [.text], delegate:)` 需要 UTType
+import UniformTypeIdentifiers
 
 /// 模板二级页路由。
 enum TemplateRoute: Hashable, CaseIterable {
@@ -80,14 +82,129 @@ enum TemplateRoute: Hashable, CaseIterable {
 struct TemplatesTab: View {
     @Binding var path: NavigationPath
 
-    /// 磁贴顺序 —— 长按拖动排序后写进 `Prefs.templateOrder`，下次启动保持。
+    /// 磁贴顺序 —— 拖动排序后写进 `Prefs.templateOrder`，下次启动保持。
     @State private var order: [TemplateRoute] = TemplatesTab.loadOrder()
+    /// ★ 2026-10-18（用户第 1 条）：**排序模式**。
+    ///   为什么要有它：`onDrag`（拖动）和 `contextMenu`（长按菜单）**都吃长按手势**，
+    ///   同时挂会互相抢。所以：
+    ///     · 普通模式 → 长按弹菜单（固定 / 删除）；
+    ///     · 排序模式（右上角「排序」进入）→ 可以拖动重排。
+    @State private var editing = false
+    @State private var dragging: TemplateRoute?
+    @State private var dropTarget: TemplateRoute?
 
-    /// 读保存的顺序；**补上缺失的路由**（新增模板 / 老版本没有这个键时不会丢卡片）。
+    /// 读保存的顺序：**跳过已删除的**，并补上新增的路由。
     private static func loadOrder() -> [TemplateRoute] {
-        let saved = Prefs.templateOrder.compactMap { TemplateRoute.from(key: $0) }
-        let missing = TemplateRoute.allCases.filter { !saved.contains($0) }
+        let hidden = Set(Prefs.hiddenTemplates)
+        let saved = Prefs.templateOrder
+            .compactMap { TemplateRoute.from(key: $0) }
+            .filter { !hidden.contains($0.key) }
+        let missing = TemplateRoute.allCases
+            .filter { !saved.contains($0) && !hidden.contains($0.key) }
         return saved + missing
+    }
+
+    // MARK: 磁贴（拖动 + 长按菜单 + 固定）
+
+    /// 单张磁贴：卡片 + 右上角「固定」小按钮 + 拖动/长按菜单。
+    ///
+    /// ★★★ 2026-10-18（用户第 1、2 条）三条关键行为：
+    ///   ① **拖起时源磁贴消失**（`opacity 0`），不是留一个半透明分身；
+    ///   ② 拖到某个磁贴上时，目标**降低透明度 + 轻微上移**（"让位趋势"），
+    ///      **没有系统那个「+」角标**（用 `DropDelegate` 而不是 `dropDestination`）；
+    ///   ③ 右上角小按钮 = **固定（锁定到第一位）**；长按弹菜单 = 固定 / 删除。
+    @ViewBuilder
+    private func tile(_ route: TemplateRoute) -> some View {
+        if editing {
+            tileCore(route)
+                .onDrag {
+                    dragging = route
+                    return NSItemProvider(object: route.key as NSString)
+                } preview: {
+                    // preview 是**不透明原样**，跟着手指走。
+                    card(for: route).frame(width: 160)
+                }
+                .onDrop(of: [.text], delegate: TileDropDelegate(
+                    item: route,
+                    order: $order,
+                    dragging: $dragging,
+                    dropTarget: $dropTarget
+                ))
+        } else {
+            tileCore(route)
+                .contextMenu {
+                    Button {
+                        togglePin(route)
+                    } label: {
+                        Label(isPinned(route) ? "取消固定" : "固定",
+                              systemImage: isPinned(route) ? "pin.slash" : "pin")
+                    }
+                    Button(role: .destructive) {
+                        remove(route)
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                }
+        }
+    }
+
+    private func tileCore(_ route: TemplateRoute) -> some View {
+        let isDragging = dragging == route
+        let isTarget = dropTarget == route
+        return ZStack(alignment: .topTrailing) {
+            card(for: route)
+                // ① 拖起源消失（不是半透明分身）
+                .opacity(isDragging ? 0 : 1)
+                // ② 目标：变淡 + 轻微上移（"让位趋势"）
+                .opacity(isTarget ? 0.5 : 1)
+                .offset(y: isTarget ? -5 : 0)
+                .animation(.snappy(duration: 0.18), value: isTarget)
+                .animation(.snappy(duration: 0.18), value: isDragging)
+
+            // ③ 右上角「固定」小按钮（锁定位置 = 锁到第一位）
+            Button {
+                togglePin(route)
+            } label: {
+                Image(systemName: isPinned(route) ? "pin.fill" : "pin")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(isPinned(route) ? Theme.brand : Color.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(.thinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(8)
+            .opacity(isDragging ? 0 : 1)
+        }
+    }
+
+    private func isPinned(_ route: TemplateRoute) -> Bool {
+        Prefs.pinnedTemplate == route.key
+    }
+
+    /// 固定 / 取消固定。固定 = **锁在第一格**（用户：「用来锁定磁贴位置」）。
+    private func togglePin(_ route: TemplateRoute) {
+        if isPinned(route) {
+            Prefs.pinnedTemplate = ""
+        } else {
+            Prefs.pinnedTemplate = route.key
+            withAnimation(.snappy) {
+                order.removeAll { $0 == route }
+                order.insert(route, at: 0)
+            }
+            Prefs.templateOrder = order.map(\.key)
+        }
+    }
+
+    /// 删除（隐藏）磁贴 —— 记进 `Prefs.hiddenTemplates`，可用「恢复全部」找回。
+    private func remove(_ route: TemplateRoute) {
+        if isPinned(route) { Prefs.pinnedTemplate = "" }
+        var hidden = Prefs.hiddenTemplates
+        if !hidden.contains(route.key) { hidden.append(route.key) }
+        Prefs.hiddenTemplates = hidden
+        withAnimation(.snappy) {
+            order.removeAll { $0 == route }
+        }
+        Prefs.templateOrder = order.map(\.key)
     }
 
     /// 按路由生成一张磁贴（4 张卡片的元数据都收在 `TemplateRoute` 里了）。
@@ -106,35 +223,11 @@ struct TemplatesTab: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
-                    // ★★★ 2026-10-18（用户第 2 条）：
-                    //   「你只是把他做成磁贴样式了，但是是否使用了苹果第一方功能呢？
-                    //    **长按可以进行位置移动**，每个磁贴右上角那个箭头是什么意思呢？」
-                    //   ➜ ① 磁贴支持**长按拖动排序** —— 用苹果第一方的拖放 API
-                    //        `.draggable(_:preview:)` + `.dropDestination(for:)`，
-                    //        顺序写进 `Prefs.templateOrder`，下次启动保持；
-                    //     ② **右上角箭头已删除**（用户看不懂它的含义）。
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
                                         GridItem(.flexible(), spacing: 12)],
                               spacing: 12) {
                         ForEach(order, id: \.self) { route in
-                            card(for: route)
-                                .draggable(route.key) {
-                                    card(for: route)
-                                        .frame(width: 160)
-                                }
-                                .dropDestination(for: String.self) { items, _ in
-                                    guard let key = items.first,
-                                          let moving = TemplateRoute.from(key: key),
-                                          let from = order.firstIndex(of: moving),
-                                          let to = order.firstIndex(of: route),
-                                          from != to else { return false }
-                                    withAnimation(.snappy) {
-                                        let item = order.remove(at: from)
-                                        order.insert(item, at: to)
-                                    }
-                                    Prefs.templateOrder = order.map(\.key)
-                                    return true
-                                }
+                            tile(route)
                         }
                     }
 
@@ -145,6 +238,25 @@ struct TemplatesTab: View {
             }
             .navigationTitle("效期打印")
             .background(Color(.systemGroupedBackground))
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(editing ? "完成" : "排序") {
+                        withAnimation(.snappy) {
+                            editing.toggle()
+                            if !editing { dropTarget = nil }
+                        }
+                    }
+                }
+                if !Prefs.hiddenTemplates.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("恢复全部") {
+                            Prefs.hiddenTemplates = []
+                            withAnimation(.snappy) { order = Self.loadOrder() }
+                        }
+                        .font(.footnote)
+                    }
+                }
+            }
             .navigationDestination(for: TemplateRoute.self) { route in
                 switch route {
                 case .generic:
@@ -258,4 +370,52 @@ struct TemplateCard: View {
 
 #Preview {
     TemplatesTab(path: .constant(NavigationPath()))
+}
+
+
+// MARK: - 拖放代理（★ 2026-10-18 用户第 2 条）
+
+/// 磁贴拖放的落点反馈与重排。
+///
+/// ★ 为什么不用 `.dropDestination(for:)`：那个 API 会在磁贴右上角画一个**「+」角标**
+///   （用户：「现在移动的时候如果是能够成功替换，右上角有加号，修改成**透明度减少**」）。
+///   `DropDelegate` 完全由我们控制，没有那个角标。
+struct TileDropDelegate: DropDelegate {
+    let item: TemplateRoute
+    @Binding var order: [TemplateRoute]
+    @Binding var dragging: TemplateRoute?
+    @Binding var dropTarget: TemplateRoute?
+
+    /// 进入某个磁贴：只做"趋势"反馈，**不实时重排**（用户要求「不用完全移动」）。
+    func dropEntered(info: DropInfo) {
+        withAnimation(.snappy(duration: 0.18)) { dropTarget = item }
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTarget == item {
+            withAnimation(.snappy(duration: 0.18)) { dropTarget = nil }
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    /// 松手才真正换位置。
+    func performDrop(info: DropInfo) -> Bool {
+        defer {
+            withAnimation(.snappy(duration: 0.18)) { dropTarget = nil }
+            dragging = nil
+        }
+        guard let from = dragging,
+              let fromIndex = order.firstIndex(of: from),
+              let toIndex = order.firstIndex(of: item),
+              fromIndex != toIndex else { return false }
+        withAnimation(.snappy) {
+            let moved = order.remove(at: fromIndex)
+            order.insert(moved, at: toIndex)
+        }
+        Prefs.templateOrder = order.map(\.key)
+        return true
+    }
 }

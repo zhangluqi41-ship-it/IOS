@@ -23,6 +23,19 @@ enum Prefs {
         set { d.set(newValue, forKey: "templateOrder") }
     }
 
+    /// ★ 2026-10-18（用户第 1 条）：**长按菜单里「删除」掉的磁贴**（存 key）。
+    /// 不记这个就没法区分「删掉的」和「新版本新增的」—— 删除的会被补回来。
+    static var hiddenTemplates: [String] {
+        get { d.stringArray(forKey: "hiddenTemplates") ?? [] }
+        set { d.set(newValue, forKey: "hiddenTemplates") }
+    }
+
+    /// ★ 2026-10-18：**固定（锁定位置）**的磁贴 key。空串 = 没有固定任何一个。
+    static var pinnedTemplate: String {
+        get { d.string(forKey: "pinnedTemplate") ?? "" }
+        set { d.set(newValue, forKey: "pinnedTemplate") }
+    }
+
     // MARK: - 连接
 
     /// 打开 App 后是否自动连接上次连过的那台打印机。
