@@ -608,8 +608,15 @@ targets:
         #   ② 制作人**统一改成独立卡片、放在最下面**（图1 样式）——
         #      通用 / 康普茶一发 / 康普茶二发 三处从原卡片里拆出
         #      （奶制品 / 肉类 / 肉类解冻 本来就是独立块，不动）。
-        CURRENT_PROJECT_VERSION: 66
-        MARKETING_VERSION: 1.1.24
+        # ★ 2026-10-18 第二轮（用户三次纠正，扫码页）：
+        #   ① **按钮改回苹果官方** `.liquidGlassButton()`，只把**文字颜色**改白
+        #      （上一版自绘黑胶囊被否：「不要自己写按钮，用苹果官方的」）；
+        #   ② 变焦**只有 2× → 4× 两档**（删掉 6× 与阶梯）；
+        #   ③ 换档走 `ramp(toVideoZoomFactor:withRate:)` **线性拉过去**（体验："生硬"）；
+        #   ④ **唯一触发条件 = 看到二维码但 stringValue == nil**；
+        #      完全没看到码时什么都不做（删掉按时间升档的心跳定时器）。
+        CURRENT_PROJECT_VERSION: 67
+        MARKETING_VERSION: 1.1.25
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -661,8 +668,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.24
-        CURRENT_PROJECT_VERSION: 66
+        MARKETING_VERSION: 1.1.25
+        CURRENT_PROJECT_VERSION: 67
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

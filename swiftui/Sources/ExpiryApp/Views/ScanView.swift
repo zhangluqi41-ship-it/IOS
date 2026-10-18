@@ -56,37 +56,32 @@ final class QRScannerModel: NSObject, ObservableObject {
 
     let session = AVCaptureSession()
 
-    /// 后置摄像头默认变焦倍数。
+    /// 后置摄像头默认变焦倍数 = **2×**（起始档，用户定的）。
     ///
     /// ★ 用户反馈「经常无法对焦，比如使用 2 倍变焦镜头，对焦更快」。
     ///   2 倍有两个好处：
     ///     ① 二维码在画面里更大 → 每个模块占更多像素 → 解码更快更稳；
     ///     ② 走的是长焦/裁切，景深与反差更好，对焦判定更干脆。
-    ///
-    /// ★★★ 2026-10-17（用户第 2 条）：「能不能优化摄像头，比如微信扫描的时候
-    ///   起始就是 2x，**找到二维码但是看不清会变成 4x 换长焦镜头**」
-    ///   ➜ 起始值就是 2x（这里），识别不出来时按 `zoomLadder` 自动升档（见下）。
     static let preferredZoom: CGFloat = 2.0
 
-    // MARK: 自动变焦（★ 2026-10-17 用户第 2 条，仿微信扫码）
+    // MARK: 长焦档（★ 2026-10-18 订正：**只有 2× → 4× 两档**，不做阶梯）
 
-    /// 识别不出来时的**升档阶梯**：2x → 4x → 6x。
-    /// 再往上就只剩数字裁切的噪点了，看不清反而更糟。
-    static let zoomLadder: [CGFloat] = [2.0, 4.0, 6.0]
-    /// 「完全没看到码」多久升一档（秒）—— 对应「拿着手机离标签比较远」。
-    private static let zoomStepAfter: TimeInterval = 2.0
-    /// 「看到码但读不出」升档的最小间隔（秒）—— 对应「找到了但太小/太糊」。
-    /// 比上一个更短：此时已经确认画面里有码，可以果断放大。
-    private static let undecodedBoostInterval: TimeInterval = 1.5
-    /// 多久没扫到码就回落到起始档（秒）—— 防止用户放下手机后画面一直是糊的。
-    private static let zoomResetAfter: TimeInterval = 12.0
+    /// 长焦档 = **4×**。
+    ///
+    /// ★★★ 用户三次纠正后的最终口径（2026-10-18）：
+    ///   · 「摄像头只需要 2x 到 4x，**不要乱增加倍数**，只是让你换摄像头而已」
+    ///   · 「切换摄像头太生硬，应该 **2x 线性拉到 4x**，是放大到长焦镜头」
+    ///   · 「**只需要你在看到二维码但读不出再拉长焦，没看到不用换档！**」
+    ///   ➜ 只有两档：2×（起始）/ 4×（长焦），**没有 6×、没有阶梯**。
+    ///   ➜ **唯一触发条件**：`metadataOutput` 里有二维码对象但
+    ///     `stringValue == nil`（= 看到码、解不出）。**画面里没码时什么都不做**。
+    ///   ➜ 换档必须走 `rampZoom`（线性渐变），不许直接设 `videoZoomFactor = 4`
+    ///     —— 那是瞬间跳变（用户嫌「生硬」）。
+    static let teleZoom: CGFloat = 4.0
 
-    /// 当前档位下标（0 = 起始 2x）。
-    private var zoomLevel = 0
-    /// 上一次「看到码」（含看到但没解出）的时刻。
-    private var lastCodeSeenAt = Date.distantPast
-    /// 驱动「没看到码就升档 / 久无码就回落」的 1 秒心跳。
-    private var zoomWatch: Timer?
+    /// 本次扫码会话是否已经拉到过长焦（避免反复 ramp 造成抖动）。
+    /// `resume()` 会复位。
+    private var didBoostToTele = false
 
     private let sessionQueue = DispatchQueue(label: "com.xiaoqi.expiry.scanner")
     private var isConfigured = false
@@ -116,14 +111,12 @@ final class QRScannerModel: NSObject, ObservableObject {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             configureAndRun()
-            startZoomWatch()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
                     guard let self else { return }
                     if granted {
                         self.configureAndRun()
-                        self.startZoomWatch()
                     } else {
                         self.state = .denied
                     }
@@ -138,15 +131,12 @@ final class QRScannerModel: NSObject, ObservableObject {
     func resume() {
         lastCode = nil
         isHandling = false
-        // ★ 回到起始变焦档（上一轮可能因为看不清升到了 4x/6x）。
-        zoomLevel = 0
-        lastCodeSeenAt = Date()
+        // ★ 回到起始档（2×）—— 上一轮可能因为读不出拉到了长焦。
+        didBoostToTele = false
         start()
     }
 
     func stop() {
-        // ★ 停识别就停变焦心跳（否则页面退出后还在悄悄改摄像头）。
-        stopZoomWatch()
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.session.isRunning { self.session.stopRunning() }
@@ -288,91 +278,37 @@ final class QRScannerModel: NSObject, ObservableObject {
         }
     }
 
-    // MARK: 自动变焦心跳（★ 2026-10-17 用户第 2 条，仿微信扫码）
+    // MARK: 长焦切换（★ 2026-10-18：只在「看到码但读不出」时 2× → 4×）
 
-    /// 每秒一次的心跳：没看到码就升档；长时间没码就回落。
+    /// 看到二维码但解不出内容时，把镜头**平滑**拉到 4×（长焦）。
     ///
-    /// ★ 为什么需要定时器：`AVCaptureMetadataOutput` 在**完全没检测到码**时
-    ///   回调里的 `metadataObjects` 是空数组 —— 除了"没有码"我们拿不到任何信号。
-    ///   「手机离标签比较远、码太小」就属于这种情况，只能靠心跳按时间推。
-    private func startZoomWatch() {
-        stopZoomWatch()
-        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.tickZoomWatch()
-        }
-        // `.common` —— 拖动 / 动画期间也要走（默认模式会被 RunLoop 挂起）。
-        RunLoop.main.add(timer, forMode: .common)
-        zoomWatch = timer
+    /// ★ 唯一触发点：`metadataOutput` 里出现 `stringValue == nil` 的二维码。
+    ///   **画面里没有码时绝不触发**（用户原话：「没看到不用换档！」）。
+    /// ★ `didBoostToTele` 保证每个扫码会话只拉一次，不会来回抖。
+    private func boostToTeleIfNeeded() {
+        guard state.isRunning, !isHandling, !didBoostToTele else { return }
+        didBoostToTele = true
+        rampZoom(to: Self.teleZoom)
     }
 
-    private func stopZoomWatch() {
-        zoomWatch?.invalidate()
-        zoomWatch = nil
-    }
-
-    /// ⚠️ 本函数与 `boostForUndecodedCode` 都**只在主线程**执行 ——
-    ///   `zoomLevel` 是普通属性，跨线程读写会竞争。
-    private func tickZoomWatch() {
-        guard state.isRunning, !isHandling else { return }
-        let idle = Date().timeIntervalSince(lastCodeSeenAt)
-
-        // ① 12 秒完全扫不到 → 回落到起始档重新来（用户可能已经放下手机）。
-        if idle > Self.zoomResetAfter, zoomLevel > 0 {
-            zoomLevel = 0
-            setZoom(Self.zoomLadder[0])
-            lastCodeSeenAt = Date()
-            return
-        }
-        // ② 持续 2 秒看不到码 → 升一档（等价于「再凑近一点」）。
-        guard idle > Self.zoomStepAfter,
-              zoomLevel < Self.zoomLadder.count - 1 else { return }
-        zoomLevel += 1
-        setZoom(Self.zoomLadder[zoomLevel])
-        refocus()
-        // 每升一档重新给 2 秒观察期（否则会一路飙到最高档）。
-        lastCodeSeenAt = Date()
-    }
-
-    /// 「**看到了码但读不出**」的即时升档 —— 对应微信那种「找到就换长焦」。
-    /// 由 `metadataOutput` 在 `stringValue == nil` 时派到主线程调用。
-    private func boostForUndecodedCode() {
-        guard state.isRunning, !isHandling else { return }
-        guard Date().timeIntervalSince(lastCodeSeenAt) > Self.undecodedBoostInterval else { return }
-        lastCodeSeenAt = Date()
-        guard zoomLevel < Self.zoomLadder.count - 1 else { return }
-        zoomLevel += 1
-        setZoom(Self.zoomLadder[zoomLevel])
-        refocus()
-    }
-
-    /// 只改变焦（复用 `applyTuning` 的夹取逻辑 —— 越界设 `videoZoomFactor`
-    /// 会抛 ObjC 异常且 Swift 捕不到）。
-    private func setZoom(_ factor: CGFloat) {
+    /// **线性**变焦到目标倍数 —— 绝不直接设 `videoZoomFactor`。
+    ///
+    /// ★ 用户原话：「切换摄像头太生硬，应该 **2x 线性拉到 4x**，是放大到长焦镜头」。
+    ///   `ramp(toVideoZoomFactor:withRate:)` 会从当前值**匀速**推过去；
+    ///   虚拟多摄设备在越过临界倍率时由系统**自动切到物理长焦镜头** ——
+    ///   这就是"换摄像头"，不是单纯数字放大。
+    ///   rate = 每秒推进的倍数：2 → 4 差 2，取 3.0 约 0.67 秒走完，观感自然。
+    private func rampZoom(to target: CGFloat) {
         guard let camera = device else { return }
-        Self.applyTuning(camera, zoom: factor, preferNearFocus: camera.position == .back)
-    }
-
-    /// 强制重新对一次焦。
-    ///
-    /// ★ `continuousAutoFocus` 在低反差 / 近距离会「卡住」（画面一直糊、码永远读不出）。
-    ///   主动切一次 `.autoFocus` 会让镜头重新走一遍对焦流程 —— 微信变焦之后
-    ///   那一下「咔」的对焦就是这个动作。1.5 秒后恢复连续对焦。
-    private func refocus() {
-        guard let camera = device,
-              camera.isFocusModeSupported(.autoFocus) else { return }
         do {
             try camera.lockForConfiguration()
-            camera.focusMode = .autoFocus
+            // 越界设 videoZoomFactor 会抛 ObjC 异常（Swift 捕不到）→ 必须夹取。
+            let maxZoom = min(camera.activeFormat.videoMaxZoomFactor, 10)
+            let clamped = min(max(target, 1.0), max(1.0, maxZoom))
+            camera.ramp(toVideoZoomFactor: clamped, withRate: 3.0)
             camera.unlockForConfiguration()
         } catch {
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let cam = self?.device,
-                  cam.isFocusModeSupported(.continuousAutoFocus) else { return }
-            try? cam.lockForConfiguration()
-            cam.focusMode = .continuousAutoFocus
-            cam.unlockForConfiguration()
+            // 拿不到锁就放弃这次变焦 —— 不影响扫码本身。
         }
     }
 
@@ -485,10 +421,11 @@ extension QRScannerModel: AVCaptureMetadataOutputObjectsDelegate {
         //      在后台改状态（紫色运行期告警，严重时崩溃）。
         guard !isHandling else { return }
 
-        // ★★★ 2026-10-17（用户第 2 条）：先识别「**看到了码但读不出**」——
-        //   `stringValue == nil` 说明检测到了二维码、但解不出内容
-        //   （离得远 / 太小 / 对不上焦）。这正是"该换长焦"的信号，
-        //   派回主线程升档（`zoomLevel` 只在主线程读写）。
+        // ★★★ 2026-10-18 订正（用户原话：「**只需要你在看到二维码但读不出再拉长焦，
+        //   没看到不用换档！**」）：
+        //   `stringValue == nil` = 检测到了二维码但解不出内容（太小 / 太糊）。
+        //   只有这种情况才把镜头从 2× 平滑拉到 4×（长焦）；
+        //   画面里**没有码**时本分支根本不进 —— 什么都不做。
         var sawUndecoded = false
         for object in metadataObjects {
             guard let readable = object as? AVMetadataMachineReadableCodeObject else { continue }
@@ -504,8 +441,9 @@ extension QRScannerModel: AVCaptureMetadataOutputObjectsDelegate {
             sawUndecoded = true
         }
         if sawUndecoded {
+            // 派回主线程（`didBoostToTele` 是普通属性，只在主线程读写）。
             DispatchQueue.main.async { [weak self] in
-                self?.boostForUndecodedCode()
+                self?.boostToTeleIfNeeded()
             }
         }
     }
@@ -658,9 +596,8 @@ struct ScanView: View {
                 .foregroundStyle(.white.opacity(0.9))
                 .padding(.top, 18)
 
-            // ★ 2026-10-17：有了自动变焦 —— 文案同步说清楚
-            //   （起始 2×，看不清会自动往 4×/6× 拉）。
-            Text("2× 起步 · 看不清自动拉近")
+            // ★ 2026-10-18：文案说明当前策略（2× 起步，读不出才切长焦）。
+            Text("2× 起步 · 读不出自动切长焦")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.55))
                 .padding(.top, 4)
@@ -686,33 +623,27 @@ struct ScanView: View {
         .frame(width: boxSide, height: boxSide)
     }
 
-    /// 相机页浮层按钮的 label（★ 2026-10-17 修「看不清」）。
-    ///
-    /// 用户反馈：「这个框内的文字肉眼看非常不清晰…比如字体改成白色？」
-    /// 根因：`.liquidGlassButton()`（`.glass` 样式）的文字走 **tint（默认蓝）**，
-    /// 叠在「透出浅色地板的玻璃」上对比度极低 —— 蓝字在灰白背景上几乎糊掉。
-    /// ➜ 改成相机类 App 的标准做法：**深色半透明胶囊 + 白字**
-    ///   （`.buttonStyle(.plain)` + `black.opacity(0.45)`，只有一层，不套娃）。
-    ///   ⚠️ 别改回 `.glass`/`.bordered*` —— 那些的文字色跟着 tint 走，浅背景下又会看不清。
-    private func scanControlLabel(_ title: String, icon: String) -> some View {
-        Label(title, systemImage: icon)
-            .font(.subheadline)
-            .fontWeight(.medium)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.black.opacity(0.45), in: Capsule())
-    }
-
     private var controls: some View {
         HStack(spacing: 12) {
             Button {
                 scanner.toggleTorch()
             } label: {
-                scanControlLabel(scanner.torchOn ? "关闭手电筒" : "打开手电筒",
-                                 icon: scanner.torchOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                Label(scanner.torchOn ? "关闭手电筒" : "打开手电筒",
+                      systemImage: scanner.torchOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                    .font(.subheadline)
+                    // ★★★ 2026-10-18 订正（用户原话：「不要自己写按钮，用苹果官方的！
+                    //   这两个按钮用苹果官方的！之前的不就是吗！只是让你改个字体颜色」）
+                    //   ➜ 按钮**保持苹果官方 `.liquidGlassButton()`** 不动；
+                    //     唯一要改的是**文字颜色 → 白色**（原来是 tint 蓝，看不清）。
+                    //   ❌ 上一版我自己画了 `black.opacity(0.45)` 胶囊底 —— 那是"自己写按钮"，
+                    //      已被明确否掉，别再加回来。
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
             }
-            .buttonStyle(.plain)
+            .liquidGlassButton()
+            // 让玻璃按钮的着色也走白色（否则图标/文字仍按默认 tint 渲染）。
+            .tint(.white)
             .disabled(!scanner.state.isRunning || !scanner.canUseTorch)
             .opacity(scanner.canUseTorch ? 1 : 0.45)
 
@@ -720,9 +651,14 @@ struct ScanView: View {
                 Button {
                     scanner.switchCamera()
                 } label: {
-                    scanControlLabel("翻转", icon: "arrow.triangle.2.circlepath.camera")
+                    Label("翻转", systemImage: "arrow.triangle.2.circlepath.camera")
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
                 }
-                .buttonStyle(.plain)
+                .liquidGlassButton()
+                .tint(.white)
                 .disabled(!scanner.state.isRunning)
             }
 
