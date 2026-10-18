@@ -615,8 +615,14 @@ targets:
         #   ③ 换档走 `ramp(toVideoZoomFactor:withRate:)` **线性拉过去**（体验："生硬"）；
         #   ④ **唯一触发条件 = 看到二维码但 stringValue == nil**；
         #      完全没看到码时什么都不做（删掉按时间升档的心跳定时器）。
-        CURRENT_PROJECT_VERSION: 67
-        MARKETING_VERSION: 1.1.25
+        # ★ 2026-10-18 第三轮（用户：「并没有切换长焦动作，也没有双击拉成 4x」）：
+        #   ① **加 Vision 辅助检测**：`AVCaptureVideoDataOutput` + `VNDetectBarcodesRequest`
+        #      抽帧 3fps —— metadata output 只在**解码成功**时回调，「看到码但读不出」
+        #      根本进不了 delegate（上一版那分支是死代码）。
+        #      Vision 看到码 + 1.2s 没解码成功 → 才算「看到码读不出」→ 拉 4×；
+        #   ② **双击预览在 2× / 4× 间切换**（手动兜底），文案显示当前倍率。
+        CURRENT_PROJECT_VERSION: 68
+        MARKETING_VERSION: 1.1.26
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -668,8 +674,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.25
-        CURRENT_PROJECT_VERSION: 67
+        MARKETING_VERSION: 1.1.26
+        CURRENT_PROJECT_VERSION: 68
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

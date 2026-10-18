@@ -25,6 +25,7 @@
 import AVFoundation
 import SwiftUI
 import UIKit
+import Vision
 
 /// 扫码 Tab 的二级页路由。
 enum ScanRoute: Hashable {
@@ -83,6 +84,31 @@ final class QRScannerModel: NSObject, ObservableObject {
     /// `resume()` 会复位。
     private var didBoostToTele = false
 
+    /// 当前是否处于长焦档（4×）—— UI 用它显示「4× 长焦 / 2× 起步」。
+    @Published private(set) var isTeleZoom = false
+
+    // MARK: Vision 辅助检测（★ 2026-10-18，这是「看到码但读不出」唯一可行的判据）
+    //
+    // ★★★ 为什么必须要它（血泪教训）：
+    //   `AVCaptureMetadataOutput` **只在二维码解码成功时**才回调对象 ——
+    //   「画面里有码但读不出来」这种情况**根本不会进 `metadataOutput`**
+    //   （上一版靠 `stringValue == nil` 的分支实际永远走不到，
+    //     用户实测「并没有切换长焦动作」）。
+    //   ➜ 于是加一路 `AVCaptureVideoDataOutput` + **Vision**：
+    //     `VNDetectBarcodesRequest` 能检测到「有二维码」而**不需要解码成功**，
+    //     用它判断「看到了但读不出」，再触发 2× → 4×。
+    //   ⚠️ 抽帧到 ~3 次/秒（0.33s）—— 只判断"有没有码"，不参与解码，几乎不耗电。
+
+    private let visionQueue = DispatchQueue(label: "com.xiaoqi.expiry.scanner.vision",
+                                            qos: .utility)
+    private var visionHandler = VNSequenceRequestHandler()
+    private var lastVisionRun = Date.distantPast
+    /// 最近一次**成功解码**的时刻 —— Vision 看到码、但这个时刻已超过 1.2 秒前，
+    /// 就说明「看到码却一直解不出」，该换长焦了。
+    private var lastDecodeAt = Date.distantPast
+    /// Video data output（只为 Vision 检测服务）。
+    private var videoOutput: AVCaptureVideoDataOutput?
+
     private let sessionQueue = DispatchQueue(label: "com.xiaoqi.expiry.scanner")
     private var isConfigured = false
     private var isHandling = false
@@ -133,6 +159,10 @@ final class QRScannerModel: NSObject, ObservableObject {
         isHandling = false
         // ★ 回到起始档（2×）—— 上一轮可能因为读不出拉到了长焦。
         didBoostToTele = false
+        isTeleZoom = false
+        // ★ 给 1.2 秒缓冲：刚进页面时 Vision 可能先看到码，
+        //   别让它一进来就把镜头拉长焦（正常情况这 1.2 秒里 metadata 就解出来了）。
+        lastDecodeAt = Date()
         start()
     }
 
@@ -266,6 +296,20 @@ final class QRScannerModel: NSObject, ObservableObject {
             return
         }
 
+        // ★★★ 2026-10-18：再挂一路 `AVCaptureVideoDataOutput` —— **只给 Vision 用**
+        //   （检测"画面里有没有二维码"，见 `visionQueue` 那段注释）。
+        //   `alwaysDiscardsLateVideoFrames` 必须开：处理慢了就丢帧，不积压。
+        let video = AVCaptureVideoDataOutput()
+        video.alwaysDiscardsLateVideoFrames = true
+        video.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        ]
+        if session.canAddOutput(video) {
+            session.addOutput(video)
+            video.setSampleBufferDelegate(self, queue: visionQueue)
+            videoOutput = video
+        }
+
         session.commitConfiguration()
         isConfigured = true
 
@@ -278,12 +322,23 @@ final class QRScannerModel: NSObject, ObservableObject {
         }
     }
 
-    // MARK: 长焦切换（★ 2026-10-18：只在「看到码但读不出」时 2× → 4×）
+    // MARK: 长焦切换（★ 2026-10-18：2× ⇄ 4×，自动 + 双击两种触发）
 
-    /// 看到二维码但解不出内容时，把镜头**平滑**拉到 4×（长焦）。
+    /// **双击预览**：在 2× 与 4×（长焦）之间切换。
     ///
-    /// ★ 唯一触发点：`metadataOutput` 里出现 `stringValue == nil` 的二维码。
-    ///   **画面里没有码时绝不触发**（用户原话：「没看到不用换档！」）。
+    /// ★ 用户原话：「也没有**双击**拉成 4x（长焦）」——
+    ///   这是自动检测之外的手动兜底：用户自己看得见"码太小了"，可以直接双击拉近。
+    func toggleTeleZoom() {
+        guard state.isRunning, !isHandling else { return }
+        didBoostToTele.toggle()
+        rampZoom(to: didBoostToTele ? Self.teleZoom : Self.preferredZoom)
+    }
+
+    /// 看到二维码但一直解不出时（由 Vision 判定），把镜头**平滑**拉到 4×。
+    ///
+    /// ★ 触发条件（严格按用户要求）：**Vision 检测到画面里有二维码对象**，
+    ///   且距上次成功解码已 > 1.2 秒 —— 就是「看到了但读不出」。
+    ///   **画面里没有码时绝不触发。**
     /// ★ `didBoostToTele` 保证每个扫码会话只拉一次，不会来回抖。
     private func boostToTeleIfNeeded() {
         guard state.isRunning, !isHandling, !didBoostToTele else { return }
@@ -307,6 +362,8 @@ final class QRScannerModel: NSObject, ObservableObject {
             let clamped = min(max(target, 1.0), max(1.0, maxZoom))
             camera.ramp(toVideoZoomFactor: clamped, withRate: 3.0)
             camera.unlockForConfiguration()
+            // UI 文案跟着切（"2× 起步" / "4× 长焦"）。
+            isTeleZoom = clamped > Self.preferredZoom + 0.01
         } catch {
             // 拿不到锁就放弃这次变焦 —— 不影响扫码本身。
         }
@@ -434,6 +491,8 @@ extension QRScannerModel: AVCaptureMetadataOutputObjectsDelegate {
                 isHandling = true
                 DispatchQueue.main.async { [weak self] in
                     self?.lastCode = value
+                    // ★ 记下"成功解码"的时刻（Vision 那边用它判断是否"一直解不出"）。
+                    self?.lastDecodeAt = Date()
                 }
                 stop()
                 return
@@ -442,9 +501,50 @@ extension QRScannerModel: AVCaptureMetadataOutputObjectsDelegate {
         }
         if sawUndecoded {
             // 派回主线程（`didBoostToTele` 是普通属性，只在主线程读写）。
+            // ⚠️ 实测这条分支几乎走不到 —— 真正的判据是下面的 Vision 检测。
             DispatchQueue.main.async { [weak self] in
                 self?.boostToTeleIfNeeded()
             }
+        }
+    }
+}
+
+// MARK: - Vision：判断「画面里有没有二维码」（不解码也能检测）
+
+/// ★★★ 2026-10-18 新增。
+///
+/// `AVCaptureMetadataOutput` 只在**解码成功**时回调 —— 「码太小/太糊、看得到读不出」
+/// 这种情况它**什么都不给**，所以「看到码但读不出就换长焦」只能靠 Vision：
+/// `VNDetectBarcodesRequest` 检测的是**二维码图形本身**，不需要解码成功。
+extension QRScannerModel: AVCaptureVideoDataOutputSampleBufferDelegate {
+
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        // ★ 抽帧：约 3 次/秒。判断"画面里有没有码"完全够用，也不增加多少耗电。
+        let now = Date()
+        guard now.timeIntervalSince(lastVisionRun) > 0.33 else { return }
+        lastVisionRun = now
+        guard let pixel = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        let request = VNDetectBarcodesRequest()
+        request.symbologies = [.qr]
+        do {
+            // 竖屏 + 后置：传感器画幅需要顺时针转 90°（`.right`）才是"正向画面"。
+            try visionHandler.perform([request], on: pixel, orientation: .right)
+        } catch {
+            return
+        }
+        // 空结果 = 画面里确实没有二维码 → **什么都不做**（用户明确要求）。
+        guard let results = request.results, !results.isEmpty else { return }
+
+        // 画面里有二维码，但 metadata 一路解不出（超过 1.2 秒没成功解码）
+        // → 这就是「看到了但读不出」→ 平滑拉到 4× 长焦。
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.state.isRunning, !self.isHandling, !self.didBoostToTele,
+                  Date().timeIntervalSince(self.lastDecodeAt) > 1.2 else { return }
+            self.boostToTeleIfNeeded()
         }
     }
 }
@@ -547,6 +647,11 @@ struct ScanView: View {
                                       scanner.setInterestRect(rect)
                                   })
                     .ignoresSafeArea()
+                    // ★★★ 2026-10-18（用户）：**双击预览在 2× ⇄ 4×（长焦）之间切换**。
+                    //   只挂 count:2，不动单击 —— 上下方的按钮点击不受影响。
+                    .onTapGesture(count: 2) {
+                        scanner.toggleTeleZoom()
+                    }
 
                 overlay
             }
@@ -596,8 +701,9 @@ struct ScanView: View {
                 .foregroundStyle(.white.opacity(0.9))
                 .padding(.top, 18)
 
-            // ★ 2026-10-18：文案说明当前策略（2× 起步，读不出才切长焦）。
-            Text("2× 起步 · 读不出自动切长焦")
+            // ★ 2026-10-18：显示当前倍率，并告诉用户「双击」这个手动切换方式。
+            //   （4× 是长焦档；读不出时会自动切过去，也可以双击自己切。）
+            Text(scanner.isTeleZoom ? "4× 长焦 · 双击切回 2×" : "2× · 双击切长焦")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.55))
                 .padding(.top, 4)
