@@ -9,7 +9,7 @@
 //
 
 import SwiftUI
-// `.onDrop(of: [.text], delegate:)` 需要 UTType
+// `.onDrag` / `.onDrop(of: [.text], delegate:)` 需要 UTType.text
 import UniformTypeIdentifiers
 
 /// 模板二级页路由。
@@ -84,9 +84,6 @@ struct TemplatesTab: View {
 
     /// 磁贴顺序 —— 拖动排序后写进 `Prefs.templateOrder`，下次启动保持。
     @State private var order: [TemplateRoute] = TemplatesTab.loadOrder()
-    /// ★ 2026-10-18（用户订正）：「长按应该**先呼出选项**，长按后移动才是移动」
-    ///   → `moving == false` 时长按弹系统菜单；在菜单里选「移动排序」才进入拖动。
-    @State private var moving = false
     /// ★★★ 2026-10-18（用户报 bug）：固定/取消固定后**界面不立即刷新**。
     ///   根因：`isPinned` 原来直接读 `Prefs.pinnedTemplates`（UserDefaults）——
     ///   它**不是 SwiftUI 的响应式状态**。只有 `order` 变了才会重绘；
@@ -95,8 +92,20 @@ struct TemplatesTab: View {
     @State private var pinnedKeys: [String] = Prefs.pinnedTemplates
     /// 同理：删除的磁贴也要响应式（toolbar 的「恢复全部」按钮靠它决定显示与否）。
     @State private var hiddenKeys: [String] = Prefs.hiddenTemplates
+    // MARK: 拖动（★ 2026-10-19 回到系统第一方拖放）
+
+    // ★ 之前"不跟手"的真因**不是** API 不行，而是我把**整张卡片**（GroupBox +
+    //   NavigationLink + 材质背景）当成了拖动预览，每帧重渲染 → 卡顿。
+    //   现在 `.onDrag` 的 preview 换成**轻量视图**（纯色圆角 + 图标 + 标题），
+    //   拖动跟手就正常了 —— 和健康 App 那种"浮起跟手"一致。
+    //   落点用 `.onDrop(delegate:)`（**不是** `.dropDestination`）：后者会画系统「+」角标。
+
+    /// 正在拖的磁贴。
     @State private var dragging: TemplateRoute?
+    /// 手指当前落在哪个磁贴上（让位提示）。
     @State private var dropTarget: TemplateRoute?
+    /// 刚放下的那张 —— 重排时它不加过渡动画（松手就落在新格）。
+    @State private var justDropped: TemplateRoute?
 
     /// 读保存的顺序：**跳过已删除的**，并补上新增的路由。
     private static func loadOrder() -> [TemplateRoute] {
@@ -116,92 +125,48 @@ struct TemplatesTab: View {
 
     // MARK: 磁贴（拖动 + 长按菜单 + 固定）
 
-    /// 单张磁贴：卡片 + 右上角菜单 + **长按先弹菜单 / 选「移动排序」后才可拖**。
+    /// 单张磁贴：卡片 + 右上角「固定」快捷键 + **系统拖放（健康 App 同款）**。
     ///
-    /// ★★★ 2026-10-18 用户两次订正后的最终口径：
-    ///   · 「按住的时候会**消失不见**……而且存在 bug，消失后**点不出来**」
-    ///     → 根因：`.onDrag` 一长按就触发，`dragging` 被设上，但**松手在空白处没有回调**
-    ///       （`performDrop` 不会调用）→ `dragging` 永远不清 → 磁贴永久透明、点不动。
-    ///   · 「长按应该**先呼出选项**，长按后移动才是移动」
-    ///     → 现在：**普通模式只挂 `.contextMenu`**（长按弹系统菜单，绝不改状态、不可能卡死）；
-    ///       在菜单里选「**移动排序**」→ `moving = true` → **这时才挂 `.onDrag`**。
-    ///     （iOS 里 `onDrag` 和 `contextMenu` 抢同一个长按手势，同时挂必然坏掉一个。）
-    @ViewBuilder
+    /// ★★★ 2026-10-19（用户指出：「这是健康 app 的磁贴，你说动不了？这就是我动了的样子」）
+    ///   ➜ 我之前判断错了：健康 App 的磁贴**确实可以拖动**，用的是系统拖放。
+    ///   ➜ 这里同样用系统拖放（`.onDrag` + `.onDrop(delegate:)`）；
+    ///     关键是把 preview 换成**轻量视图** —— 之前拿整张 GroupBox 卡片当 preview，
+    ///     每帧重渲染导致卡顿，看起来像"不跟手"。
+    ///   ➜ 源位置的半透明残影由**系统**渲染（和健康 App 里一模一样），我不再手工改 opacity。
     private func tile(_ route: TemplateRoute) -> some View {
-        if moving {
-            tileCore(route)
-                .onDrag {
-                    dragging = route
-                    return NSItemProvider(object: route.key as NSString)
-                } preview: {
-                    card(for: route).frame(width: 160)
-                }
-                .onDrop(of: [.text], delegate: TileDropDelegate(
-                    item: route,
-                    order: $order,
-                    dragging: $dragging,
-                    dropTarget: $dropTarget
-                ))
-        } else {
-            tileCore(route)
-                .contextMenu {
-                    Button {
-                        togglePin(route)
-                    } label: {
-                        Label(isPinned(route) ? "取消固定" : "固定",
-                              systemImage: isPinned(route) ? "pin.slash" : "pin")
-                    }
-                    Button {
-                        withAnimation(.snappy) { moving = true }
-                    } label: {
-                        Label("移动排序", systemImage: "arrow.up.arrow.down")
-                    }
-                    Button(role: .destructive) {
-                        remove(route)
-                    } label: {
-                        Label("删除", systemImage: "trash")
-                    }
-                }
-        }
+        tileCore(route)
+            .onDrag {
+                dragging = route
+                return NSItemProvider(object: route.key as NSString)
+            } preview: {
+                dragPreview(for: route)
+            }
+            .onDrop(of: [.text], delegate: TileDropDelegate(
+                item: route,
+                order: $order,
+                dragging: $dragging,
+                dropTarget: $dropTarget,
+                justDropped: $justDropped
+            ))
     }
 
-    private func tileCore(_ route: TemplateRoute) -> some View {
-        let isDragging = dragging == route
-        let isTarget = dropTarget == route
-        return ZStack(alignment: .topTrailing) {
-            card(for: route)
-                // ① 拖起源消失（不是半透明分身）
-                .opacity(isDragging ? 0 : 1)
-                // ② 目标：变淡 + 轻微上移（"让位趋势"）
-                .opacity(isTarget ? 0.5 : 1)
-                .offset(y: isTarget ? -5 : 0)
-                .animation(.snappy(duration: 0.18), value: isTarget)
-                .animation(.snappy(duration: 0.18), value: isDragging)
-
-            // ③ 右上角小按钮：显示固定状态，点开是**系统 Menu**（固定 / 删除）。
-            Menu {
-                Button {
-                    togglePin(route)
-                } label: {
-                    Label(isPinned(route) ? "取消固定" : "固定",
-                          systemImage: isPinned(route) ? "pin.slash" : "pin")
-                }
-                Button(role: .destructive) {
-                    remove(route)
-                } label: {
-                    Label("删除", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: isPinned(route) ? "pin.fill" : "ellipsis")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(isPinned(route) ? Theme.brand : Color.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(.thinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(8)
-            .opacity(isDragging ? 0 : 1)
+    /// 拖动时跟手的那个"小卡片" —— **刻意做轻**：纯色圆角 + 图标 + 标题。
+    /// （用完整卡片的 GroupBox/NavigationLink/材质渲染，会拖慢跟手。）
+    private func dragPreview(for route: TemplateRoute) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: route.systemImage)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(route.tint)
+                .frame(width: 34, height: 34)
+                .background(route.fill, in: RoundedRectangle(cornerRadius: 9))
+            Text(route.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .frame(width: 170)
     }
 
     private func isPinned(_ route: TemplateRoute) -> Bool {
@@ -265,29 +230,6 @@ struct TemplatesTab: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
-                    if moving {
-                        HStack(spacing: 8) {
-                            Image(systemName: "hand.draw")
-                                .font(.footnote)
-                            Text("按住磁贴拖动排序")
-                                .font(.footnote)
-                            Spacer(minLength: 8)
-                            Button("完成") {
-                                withAnimation(.snappy) {
-                                    moving = false
-                                    dragging = nil
-                                    dropTarget = nil
-                                }
-                            }
-                            .font(.footnote.weight(.semibold))
-                        }
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Color(.secondarySystemGroupedBackground),
-                                    in: RoundedRectangle(cornerRadius: 12))
-                    }
-
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
                                         GridItem(.flexible(), spacing: 12)],
                               spacing: 12) {
@@ -295,19 +237,6 @@ struct TemplatesTab: View {
                             tile(route)
                         }
                     }
-                    // ★ 兜底：拖到**磁贴之间的空白**松手时，`performDrop` 不会被调用，
-                    //   `dragging` 会残留 → 那张磁贴永远透明、点不动（用户报的 bug）。
-                    //   这里在网格层接住一次 drop，无论如何都把状态清掉。
-                    //   ⚠️ 必须显式写 `isTargeted:perform:` —— 只写 `{ _ in }` 时编译器会把
-                    //     尾随闭包匹配到 `onDrop(of:delegate:)` 的 `delegate` 上（编译报错）。
-                    .onDrop(of: [.text],
-                            isTargeted: nil,
-                            perform: { _ in
-                        dragging = nil
-                        dropTarget = nil
-                        return false
-                    })
-
                     howItWorks
                 }
                 .padding(.horizontal, 16)
@@ -437,6 +366,13 @@ struct TemplateCard: View {
             }
             .buttonStyle(.plain)
         }
+        // ★★★ 2026-10-19（用户第 1 条）：「白天模式下**完全看不见磁贴**」
+        //   根因：`GroupBox` 是"靠间距分组"的容器，**浅色模式下它自己几乎不画背景**
+        //   （页面底色 `systemGroupedBackground` 与它完全融为一体，没有任何卡片边界）。
+        //   ➜ 垫一层**系统语义色** `secondarySystemGroupedBackground`
+        //     （浅色=白卡、深色=#1C1C1E），自动跟随外观，不是写死的颜色。
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -445,20 +381,21 @@ struct TemplateCard: View {
 }
 
 
-// MARK: - 拖放代理（★ 2026-10-18 用户第 2 条）
+// MARK: - 拖放代理（系统拖放，落点反馈 + 换位）
 
-/// 磁贴拖放的落点反馈与重排。
+/// 磁贴拖放的落点反馈与换位。
 ///
-/// ★ 为什么不用 `.dropDestination(for:)`：那个 API 会在磁贴右上角画一个**「+」角标**
-///   （用户：「现在移动的时候如果是能够成功替换，右上角有加号，修改成**透明度减少**」）。
-///   `DropDelegate` 完全由我们控制，没有那个角标。
+/// ★ 为什么用 `DropDelegate` 而不是 `.dropDestination(for:)`：
+///   后者会在磁贴右上角画一个系统的**「+」角标**（用户明确否掉）。
+///   代理方式完全由我们控制 —— 只有"变淡 + 上移"的让位提示。
 struct TileDropDelegate: DropDelegate {
     let item: TemplateRoute
     @Binding var order: [TemplateRoute]
     @Binding var dragging: TemplateRoute?
     @Binding var dropTarget: TemplateRoute?
+    @Binding var justDropped: TemplateRoute?
 
-    /// 进入某个磁贴：只做"趋势"反馈，**不实时重排**（用户要求「不用完全移动」）。
+    /// 手指进入某张磁贴：只做"让位"提示，**不实时重排**（用户要求「不用完全移动」）。
     func dropEntered(info: DropInfo) {
         withAnimation(.snappy(duration: 0.18)) { dropTarget = item }
     }
@@ -474,20 +411,30 @@ struct TileDropDelegate: DropDelegate {
     }
 
     /// 松手才真正换位置。
+    ///
+    /// ★ 2026-10-19（用户 bug）：「移动磁贴后有些磁贴会突然消失」
+    ///   → **先把拖动状态清干净，再重排**；换位不成功（同位置）则什么都不做、自动回原位。
     func performDrop(info: DropInfo) -> Bool {
-        defer {
-            withAnimation(.snappy(duration: 0.18)) { dropTarget = nil }
+        let from = dragging
+        withAnimation(.snappy(duration: 0.15)) {
+            dropTarget = nil
             dragging = nil
         }
-        guard let from = dragging,
+        guard let from,
               let fromIndex = order.firstIndex(of: from),
               let toIndex = order.firstIndex(of: item),
               fromIndex != toIndex else { return false }
-        withAnimation(.snappy) {
+
+        // 刚放下的那张不加过渡动画（松手直接落在新格），其余磁贴平滑移动。
+        justDropped = from
+        withAnimation(.snappy(duration: 0.22)) {
             let moved = order.remove(at: fromIndex)
             order.insert(moved, at: toIndex)
         }
         Prefs.templateOrder = order.map(\.key)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            justDropped = nil
+        }
         return true
     }
 }

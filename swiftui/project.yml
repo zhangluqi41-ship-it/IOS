@@ -672,8 +672,17 @@ targets:
         # ★ 2026-10-18 第十二轮（用户 bug）：固定/取消固定后界面不立即刷新。
         #   根因：`isPinned` 直读 `Prefs.pinnedTemplates`（UserDefaults）——不是响应式状态；
         #   顺序没变时（固定的本来就在第一位）不触发重绘。改用 `@State pinnedKeys/hiddenKeys` 镜像。
-        CURRENT_PROJECT_VERSION: 77
-        MARKETING_VERSION: 1.1.35
+        # ★ 2026-10-19（用户逐条过 bug，一次发包）：
+        #   ① 浅色模式磁贴不可见 → GroupBox 垫系统语义色；
+        #   ② 右上角按钮 = 固定快捷键（去掉长按菜单）；
+        #   ③ 拖动改系统拖放（轻量 preview 解决跟手）+ 松手不消失 + 源 35% 可见；
+        #   ④ 松手动画：被拖的瞬移落位，其余滑动；
+        #   ⑤ 确认打印 = **真系统 alert**（`.alert`，删掉自绘卡片）；
+        #   ⑥ 摘要：多固定 / 二级页可操作（滑动用完/详情/重打）；
+        #   ⑦ 摘要逻辑：正在制作中 = 有完成时间且未到；新增「已完成制作」；
+        #   ⑧ 扫码框 = 四角 L 形 + 呼吸（1.7s / 1.05 倍）。
+        CURRENT_PROJECT_VERSION: 78
+        MARKETING_VERSION: 1.1.36
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -725,8 +734,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.35
-        CURRENT_PROJECT_VERSION: 77
+        MARKETING_VERSION: 1.1.36
+        CURRENT_PROJECT_VERSION: 78
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

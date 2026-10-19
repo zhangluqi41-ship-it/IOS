@@ -23,16 +23,18 @@ struct SummaryView: View {
         store.records.filter { $0.usedAt == nil }
     }
 
-    /// ★ 正在制作中 = **完成时间还没到**（`expireAt > now`）。
-    ///   覆盖：肉类解冻中、康普茶一发发酵中、康普茶二发发酵中。
-    ///   按完成时间由近到远排（最该关注的排最前）。
+    /// ★★★ 2026-10-19（用户第 3 条）：「正在制作中的逻辑不对，
+    ///   应该是**有『完成时间』的物料**才是正在制作中的」。
+    ///   → 判据 = `usesCompletionTime`（康普茶 / 肉类解冻有"完成时间"字段）
+    ///     **且** 完成时间还没到。
+    ///   → 完成时间已过的那批归到「已完成制作」（新分类）。
     private var inProgress: [LabelRecord] {
-        active.filter { $0.expireAt > now }
-            .sorted { $0.expireAt < $1.expireAt }
+        SummaryFilter.inProgress.records(from: store.records, now: now)
     }
 
-    private func count(_ stage: ExpiryStage) -> Int {
-        active.filter { ExpiryStatus.of($0, now: now).stage == stage }.count
+    /// 统一口径：直接复用 `SummaryFilter`，保证**磁贴数字 = 点进去的列表条数**。
+    private func count(_ filter: SummaryFilter) -> Int {
+        filter.records(from: store.records, now: now).count
     }
 
     var body: some View {
@@ -42,17 +44,23 @@ struct SummaryView: View {
                     progressTile
 
                     HStack(spacing: 14) {
-                        smallTile("今天到期", count(.today),
+                        // ★ 2026-10-19 新增：完成时间已过、但还没到最佳使用时间的那批。
+                        smallTile("已完成制作", count(.finished),
+                                  icon: "checkmark.seal.fill", tint: .green,
+                                  filter: .finished)
+                        smallTile("今天到期", count(.dueToday),
                                   icon: "clock.badge.exclamationmark", tint: .orange,
                                   filter: .dueToday)
-                        smallTile("7 天内到期", count(.within3) + count(.within7),
-                                  icon: "calendar", tint: .blue,
-                                  filter: .withinSeven)
                     }
 
-                    smallTile("已过期未处理", count(.expired),
-                              icon: "exclamationmark.triangle.fill", tint: .red,
-                              filter: .overdue)
+                    HStack(spacing: 14) {
+                        smallTile("7 天内到期", count(.withinSeven),
+                                  icon: "calendar", tint: .blue,
+                                  filter: .withinSeven)
+                        smallTile("已过期未处理", count(.overdue),
+                                  icon: "exclamationmark.triangle.fill", tint: .red,
+                                  filter: .overdue)
+                    }
 
                     totalTile
                 }
@@ -127,6 +135,9 @@ struct SummaryView: View {
             }
             .buttonStyle(.plain)
         }
+        // ★ 同模板磁贴：GroupBox 浅色下无可见背景 → 垫系统语义色（见 TemplatesTab 注释）。
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
     }
 
     /// ② 小磁贴（今天到期 / 7 天内到期 / 已过期）
@@ -157,6 +168,9 @@ struct SummaryView: View {
             }
             .buttonStyle(.plain)
         }
+        // ★ 同模板磁贴：GroupBox 浅色下无可见背景 → 垫系统语义色（见 TemplatesTab 注释）。
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
     }
 
     /// ③ 总览
@@ -179,6 +193,9 @@ struct SummaryView: View {
             }
             .buttonStyle(.plain)
         }
+        // ★ 同模板磁贴：GroupBox 浅色下无可见背景 → 垫系统语义色（见 TemplatesTab 注释）。
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
     }
 
     // MARK: 文案
@@ -204,7 +221,10 @@ struct SummaryView: View {
 /// 但是**后台数据是相通的**」
 /// ➜ 点磁贴 push 到 `SummaryDetailView`；数据仍来自同一个 `ExpiryStore.shared`。
 enum SummaryFilter: Hashable {
+    /// 正在制作中：**有「完成时间」的物料**（康普茶 / 肉类解冻）+ 完成时间未到。
     case inProgress
+    /// 已完成制作：有「完成时间」的物料 + 完成时间已过（但还没用完）。
+    case finished
     case dueToday
     case withinSeven
     case overdue
@@ -213,6 +233,7 @@ enum SummaryFilter: Hashable {
     var title: String {
         switch self {
         case .inProgress: return "正在制作中"
+        case .finished: return "已完成制作"
         case .dueToday: return "今天到期"
         case .withinSeven: return "7 天内到期"
         case .overdue: return "已过期未处理"
@@ -225,7 +246,15 @@ enum SummaryFilter: Hashable {
         let active = all.filter { $0.usedAt == nil }
         switch self {
         case .inProgress:
-            return active.filter { $0.expireAt > now }
+            // ★ 用户第 3 条：**有「完成时间」的物料**才算制作中，且完成时间还没到。
+            //   （通用效期 / 奶制品的第二组时间是"原始保质期"，不算制作中）
+            return active
+                .filter { $0.usesCompletionTime && $0.expireAt > now }
+                .sorted { $0.expireAt < $1.expireAt }
+        case .finished:
+            // 完成时间已过 = 制作完成（但可能还没用完）。
+            return active
+                .filter { $0.usesCompletionTime && $0.expireAt <= now }
                 .sorted { $0.expireAt < $1.expireAt }
         case .dueToday:
             return active.filter { ExpiryStatus.of($0, now: now).stage == .today }
@@ -251,6 +280,7 @@ struct SummaryDetailView: View {
 
     @ObservedObject private var store = ExpiryStore.shared
     @State private var selected: LabelRecord?
+    @State private var notice: Notice?
 
     private var list: [LabelRecord] {
         filter.records(from: store.records)
@@ -271,6 +301,29 @@ struct SummaryDetailView: View {
                         row(record)
                     }
                     .buttonStyle(.plain)
+                    // ★ 2026-10-19（用户第 2 条）：「摘要磁贴点击后写一个和效期管理
+                    //   相似的界面，**要能操作的**」→ 加和效期管理一致的滑动操作。
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            store.markUsed(record)
+                        } label: {
+                            Label("用完", systemImage: "checkmark")
+                        }
+                        Button {
+                            selected = record
+                        } label: {
+                            Label("详情", systemImage: "info.circle")
+                        }
+                        .tint(.blue)
+                    }
+                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                        Button {
+                            reprint(record)
+                        } label: {
+                            Label("重新打印", systemImage: "printer")
+                        }
+                        .tint(Theme.brand)
+                    }
                 }
             }
         }
@@ -279,6 +332,19 @@ struct SummaryDetailView: View {
         .sheet(item: $selected) { record in
             ExpiryDetailSheet(record: record)
         }
+        .alert(notice?.title ?? "",
+               isPresented: Binding(get: { notice != nil },
+                                    set: { if !$0 { notice = nil } })) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(notice?.body ?? "")
+        }
+    }
+
+    /// 重打（与效期管理同一套：`LabelReprint.printNoticing`）。
+    private func reprint(_ record: LabelRecord) {
+        LabelReprint.printNoticing(record,
+            successBody: "\(record.title)\n份数 \(Prefs.printCopies)") { notice = $0 }
     }
 
     private func row(_ record: LabelRecord) -> some View {

@@ -526,6 +526,8 @@ struct ScanView: View {
     @State private var invalidText = ""
 
     private let boxSide: CGFloat = 250
+    /// 呼吸动画开关（`onAppear` 置 true，让 `.animation` 开始循环）。
+    @State private var breathing = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -609,17 +611,32 @@ struct ScanView: View {
         .padding(.horizontal, 24)
     }
 
+    /// 取景框。
+    ///
+    /// ★★★ 2026-10-19（用户）：「apple 有个扫码器 app，扫码界面的这个方形要和它一致，
+    ///   他的是**会呼吸的**，可以直接调用吗？」
+    ///   ➜ **不能直接调用** —— 系统没有公开"扫码框"组件，扫码器 App 的框是它自己画的。
+    ///   ➜ 但可以 100% 用第一方做出来：**SF Symbols 的 `viewfinder`**（系统的取景框图形）
+    ///     + **`.symbolEffect(.pulse, options: .repeating)`**（系统的符号脉动动画，就是"呼吸"）。
+    ///   ➜ 原来的 `CornerBrackets`（自绘 Path 四角）+ `ScanLine`（自绘扫描线）已停用 ——
+    ///     扫码器的框**没有扫描线**，呼吸感来自框本身的脉动。
+    /// 取景框 —— **苹果「扫码器」同款：四个 L 形角 + 呼吸**。
+    ///
+    /// ★★★ 2026-10-19（用户：「我要一模一样」）：
+    ///   系统没有公开"扫码框"组件（`viewfinder` 符号是完整方框，形状不对），
+    ///   所以形状必须自己画四个 L 形角（`CornerBrackets`）；
+    ///   但**呼吸动画本身用系统动画 API**：
+    ///     `.scaleEffect` + `.animation(.easeInOut.repeatForever(autoreverses:))`
+    ///   —— 不是 Timer 手搓，也不是第三方库。
+    ///   ➜ 表现：框整体缓慢放大到 1.05 并变实（0.72 → 1.0），再回到原位，无限循环。
     private var viewfinder: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                .frame(width: boxSide, height: boxSide)
-
-            CornerBrackets(side: boxSide)
-
-            ScanLine(side: boxSide)
-        }
-        .frame(width: boxSide, height: boxSide)
+        CornerBrackets(side: boxSide)
+            .frame(width: boxSide, height: boxSide)
+            .scaleEffect(breathing ? 1.05 : 1.0)
+            .opacity(breathing ? 1.0 : 0.72)
+            .animation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true),
+                       value: breathing)
+            .onAppear { breathing = true }
     }
 
     /// 扫码页底部两个浮层按钮。
@@ -820,7 +837,8 @@ private struct CornerBrackets: View {
             path.addLine(to: CGPoint(x: 0, y: 0))
             path.addLine(to: CGPoint(x: length, y: 0))
         }
-        .stroke(Theme.brandLight, style: StrokeStyle(lineWidth: thickness, lineCap: .round))
+        // ★ 2026-10-19：扫码器的四个角是**纯白**（原来是品牌浅蓝）。
+        .stroke(.white, style: StrokeStyle(lineWidth: thickness, lineCap: .round))
         .frame(width: length, height: length)
     }
 }

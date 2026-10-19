@@ -346,24 +346,23 @@ struct LabelActions: ViewModifier {
     @State private var prompt: Prompt?
     /// ★★★ 2026-10-17（用户功能 1）：待确认的打印草稿。
     ///   非 nil → 弹「确认打印」窗（文字预览 + 份数）；确认后才真正发送。
-    @State private var pendingPrint: PendingPrint?
-
-    /// `.sheet(item:)` 要求 Identifiable —— 给草稿套一层壳（每次弹窗都是新 id）。
-    private struct PendingPrint: Identifiable {
-        let id = UUID()
-        let draft: LabelDraft
-    }
 
     /// 统一提示（一个 alert 槽同时承载「普通提示」和「同名物料确认」）。
     private enum Prompt {
         case notice(title: String, message: String)
         /// ★ 2026-10-18（用户第 4 条）：首项 = 待打印草稿，次项 = 同名未过期记录。
         case duplicate(LabelDraft, [LabelRecord])
+        /// ★★★ 2026-10-19（用户选 A：「用真系统 alert（100% 原生）」）：
+        ///   打印确认不再自绘卡片，直接用系统 alert —— 按钮/玻璃/圆角全是系统的。
+        ///   代价：弹窗里**不能改份数**（份数用「打印机」页里的设置），
+        ///   因为系统 alert 放不下 Stepper。
+        case confirmPrint(LabelDraft)
 
         var title: String {
             switch self {
             case .notice(let t, _): return t
             case .duplicate: return "存在未过期物料"
+            case .confirmPrint: return "确认打印"
             }
         }
 
@@ -373,6 +372,18 @@ struct LabelActions: ViewModifier {
             case .duplicate(_, let list):
                 let names = Set(list.map(\.title)).joined(separator: "、")
                 return "「\(names)」还有 \(list.count) 条未过期。要把这批标记为已用完吗？"
+            case .confirmPrint(let draft):
+                // 预览 = 与标签同源的三块内容（标题 / 各行 / 制作人）。
+                // ⚠️ `LabelRow.label` 自带全角冒号，别再补。
+                var lines = [draft.data.title, ""]
+                for row in draft.data.rows {
+                    lines.append("\(row.label)\(row.value)")
+                }
+                if !draft.data.maker.isEmpty {
+                    lines.append("")
+                    lines.append(draft.data.maker)
+                }
+                return lines.joined(separator: "\n")
             }
         }
     }
@@ -397,6 +408,10 @@ struct LabelActions: ViewModifier {
                 if case .duplicate = prompt {
                     Button("标记已用完") { finishDuplicate(useUp: true) }
                     Button("不用", role: .cancel) { finishDuplicate(useUp: false) }
+                } else if case .confirmPrint = prompt {
+                    Button("取消", role: .cancel) { prompt = nil }
+                    // 份数用「打印机」页里的设置（系统 alert 里放不了 Stepper）。
+                    Button("打印 \(copies) 份") { runPrint() }
                 } else {
                     Button("好", role: .cancel) {}
                 }
@@ -413,18 +428,7 @@ struct LabelActions: ViewModifier {
             //     iOS 公开 API 里"居中弹窗"只有 `.alert`（放不下预览和份数 Stepper），
             //     所以用**系统材质（`.thinMaterial`）+ 系统按钮**复现系统 alert 的观感 ——
             //     材质、圆角、按钮全部来自第一方，没有自绘色块。
-            .overlay {
-                if let item = pendingPrint {
-                    PrintConfirmSheet(draft: item.draft,
-                                      initialCopies: copies,
-                                      onConfirm: { chosen in
-                                          confirmPrint(item.draft, copies: chosen)
-                                      },
-                                      onCancel: { pendingPrint = nil })
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                }
-            }
-            .animation(.snappy(duration: 0.22), value: pendingPrint != nil)
+            // 打印确认已改成**系统 alert**（见上面 `prompt` 的 `.confirmPrint` 分支）。
     }
 
     // MARK: 动作
@@ -450,7 +454,7 @@ struct LabelActions: ViewModifier {
                 && $0.id != draft.record.id
         }
         if sameTitle.isEmpty {
-            pendingPrint = PendingPrint(draft: draft)
+            prompt = .confirmPrint(draft)
         } else {
             prompt = .duplicate(draft, sameTitle)
         }
@@ -463,7 +467,18 @@ struct LabelActions: ViewModifier {
             list.forEach { ExpiryStore.shared.markUsed($0) }
         }
         prompt = nil
-        pendingPrint = PendingPrint(draft: draft)
+        // ★ 上一个 alert 还在关闭动画里，**立刻**设新值会被系统吞掉（第二个 alert 不出现）。
+        //   延后一点再弹打印确认。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            prompt = .confirmPrint(draft)
+        }
+    }
+
+    /// 系统 alert 里点了「打印 N 份」。
+    private func runPrint() {
+        guard case let .confirmPrint(draft) = prompt else { return }
+        prompt = nil
+        confirmPrint(draft, copies: copies)
     }
 
     /// 用户在确认窗里点了「打印 N 份」。
@@ -471,8 +486,7 @@ struct LabelActions: ViewModifier {
         let count = max(1, chosen)
         // ★ 记住这次选的份数（下次弹窗默认用它）。
         copies = count
-        // ★ 先把 sheet 关掉，再把任务发给打印机 —— 否则等待期间弹窗还挂着。
-        pendingPrint = nil
+        // ★ 弹窗在点按钮时已由系统关闭，这里直接发送任务。
 
         printer.printLabel(pdf: draft.pdf(),
                            fileName: draft.fileName,
@@ -493,131 +507,9 @@ struct LabelActions: ViewModifier {
     }
 }
 
-// MARK: - 打印确认窗（★ 2026-10-17 新增，用户功能 1）
-
-/// 打印前的确认窗：**文字预览（与标签模板一致）+ 份数选择**。
-///
-/// 用户原话：「点击打印后弹出提示窗，确认打印份数（这个页面也可以增加预览，
-/// 用文字描述，就和现在打印的模板一致（只用文字描述））」。
-///
-/// ★ 预览直接用 `LabelDraft.data` 的三块内容（标题 / 各行 / 制作人）——
-///   与 `LabelRenderer` 画到纸上的文字**同源**（都来自 `LabelData`），
-///   所以「预览 = 实际打出来的内容」不会漂移。
-/// ⚠️ `LabelRow.label` 自带全角冒号（"解冻时间："），这里不要再补一个。
-struct PrintConfirmSheet: View {
-    let draft: LabelDraft
-    let initialCopies: Int
-    /// 点了「打印 N 份」。(份数) -> Void；由外层负责关窗 + 发送。
-    let onConfirm: (Int) -> Void
-    /// 取消 / 点遮罩关闭。
-    let onCancel: () -> Void
-
-    @State private var copies: Int
-
-    init(draft: LabelDraft,
-         initialCopies: Int,
-         onConfirm: @escaping (Int) -> Void,
-         onCancel: @escaping () -> Void) {
-        self.draft = draft
-        self.initialCopies = initialCopies
-        self.onConfirm = onConfirm
-        self.onCancel = onCancel
-        _copies = State(initialValue: max(1, initialCopies))
-    }
-
-    /// ★★★ 2026-10-18（用户第 2 条，第二版）：
-    ///   「要的不是这样子的…要**这种套件**」—— 用户给的参考图就是**系统 alert**
-    ///   （`.alert` 那个「存在未过期物料」的样子）。
-    ///   ➜ 所以这里严格按 iOS 系统 alert 的**结构与尺寸**来做：
-    ///     · 宽 300、圆角 14（系统 alert 的几何）；
-    ///     · 标题 17 semibold **居中**；
-    ///     · 内容 13（footnote）左对齐；
-    ///     · **一条通栏分隔线**把内容区和按钮区隔开；
-    ///     · 按钮区：两个按钮**并排、各占一半、中间竖线分隔**、纯文字蓝色（系统 alert 就是这样）；
-    ///     · 底 = `.regularMaterial`（系统 alert 的毛玻璃材质）。
-    ///   ⚠️ 系统 alert 的按钮**没有胶囊底**（那是玻璃按钮的样式，不是 alert 的）。
-    var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea()
-                .onTapGesture { onCancel() }
-
-            VStack(spacing: 0) {
-                // ── 标题（居中，系统 alert 字号）──
-                Text("确认打印")
-                    .font(.headline)
-                    .padding(.top, 20)
-                    .padding(.bottom, 14)
-
-                // ── 内容 ──
-                VStack(alignment: .leading, spacing: 9) {
-                    Text(draft.data.title)
-                        .font(.subheadline.weight(.semibold))
-
-                    ForEach(Array(draft.data.rows.enumerated()), id: \.offset) { _, row in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(row.label)
-                                .foregroundStyle(.secondary)
-                            Spacer(minLength: 8)
-                            Text(row.value)
-                                .monospacedDigit()
-                        }
-                        .font(.footnote)
-                    }
-
-                    // ⚠️ `data.maker` 自带「制作人：」前缀，别再写 label。
-                    Text(draft.data.maker)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
-
-                // ── 份数 ──
-                Stepper(value: $copies, in: 1...20) {
-                    HStack {
-                        Text("打印份数")
-                            .font(.footnote)
-                        Spacer(minLength: 8)
-                        Text("\(copies)")
-                            .font(.subheadline.weight(.semibold))
-                            .monospacedDigit()
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 6)
-
-                Text("会记住这次的份数，下次默认用它。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 18)
-
-                // ── 分隔线 + 两个并排按钮（系统 alert 布局）──
-                Divider()
-
-                HStack(spacing: 0) {
-                    Button("取消") { onCancel() }
-                        .font(.body)
-                        .frame(maxWidth: .infinity, minHeight: 50)
-
-                    Divider()
-                        .frame(height: 50)
-
-                    Button {
-                        onConfirm(copies)
-                    } label: {
-                        Text("打印 \(copies) 份")
-                            .font(.body.weight(.semibold))
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                }
-            }
-            .frame(width: 300)
-            .background(.regularMaterial,
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-    }
-}
+// MARK: - 打印确认
+//
+// ★★★ 2026-10-19：确认窗已改成**系统 alert**（用户选 A：100% 原生）。
+//   原来的 `PrintConfirmSheet`（自绘卡片 + Stepper）整段删除 —— 系统 alert 放不下
+//   预览表格和份数选择，所以：预览放进 `alert` 的 message（多行文本），
+//   份数改用「打印机」页里的设置（`@AppStorage("printCopies")`）。
