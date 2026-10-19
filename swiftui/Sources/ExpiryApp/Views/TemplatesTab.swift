@@ -102,10 +102,24 @@ struct TemplatesTab: View {
 
     /// 正在拖的磁贴。
     @State private var dragging: TemplateRoute?
+    /// ★ 2026-10-19（用户）：「按住后（进入排序模式）并没有放大，**只有拖拽走后才放大**，
+    ///   应该是**按住后只要开始能够移动就放大**」
+    ///   ➜ 原来是靠 `dragging`（要移动 6pt 才置位）驱动放大，所以"按下去"那一刻没反应。
+    ///   ➜ 新增 `pressedRoute`：**手指一按下就置位**（`DragGesture(minimumDistance: 0)`），
+    ///     放大/抬起视觉由 `dragging || pressed` 共同驱动。
+    @State private var pressedRoute: TemplateRoute?
     /// 手指相对起点的位移 —— 直接当 offset 用（1:1 跟手）。
     @State private var dragOffset: CGSize = .zero
     /// 每张磁贴在网格坐标空间里的位置（用来算手指落在谁头上）。
-    @State private var tileFrames: [TemplateRoute: CGRect] = [:]
+    ///
+    /// ★★★ 2026-10-19（用户）：「在拖动的过程中，**时间越久，掉帧越严重**」
+    ///   根因：原来是 `@State var tileFrames: [TemplateRoute: CGRect]`（**值类型**）。
+    ///   拖动 → 目标让位/布局微变 → `onPreferenceChange` 写入 tileFrames →
+    ///   **@State 变化触发整个 body 重绘** → 再布局 → preference 又变 → ……
+    ///   每帧都在自增一轮，所以越拖越卡。
+    ///   ➜ 改成 **引用类型**（class）存放：改它的属性**不会**触发 SwiftUI 重绘，
+    ///     只作为"查询表"用，彻底断掉这个循环。
+    @State private var frameStore = TileFrameStore()
     /// 手指当前落在哪个磁贴上（让位提示）。
     @State private var dropTarget: TemplateRoute?
     /// 刚放下的那张 —— 重排时它不加过渡动画（松手就落在新格）。
@@ -145,18 +159,20 @@ struct TemplatesTab: View {
     ///   看起来就是"慢半拍"。现在 **`.offset` 放在 `.animation` 之后**，位移永不被动画化。
     private func tile(_ route: TemplateRoute) -> some View {
         let isDragging = dragging == route
+        // 抬起态：**手指按下就算**（不用等移动 6pt），拖动中当然也算。
+        let isLifted = isDragging || pressedRoute == route
         return tileCore(route)
             // ★★★ 2026-10-19（用户）：「**正在被我拖动的变半透明**，
             //   你把没被我拖动的、准备让位的那个变成半透明了」
             //   ➜ 半透明只加在**被拖的那张**身上（iOS 标准：拿起来的东西是半透明的）。
             .opacity(isDragging ? 0.85 : 1)
-            .scaleEffect(isDragging ? 1.06 : 1)
-            .shadow(color: .black.opacity(isDragging ? 0.25 : 0),
-                    radius: isDragging ? 14 : 0, y: isDragging ? 8 : 0)
+            .scaleEffect(isLifted ? 1.06 : 1)
+            .shadow(color: .black.opacity(isLifted ? 0.25 : 0),
+                    radius: isLifted ? 14 : 0, y: isLifted ? 8 : 0)
             // ⚠️ 这个 animation **只能**作用在它前面（scale/shadow）。
             // ★ 用户：「整个磁贴能否使用**苹果官方系统默认动画**」
             //   ➜ `.default` 就是系统默认曲线 + 时长，不再用我自定义的 `.snappy`。
-            .animation(.default, value: isDragging)
+            .animation(.default, value: isLifted)
             // ★ offset 在 animation 之后 → 拖动中位移变化不带过渡 = 1:1 跟手。
             .offset(isDragging ? dragOffset : .zero)
             // ★★★ 2026-10-19（用户）：「图标移动的时候，现在是**瞬间移动**，
@@ -168,7 +184,14 @@ struct TemplatesTab: View {
             //   ⚠️ 重排那一步仍是**瞬间**的（`justDropped` 让这张不带 order 动画），
             //     所以不会出现"从老位置滑过去"。
             .animation(isDragging ? nil : .default, value: dragOffset)
-            .zIndex(isDragging ? 1 : 0)
+            // ★★★ 2026-10-19（用户）：「替换的时候图层应该是**我手上的磁贴在最上图层**，
+            //   被迫移动的图标在下图层；现在我松手后，被迫移动的图标跑到上图层了」
+            //   根因：`zIndex` 只在 `isDragging` 时为 1，松手立刻归 0 →
+            //   重排后它会和"被挤开的那张"同层，而 SwiftUI 的绘制顺序 = ForEach 声明顺序，
+            //   排到后面的兄弟会盖住它。
+            //   ➜ 松手后用 `justDropped` 再维持 **0.45 秒**的上层（紧接着的动画期），
+            //     动画结束自动回落到普通层。
+            .zIndex(isDragging ? 2 : (justDropped == route ? 1 : 0))
             // ★★★ 2026-10-19（用户 bug）：「按住完全不能拖动，松手后会移动」
             //   根因：磁贴内部是 `NavigationLink`（点击进模板页），它的**内层点击手势
             //   优先级高于**外层的 `.gesture` → 拖动被它吃掉，一松手就当成"点击"跳页了。
@@ -182,15 +205,26 @@ struct TemplatesTab: View {
                             dragging = route
                         }
                         dragOffset = value.translation
-                        let hit = tileFrames.first {
+                        let hit = frameStore.frames.first {
                             $0.key != route && $0.value.contains(value.location)
                         }?.key
-                        if hit != dropTarget {
-                            withAnimation(.default) { dropTarget = hit }
-                        }
+                        // ★ 不加 withAnimation：拖动中每次变化都开一个动画事务会堆叠、加剧掉帧。
+                        //   目标只是轻微上移 4pt，直接改值即可。
+                        if hit != dropTarget { dropTarget = hit }
                     }
                     .onEnded { _ in
                         finishDrag(from: route)
+                    }
+            )
+            // ★ 手指一按下就进入"抬起"视觉（放大 + 投影）；松手复原。
+            //   用 `simultaneousGesture` 同时识别：不抢点击（进模板页）、也不抢拖动。
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .named("tileGrid"))
+                    .onChanged { _ in
+                        if pressedRoute != route { pressedRoute = route }
+                    }
+                    .onEnded { _ in
+                        pressedRoute = nil
                     }
             )
     }
@@ -346,7 +380,8 @@ struct TemplatesTab: View {
                     }
                     .coordinateSpace(name: "tileGrid")
                     .onPreferenceChange(TileFrameKey.self) { frames in
-                        tileFrames = frames
+                        // 只更新引用类型的属性 —— 不会引起重绘。
+                        frameStore.frames = frames
                     }
                     howItWorks
                 }
@@ -494,4 +529,15 @@ struct TileFrameKey: PreferenceKey {
                        nextValue: () -> [TemplateRoute: CGRect]) {
         value.merge(nextValue()) { _, new in new }
     }
+}
+
+
+// MARK: - 磁贴位置查询表
+
+/// 用 **class** 持有每张磁贴的位置。
+///
+/// ★ 关键：它是引用类型 —— 在 `onPreferenceChange` 里改 `frames` **不会**触发
+///   SwiftUI 重绘，从而避免「布局→记录→重绘→再布局」的无限循环（拖动越久越卡）。
+final class TileFrameStore {
+    var frames: [TemplateRoute: CGRect] = [:]
 }

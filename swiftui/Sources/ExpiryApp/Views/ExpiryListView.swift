@@ -18,6 +18,12 @@ struct ExpiryListView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var showUsed = false
+    /// ★★★ 2026-10-19（用户）：「不是说『用完』点击后的特效和删除相同吗？**这不一样啊**」
+    ///   ➜ `withAnimation { store.markUsed(...) }` 实测**拿不到** List 的行删除动画
+    ///     （记录只是属性变化、再由 `grouped()` 过滤，SwiftUI 判成"重排"而不是"删行"）。
+    ///   ➜ 真正的同一条路：**先让这行从数据源里消失**（和 `delete` 一样），再更新 store。
+    ///     所以这里维护一个"本地已移除"集合，用完时先把 id 塞进来触发删除动画。
+    @State private var pendingRemoval: Set<UUID> = []
     @State private var selected: LabelRecord?
     @State private var showClearConfirm = false
     @State private var showDeniedAlert = false
@@ -32,7 +38,7 @@ struct ExpiryListView: View {
                 if store.records.isEmpty {
                     emptySection
                 } else {
-                    ForEach(store.grouped(includeUsed: showUsed, now: now), id: \.status) { group in
+                    ForEach(sections, id: \.status) { group in
                         Section {
                             ForEach(group.items) { record in
                                 Button {
@@ -48,12 +54,17 @@ struct ExpiryListView: View {
                                 //   视觉从左到右 = 删除（红）、用完（蓝）。
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     Button {
-                                        // ★ 2026-10-19（用户）：「点击已用完完全无动画，
-                                        //   一瞬间消失，要求和删除的动画相同」
-                                        //   ➜ `withAnimation { }` **不传曲线** = 系统默认动画，
-                                        //     就是 `List` 删除行用的那一套。
-                                        withAnimation {
-                                            store.markUsed(record, used: record.usedAt == nil)
+                                        // ★ 和「删除」走完全相同的路径：
+                                        //   ① 先把这行从列表数据源移除（原生删行动画）
+                                        //   ② 再更新 store（真实数据）
+                                        if record.usedAt == nil {
+                                            withAnimation { pendingRemoval.insert(record.id) }
+                                            store.markUsed(record)
+                                        } else {
+                                            pendingRemoval.remove(record.id)
+                                            withAnimation {
+                                                store.markUsed(record, used: false)
+                                            }
                                         }
                                     } label: {
                                         Image(systemName: record.usedAt == nil
@@ -222,6 +233,16 @@ struct ExpiryListView: View {
     // MARK: - 动作
 
     /// 重新打印一条已有记录的标签（内容与原标签逐字一致）。
+    /// 列表分组（叠加"本地已移除"的乐观过滤）。
+    /// 用完一条时它会先从这里消失 → 走的是和 `delete` **完全相同**的行移除动画。
+    private var sections: [ExpiryGroup] {
+        store.grouped(includeUsed: showUsed, now: now).compactMap { group in
+            let items = group.items.filter { !pendingRemoval.contains($0.id) }
+            guard !items.isEmpty else { return nil }
+            return ExpiryGroup(status: group.status, title: group.title, items: items)
+        }
+    }
+
     private func reprint(_ record: LabelRecord) {
         LabelReprint.printNoticing(record,
             successBody: "\(record.title)\n份数 \(Prefs.printCopies) · 浓度 "

@@ -636,7 +636,10 @@ struct ScanView: View {
             //   幅度 1.05→**1.10**、透明度 0.72→**0.55**、单程 1.7s→**1.1s**。
             .scaleEffect(breathing ? 1.10 : 1.0)
             .opacity(breathing ? 1.0 : 0.55)
-            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true),
+            // ★ 2026-10-19（用户二次）：呼吸**还是慢** → 单程 1.1s 再压到 **0.65s**
+            //   （往返 1.3 秒，接近系统"呼吸"类动效的节奏）。
+            //   还嫌慢就继续压到 0.5s（再快会像闪烁、不像呼吸）。
+            .animation(.easeInOut(duration: 0.65).repeatForever(autoreverses: true),
                        value: breathing)
             .onAppear { breathing = true }
     }
