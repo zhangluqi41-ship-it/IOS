@@ -140,10 +140,6 @@ struct CustomNode: Codable, Identifiable, Equatable {
     /// 该节点及其所有后代的数量（含自己）。
     var leafCount: Int { 1 + children.reduce(0) { $0 + $1.leafCount } }
 
-    /// 从自己往下最多还能加多少层（0 = 已到最深层，不能再加子项）。
-    func remainingDepth(from level: Int) -> Int {
-        max(0, CustomNode.maxDepth - level)
-    }
 
     /// 层级上限：根（第 1 级）+ 3 层子菜单。
     static let maxDepth = 4
@@ -228,20 +224,49 @@ enum CustomTemplateStore {
             CustomNode(name: "巴旦木奶", days: 60, bestDays: 7),
         ]
 
-        all = all + [generic, dairy]
+        // ③ 肉类：冷藏 / 冷冻两大分支，各带原始 + 最佳天数。
+        var meat = CustomTemplate(name: "肉类（重写）", icon: "flame")
+        meat.tintName = "red"
+        meat.iconColorName = "white"
+        meat.nodes = [
+            CustomNode(name: "冷藏", days: 3, bestDays: 3, children: [
+                CustomNode(name: "牛肉"), CustomNode(name: "猪肉"), CustomNode(name: "鸡肉"),
+            ]),
+            CustomNode(name: "冷冻", days: 30, bestDays: 30, children: [
+                CustomNode(name: "牛肉"), CustomNode(name: "猪肉"), CustomNode(name: "鸡肉"),
+            ]),
+        ]
+
+        // ④ 肉类解冻：**第二个模板**，扫码续做（绑定上面的肉类模板）。
+        var thaw = CustomTemplate(name: "肉类解冻（重写）", icon: "snowflake")
+        thaw.tintName = "teal"
+        thaw.iconColorName = "white"
+        thaw.useSecondary = true
+        thaw.sourceTemplateID = meat.id
+        thaw.lazyDays = 3                   // 解冻完成 = 扫码 + 3 天
+
+        // ⑤ 康普茶一发：制备版式（制备 / 完成 7 天 / 最佳 30 天）。
+        var kombucha = CustomTemplate(name: "康普茶一发（重写）", icon: "cup.and.saucer")
+        kombucha.tintName = "green"
+        kombucha.iconColorName = "white"
+        kombucha.usePrep = true
+        kombucha.lazyDays = 7               // 完成 = 制备 + 7 天
+        kombucha.defaultDays = 30           // 最佳 = 制备 + 30 天
+        kombucha.nodes = [
+            CustomNode(name: "原味"), CustomNode(name: "桃味"),
+            CustomNode(name: "草莓"), CustomNode(name: "蓝莓"),
+        ]
+
+        // ⑥ 康普茶二发：**第二个模板**，扫一扫标签续做（绑定一发）。
+        var kombucha2 = CustomTemplate(name: "康普茶二发（重写）", icon: "sparkles")
+        kombucha2.tintName = "purple"
+        kombucha2.iconColorName = "white"
+        kombucha2.useSecondary = true
+        kombucha2.sourceTemplateID = kombucha.id
+        kombucha2.lazyDays = 3              // 二发完成 = 扫码 + 3 天
+
+        all = all + [generic, dairy, meat, thaw, kombucha, kombucha2]
     }
 }
 
 // MARK: - 选中的路径（打印时用）
-
-/// 用户在自定义模板里选出来的那一项。
-struct CustomTemplateSelection: Equatable {
-    let template: CustomTemplate
-    /// 从模板名开始的完整路径（"解冻", "猪肉", "梅花肉"）。
-    let path: [String]
-    /// 该级建议天数（nil = 没设，需要用户自己填时间）。
-    let days: Int?
-
-    /// 标签标题 = 路径用 `-` 拼起来。
-    var title: String { path.joined(separator: "-") }
-}

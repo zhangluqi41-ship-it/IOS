@@ -339,8 +339,14 @@ enum LabelTemplate {
                                            value: max(1, doneDays), to: now) ?? now
         // ★ 用户：「**包括二次扫描之后**」—— 最佳同样不能晚于完成时间。
         let best = min(sourceBestBefore, done)
-        let combined = clamp("\(clamp(sourceTitle, maxTitleLength))-\(clamp(suffix, maxNameLength))",
+        // ★ 2026-10-19：suffix 为空时（比如"肉类解冻"模板没菜单）不要多出一个尾巴横线。
+        let combined: String
+        if suffix.trimmingCharacters(in: .whitespaces).isEmpty {
+            combined = clamp(sourceTitle, maxTitleLength)
+        } else {
+            combined = clamp("\(clamp(sourceTitle, maxTitleLength))-\(clamp(suffix, maxNameLength))",
                              maxTitleLength)
+        }
         return LabelData(
             title: combined,
             rows: [

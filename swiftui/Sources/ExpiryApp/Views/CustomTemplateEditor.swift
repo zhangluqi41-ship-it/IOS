@@ -95,10 +95,13 @@ struct CustomTemplateEditor: View {
                     Toggle("使用制备功能", isOn: $draft.usePrep)
 
                     // ★ 2026-10-19（用户）：「**懒人一键保质期**，然后选择顺延的天数」
+                    //   ★ 同日追加：「**有制备功能后就不需要懒人保质期了**，因为打印出来的
+                    //     没有保质期信息。打开制备信息，懒人保质期变灰色」
                     Toggle("懒人一键保质期", isOn: Binding(
                         get: { draft.lazyDays != nil },
                         set: { on in draft.lazyDays = on ? (draft.lazyDays ?? 7) : nil }
                     ))
+                    .disabled(draft.usePrep)
                     if let days = draft.lazyDays {
                         Stepper(value: Binding(
                             get: { days },
@@ -156,20 +159,9 @@ struct CustomTemplateEditor: View {
                     }
                 }
 
-                // ★ 2026-10-19（用户）：「命名是否带模板名称」——没有菜单时这一项不可用（灰色）。
-                Section {
-                    Toggle("命名带模板名称", isOn: $draft.includeTemplateInTitle)
-                        .disabled(draft.nodes.isEmpty)
-                } footer: {
-                    if draft.nodes.isEmpty {
-                        Text("没有菜单时固定是「模板名-手输物料名」，这一项不适用。")
-                    } else if draft.includeTemplateInTitle {
-                        Text("标签标题 = 模板名-第一层-第二层…（如「冷冻-猪肉-五花肉」）。")
-                    } else {
-                        Text("标签标题 = 纯菜单路径（如「猪肉-五花肉」），不带模板名。")
-                    }
-                }
-
+                // ★★★ 2026-10-19（用户）：「**和下面命名规则功能冲突，不需要**」
+                //   → 删掉「命名带模板名称」这个开关；要不要带模板名，
+                //     直接在「命名规则」里点按「模板名」字段决定。
                 // ★★★ 2026-10-19（用户）：「还是增加**名称自定义**吧，顺序啊，"‑"用哪些名称连接
                 //   都可以自己来选择」→ 点按字段拼顺序 + 选连接符。
                 Section {
@@ -198,7 +190,7 @@ struct CustomTemplateEditor: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
-                        ForEach(TitlePart.allCases) { part in
+                        ForEach(availableParts) { part in
                             Button {
                                 draft.titleParts.append(part)
                             } label: {
@@ -255,6 +247,10 @@ struct CustomTemplateEditor: View {
             }
             .navigationTitle(original == nil ? "新建模板" : "编辑模板")
             .navigationBarTitleDisplayMode(.inline)
+            // ★★★ 2026-10-19（用户）：「新建模板**能够下拉退出。不应该这样**，否则输入的
+            //   信息都丢失了。**不要有这种手势操作**」
+            //   ➜ 关掉 sheet 的 interactive dismiss，只能点「取消」或「保存」离开。
+            .interactiveDismissDisabled(true)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -287,6 +283,34 @@ struct CustomTemplateEditor: View {
                 .onDisappear { syncTimeLevel() }
             }
         }
+    }
+
+    /// ★★★ 2026-10-19（用户）：「**如果设置了几层，就显示出几层**……如果扫二维码二次制备
+    ///   绑定了母标签，那么这里面才会有源标签标题……**而不是甩一堆可能是空值的选项出来**」
+    ///   ➜ 命名规则里只列**当前模板真的取得到值**的字段：
+    ///     · 层数按实际菜单深度；空菜单时第一层 = 手输名（所以仍显示「第一层」）；
+    ///     · 「原标签标题」只在开了二次制备且绑定了母模板时出现；
+    ///     · 「手输名称」不单独列（空菜单时「第一层」就是它，有菜单时根本没输入框）。
+    private var availableParts: [TitlePart] {
+        var parts: [TitlePart] = [.template]
+        let depth = maxDepth(of: draft.nodes)
+        if depth == 0 {
+            parts.append(.level1)          // 空菜单：第一层 = 手输物料名
+        } else {
+            if depth >= 1 { parts.append(.level1) }
+            if depth >= 2 { parts.append(.level2) }
+            if depth >= 3 { parts.append(.level3) }
+        }
+        if draft.useSecondary, draft.sourceTemplateID != nil {
+            parts.append(.source)
+        }
+        return parts
+    }
+
+    /// 菜单树的最大深度（0 = 没有菜单）。
+    private func maxDepth(of nodes: [CustomNode]) -> Int {
+        guard !nodes.isEmpty else { return 0 }
+        return 1 + (nodes.map { maxDepth(of: $0.children) }.max() ?? 0)
     }
 
     /// 可以绑定为「源模板」的其他模板（排除自己）。

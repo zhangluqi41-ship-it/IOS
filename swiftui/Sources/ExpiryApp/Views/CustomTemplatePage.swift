@@ -27,7 +27,6 @@ struct CustomTemplatePage: View {
     @State private var maker = Prefs.lastMaker
     @State private var showPickerAlert = false
     /// ★ 二次制备：扫到的原标签信息 + sheet 开关。
-    @State private var showSecondaryScan = false
     @State private var scannedTitle: String?
     @State private var scannedBestBefore: Date?
     /// ★ 2026-10-19（用户）：「增加**无原始保质期**选项，如果无，自动填写最佳保质期 2099.12.31」
@@ -151,12 +150,6 @@ struct CustomTemplatePage: View {
                 }
             }
         }
-        .sheet(isPresented: $showSecondaryScan) {
-            SecondaryScanView { title, best in
-                scannedTitle = title
-                scannedBestBefore = best
-            }
-        }
         .alert(template.nodes.isEmpty ? "请先输入物料名称" : "请先选择品类",
                isPresented: $showPickerAlert) {
             Button("好", role: .cancel) {}
@@ -265,7 +258,14 @@ struct CustomTemplatePage: View {
                 case .template:
                     value = template.name
                 case .level1:
-                    value = chain.count > 0 ? chain[0].name : ""
+                    // ★★★ 2026-10-19（用户）：「**第一层有选项则第一层就是选项，
+                    //   若无选项，那第一层就应该是打字输入的信息**」
+                    //   ➜ 空菜单模板里「第一层」= 手输物料名（否则标题会空掉、标签没信息）。
+                    if chain.count > 0 {
+                        value = chain[0].name
+                    } else {
+                        value = materialName.trimmingCharacters(in: .whitespaces)
+                    }
                 case .level2:
                     value = chain.count > 1 ? chain[1].name : ""
                 case .level3:
@@ -277,7 +277,12 @@ struct CustomTemplatePage: View {
                 }
                 if !value.isEmpty { values.append(value) }
             }
-            return values.joined(separator: template.titleSeparator)
+            let result = values.joined(separator: template.titleSeparator)
+            // ★ 兜底：规则里一个有效字段都没取到时，至少用手输名，别打出空标题。
+            if result.isEmpty {
+                return materialName.trimmingCharacters(in: .whitespaces)
+            }
+            return result
         }
 
         if template.nodes.isEmpty {
@@ -343,8 +348,9 @@ struct CustomTemplatePage: View {
                                                       maker: makerFinal)
         } else if template.usePrep {
             // 完成天数复用模板级「建议天数」（没设就按 3 天）。
+            // 完成天数 = 原始保质期（懒人天数优先），不是最佳天数。
             data = LabelTemplate.buildCustomPrep(title: name, now: now,
-                                                 doneDays: template.defaultDays ?? 3,
+                                                 doneDays: template.lazyDays ?? template.defaultDays ?? 3,
                                                  bestBefore: bestDate,
                                                  maker: makerFinal)
         } else {
