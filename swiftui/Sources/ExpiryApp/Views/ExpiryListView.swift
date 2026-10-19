@@ -33,7 +33,7 @@ struct ExpiryListView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                reminderSection
+                usedFilterSection
 
                 if store.records.isEmpty {
                     emptySection
@@ -52,11 +52,17 @@ struct ExpiryListView: View {
                                 //   → 全部改成 `Image(systemName:)`，不再用 `Label`（那会带文字）。
                                 // ★ 顺序同摘要页：**先声明「用完」→ 它显示在最右**；
                                 //   视觉从左到右 = 删除（红）、用完（蓝）。
+                                // ★ 顺序：**删除在前、用完在后** → 视觉 左=删除（红）、右=用完（蓝）。
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        store.delete(record)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .tint(.red)
+
                                     Button {
-                                        // ★ 和「删除」走完全相同的路径：
-                                        //   ① 先把这行从列表数据源移除（原生删行动画）
-                                        //   ② 再更新 store（真实数据）
+                                        // 和删除走完全相同的路径：先移除数据源 → 原生删行动画 → 再改数据。
                                         if record.usedAt == nil {
                                             withAnimation { pendingRemoval.insert(record.id) }
                                             store.markUsed(record)
@@ -71,13 +77,6 @@ struct ExpiryListView: View {
                                               ? "checkmark.circle" : "arrow.uturn.backward")
                                     }
                                     .tint(Theme.brand)
-
-                                    Button(role: .destructive) {
-                                        store.delete(record)
-                                    } label: {
-                                        Image(systemName: "trash")
-                                    }
-                                    .tint(.red)
                                 }
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     Button {
@@ -102,8 +101,6 @@ struct ExpiryListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Toggle("显示已用完", isOn: $showUsed)
-                        Divider()
                         Button("清空全部记录", systemImage: "trash", role: .destructive) {
                             showClearConfirm = true
                         }
@@ -113,7 +110,12 @@ struct ExpiryListView: View {
                     }
                 }
             }
-            .onAppear { refresh() }
+            .onAppear {
+                refresh()
+                // ★ 「到期提醒」开关已删除 → 强制保持开启，保证一定会收到提醒
+                //   （如果用户以前关过，这里会自动打开一次）。
+                if !store.reminderEnabled { store.setReminderEnabled(true) }
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { refresh() }
             }
@@ -144,26 +146,22 @@ struct ExpiryListView: View {
 
     // MARK: - 区块
 
-    private var reminderSection: some View {
+    /// 顶部开关区。
+    ///
+    /// ★★★ 2026-10-19（用户）：「**这个『到期提醒』完全没用，肯定是需要被提醒的。可以删除**，
+    ///   然后把『显示已用完』增加到这个被删除的地方」
+    ///   ➜ 「到期提醒」开关 + 那一大段说明整段删除；提醒**强制常开**（见 `onAppear`）。
+    ///   ➜ 「显示已用完」从右上角菜单移到这里（原来藏在 `Menu` 里不好找）。
+    ///   ➜ 保留"通知权限被关闭"的入口 —— 那个是真有用的提示。
+    private var usedFilterSection: some View {
         Section {
-            Toggle("到期提醒", isOn: Binding(
-                get: { store.reminderEnabled },
-                set: { store.setReminderEnabled($0) }
-            ))
+            Toggle("显示已用完", isOn: $showUsed)
 
             if store.notificationDenied {
                 Button("通知权限被关闭，去设置") { showDeniedAlert = true }
             }
         } footer: {
-            Text("开启后，「完成时间」「最佳使用时间」「原始保质期」（按标签类型）"
-                 + "各自会在**提前 5 分钟**提醒一次。"
-                 + "**到时间那一刻，灵动岛会自动弹出展开态**（由系统定时拉起，"
-                 + "不需要 App 开着），直接在岛上点「已完成使用」或「稍后提醒」"
-                 + "（稍后提醒每隔 5 分钟再来一次）。"
-                 + "灵动岛上的倒计时只在**最后 5 分钟**出现。"
-                 + "使用「完成时间」的标签（康普茶、肉类解冻）岛上按钮是「已完成」——"
-                 + "只收提醒，不标记用完。"
-                 + "已过期、今天到期、3 天内到期的物料会显示在底栏角标上。")
+            Text("打开后，已标记用完的物料也会列出来。")
         }
     }
 

@@ -14,6 +14,12 @@ import SwiftUI
 
 struct SummaryView: View {
     @ObservedObject private var store = ExpiryStore.shared
+    /// ★★★ 2026-10-19（用户 bug）：「新写的**摘要**，点击不是进一级菜单，
+    ///   有时候从其他 tab 切回来**会留在二级菜单**」
+    ///   ➜ 根因：摘要的 `NavigationStack` 原来**没绑 path**，
+    ///     所以 `RootView.clearPath(.summary)` 里只能 `break`（无从重置）。
+    ///   ➜ 现在由 `RootView` 传入 path，切走 Tab 时就能和别的 Tab 一样弹回一级。
+    @Binding var path: NavigationPath
 
 
     private var now: Date { Date() }
@@ -38,7 +44,7 @@ struct SummaryView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(spacing: 14) {
                     progressTile
@@ -278,6 +284,10 @@ struct SummaryDetailView: View {
     @ObservedObject private var store = ExpiryStore.shared
     @State private var selected: LabelRecord?
     @State private var notice: Notice?
+    /// ★ 2026-10-19（用户）：「用完的动画在摘要里和效期管理里**是一致的吗**？」
+    ///   → 之前**不一致**：效期管理走"乐观删除"（原生删行动画），摘要只有 `withAnimation`。
+    ///   ➜ 摘要这里补上同一套：先把 id 塞进来让行从数据源消失，再更新 store。
+    @State private var pendingRemoval: Set<UUID> = []
 
     private var list: [LabelRecord] {
         filter.records(from: store.records)
@@ -291,7 +301,7 @@ struct SummaryDetailView: View {
                                        description: Text("这一栏现在是空的"))
                     .listRowBackground(Color.clear)
             } else {
-                ForEach(list) { record in
+                ForEach(list.filter { !pendingRemoval.contains($0.id) }) { record in
                     Button {
                         selected = record
                     } label: {
@@ -308,24 +318,34 @@ struct SummaryDetailView: View {
                     //   所以要「视觉从左到右 = 删除、用完」，声明顺序必须**倒过来写**。
                     //   另外 `role: .destructive` 在滑动菜单里**不会自动变红**，
                     //   必须显式 `.tint(.red)`（之前截图里两个都是蓝色就是这个原因）。
+                    // ★★★ 2026-10-19（用户第二次纠正）：「删除和用完的逻辑是反的」
+                    //   ⚠️ SwiftUI 的 `swipeActions(edge: .trailing)` 按钮**按声明顺序从左到右**排，
+                    //     不是倒序（我上次判错，把「用完」写在前面 → 变成 用完在左、删除在右）。
+                    //   ➜ 想要「左=删除、右=用完」，声明顺序必须是 **删除在前、用完在后**。
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button {
-                            // ★ 同效期管理：`withAnimation { }`（系统默认动画，非自定义曲线）。
-                            withAnimation {
-                                store.markUsed(record, used: record.usedAt == nil)
-                            }
-                        } label: {
-                            Image(systemName: record.usedAt == nil
-                                  ? "checkmark.circle" : "arrow.uturn.backward")
-                        }
-                        .tint(Theme.brand)
-
                         Button(role: .destructive) {
                             store.delete(record)
                         } label: {
                             Image(systemName: "trash")
                         }
                         .tint(.red)
+
+                        Button {
+                            // 和效期管理完全一致：先移除数据源 → 原生删行动画 → 再改数据。
+                            if record.usedAt == nil {
+                                withAnimation { pendingRemoval.insert(record.id) }
+                                store.markUsed(record)
+                            } else {
+                                pendingRemoval.remove(record.id)
+                                withAnimation {
+                                    store.markUsed(record, used: false)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: record.usedAt == nil
+                                  ? "checkmark.circle" : "arrow.uturn.backward")
+                        }
+                        .tint(Theme.brand)
                     }
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {

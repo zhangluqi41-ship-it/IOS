@@ -701,8 +701,10 @@ targets:
         #   扫码框 215pt+线宽6+弧38+呼吸1.10/1.1s
         # ★ 2026-10-19 第五批：用完动画走乐观删除路径 / 呼吸 0.65s / 按下即放大 /
         #   拖动掉帧修复(tileFrames 值类型循环 -> class) / 松手后图层保持在上
-        CURRENT_PROJECT_VERSION: 82
-        MARKETING_VERSION: 1.1.40
+        # ★ 2026-10-19 第六批：摘要路径常重置 / 滑动顺序修正 / 无键盘份数 /
+        #   删到期提醒开关 / 网格置顶与掉帧优化 / 按下即放大 / 呼吸0.65
+        CURRENT_PROJECT_VERSION: 83
+        MARKETING_VERSION: 1.1.41
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -754,8 +756,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.40
-        CURRENT_PROJECT_VERSION: 82
+        MARKETING_VERSION: 1.1.41
+        CURRENT_PROJECT_VERSION: 83
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

@@ -471,11 +471,18 @@ struct LabelActions: ViewModifier {
 
         alert.addTextField { field in
             field.text = "\(self.copies)"
-            field.keyboardType = .numberPad
             field.textAlignment = .center
             field.placeholder = "打印份数"
             // 输入框高度是系统的（改不了），只能把字号调小一点，视觉上轻一些。
             field.font = .systemFont(ofSize: 15, weight: .regular)
+
+            // ★★★ 2026-10-19（用户）：「这个界面有别的办法了没，**我不想要键盘**」
+            //   ➜ 给输入框挂一个**空的 `inputView`**：点它时弹出来的不是系统键盘，而是这个空视图。
+            //     `inputAccessoryView`（下面的步进器）仍然会跟着显示 ——
+            //     所以效果是「点一下 → 只出现 −/＋ 步进器，不弹数字键盘」。
+            //   ➜ 光标也一并隐藏（`tintColor = .clear`），因为它已经不能直接打字了。
+            field.inputView = UIView()
+            field.tintColor = .clear
 
             // ★★★ 2026-10-19（用户）：「这个输入框左右能增加『增加、减少』按钮吗？」
             //   ➜ `UIAlertController` 的输入框**只能独占一行**（左右是系统留白，塞不进按钮）。

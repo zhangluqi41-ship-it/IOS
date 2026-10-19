@@ -86,6 +86,8 @@ struct RootView: View {
     @StateObject private var nav = RootNav()
 
     @State private var templatesPath = NavigationPath()
+    /// ★ 摘要页也必须有独立 path —— 否则切走 tab 时无法把它弹回一级（用户实测会停在二级页）。
+    @State private var summaryPath = NavigationPath()
     @State private var scanPath = NavigationPath()
     @State private var expiryPath = NavigationPath()
     @State private var printerPath = NavigationPath()
@@ -103,7 +105,7 @@ struct RootView: View {
             }
             // ★ 2026-10-18（用户第 1 条）：第二个位置 = 「摘要」。
             Tab("摘要", systemImage: "chart.bar.doc.horizontal", value: AppTab.summary) {
-                SummaryView()
+                SummaryView(path: $summaryPath)
             }
             Tab("扫码", systemImage: "qrcode.viewfinder", value: AppTab.scan) {
                 ScanView(path: $scanPath)
@@ -218,7 +220,7 @@ struct RootView: View {
         switch tab {
         case .templates: if !templatesPath.isEmpty { templatesPath = NavigationPath() }
         // ★ 摘要页没有外部导航栈（`SummaryView` 内部自带的 NavigationStack 没绑 path）→ 无需重置。
-        case .summary: break
+        case .summary: if !summaryPath.isEmpty { summaryPath = NavigationPath() }
         case .scan: if !scanPath.isEmpty { scanPath = NavigationPath() }
         case .expiry: if !expiryPath.isEmpty { expiryPath = NavigationPath() }
         case .printer: if !printerPath.isEmpty { printerPath = NavigationPath() }

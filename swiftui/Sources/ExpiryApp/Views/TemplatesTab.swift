@@ -167,8 +167,9 @@ struct TemplatesTab: View {
             //   ➜ 半透明只加在**被拖的那张**身上（iOS 标准：拿起来的东西是半透明的）。
             .opacity(isDragging ? 0.85 : 1)
             .scaleEffect(isLifted ? 1.06 : 1)
-            .shadow(color: .black.opacity(isLifted ? 0.25 : 0),
-                    radius: isLifted ? 14 : 0, y: isLifted ? 8 : 0)
+            // 阴影半径 14→8：大半径阴影在拖动中每帧重算，是掉帧大头之一。
+            .shadow(color: .black.opacity(isLifted ? 0.22 : 0),
+                    radius: isLifted ? 8 : 0, y: isLifted ? 5 : 0)
             // ⚠️ 这个 animation **只能**作用在它前面（scale/shadow）。
             // ★ 用户：「整个磁贴能否使用**苹果官方系统默认动画**」
             //   ➜ `.default` 就是系统默认曲线 + 时长，不再用我自定义的 `.snappy`。
@@ -383,7 +384,16 @@ struct TemplatesTab: View {
                         // 只更新引用类型的属性 —— 不会引起重绘。
                         frameStore.frames = frames
                     }
+                    // ★★★ 2026-10-19（用户）：「他不应该在最上图层吗，怎么拖到下面就在下图层了」
+                    //   根因：`zIndex` **只在兄弟视图之间比较**。被拖的磁贴在 `LazyVGrid` 内部，
+                    //   而下面的「使用流程」卡片是网格的**兄弟** → 磁贴永远压不过它。
+                    //   ➜ 把**整个网格**在拖动时提到最上层，磁贴内部的 zIndex 才真正有意义。
+                    .zIndex(dragging != nil ? 1 : 0)
+                    // ★ 2026-10-19（用户）：「在磁贴上方拖动时掉帧很严重」
+                    //   拖动每帧都会重算 body，这块静态卡片也跟着重画（里面有圆角/描边/多层背景）。
+                    //   `drawingGroup()` 把它光栅化缓存，拖动期间不再重新渲染。
                     howItWorks
+                        .drawingGroup()
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
