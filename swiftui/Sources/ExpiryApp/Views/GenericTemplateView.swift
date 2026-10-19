@@ -111,7 +111,7 @@ struct GenericTemplateView: View {
                                               bestBefore: bestDate,
                                               maker: makerFinal)
         let record = LabelTemplate.makeRecord(kind: .generic, data: data, createdAt: now,
-                                              expireAt: expireDate, bestBefore: bestDate,
+                                              expireAt: expireDate, bestBefore: min(bestDate, expireDate),
                                               maker: makerFinal)
         return LabelDraft(data: data, record: record)
     }

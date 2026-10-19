@@ -93,6 +93,26 @@ struct CustomTemplateEditor: View {
                 // ★ 2026-10-19（用户）：新建模板页加两个功能开关。
                 Section {
                     Toggle("使用制备功能", isOn: $draft.usePrep)
+
+                    // ★ 2026-10-19（用户）：「**懒人一键保质期**，然后选择顺延的天数」
+                    Toggle("懒人一键保质期", isOn: Binding(
+                        get: { draft.lazyDays != nil },
+                        set: { on in draft.lazyDays = on ? (draft.lazyDays ?? 7) : nil }
+                    ))
+                    if let days = draft.lazyDays {
+                        Stepper(value: Binding(
+                            get: { days },
+                            set: { draft.lazyDays = max(1, $0) }
+                        ), in: 1...365) {
+                            HStack {
+                                Text("顺延天数")
+                                Spacer()
+                                Text("\(days) 天")
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
                     Toggle("扫描二维码二次制备", isOn: $draft.useSecondary)
 
                     if draft.useSecondary {
@@ -105,14 +125,16 @@ struct CustomTemplateEditor: View {
                         }
                         .pickerStyle(.menu)
 
-                        Stepper(value: $draft.secondaryDays, in: 1...60) {
-                            HStack {
-                                Text("完成天数")
-                                Spacer()
-                                Text("\(draft.secondaryDays) 天")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
+                        // ★ 2026-10-19（用户）：「这个**绑定模板是可以选到下面的子菜单**的」
+                        if let source = otherTemplates.first(where: { $0.id == draft.sourceTemplateID }),
+                           !source.allPaths.isEmpty {
+                            Picker("绑定到", selection: $draft.sourceNodePath) {
+                                Text("整个模板").tag([String]())
+                                ForEach(source.allPaths, id: \.self) { path in
+                                    Text(path.joined(separator: " · ")).tag(path)
+                                }
                             }
+                            .pickerStyle(.menu)
                         }
                     }
                 } header: {
@@ -128,7 +150,7 @@ struct CustomTemplateEditor: View {
                                 .foregroundStyle(.orange)
                         } else {
                             Text("扫到「\(otherTemplates.first { $0.id == draft.sourceTemplateID }?.name ?? "")」"
-                                 + "的标签 → 完成时间 = 扫描时刻 + \(draft.secondaryDays) 天，"
+                                 + "的标签 → 完成时间 = 扫描时刻 + \(draft.defaultDays ?? 3) 天（用上面的建议天数），"
                                  + "最佳使用时间沿用原标签。")
                         }
                     }
@@ -145,6 +167,67 @@ struct CustomTemplateEditor: View {
                         Text("标签标题 = 模板名-第一层-第二层…（如「冷冻-猪肉-五花肉」）。")
                     } else {
                         Text("标签标题 = 纯菜单路径（如「猪肉-五花肉」），不带模板名。")
+                    }
+                }
+
+                // ★★★ 2026-10-19（用户）：「还是增加**名称自定义**吧，顺序啊，"‑"用哪些名称连接
+                //   都可以自己来选择」→ 点按字段拼顺序 + 选连接符。
+                Section {
+                    // 已选顺序
+                    if draft.titleParts.isEmpty {
+                        Text("默认规则（按菜单路径拼）")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(draft.titleParts.enumerated()), id: \.offset) { index, part in
+                            HStack {
+                                Text("\(index + 1). \(part.rawValue)")
+                                Spacer()
+                                Button {
+                                    draft.titleParts.remove(at: index)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    // 点按添加
+                    Text("点按添加字段")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                        ForEach(TitlePart.allCases) { part in
+                            Button {
+                                draft.titleParts.append(part)
+                            } label: {
+                                Text(part.rawValue)
+                                    .font(.footnote)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
+                                    .background(Color(uiColor: .tertiarySystemFill),
+                                                in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    // 连接符
+                    Picker("连接符", selection: $draft.titleSeparator) {
+                        Text("短横线  -").tag("-")
+                        Text("中点  ·").tag("·")
+                        Text("空格").tag(" ")
+                        Text("下划线  _").tag("_")
+                    }
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("命名规则")
+                } footer: {
+                    if draft.titleParts.isEmpty {
+                        Text("没有添加字段时按默认规则：空菜单是「模板名-手输名」，有菜单是菜单路径。")
+                    } else {
+                        Text("标题按上面的顺序拼接，仅取当前已选到的层级；连接符用「\(draft.titleSeparator)」。")
                     }
                 }
 

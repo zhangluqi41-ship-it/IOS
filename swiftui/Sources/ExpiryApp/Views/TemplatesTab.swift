@@ -164,6 +164,8 @@ struct TemplatesTab: View {
 
     /// 读保存的顺序：**跳过已删除的**，并补上新增的路由。
     private static func loadOrder() -> [TemplateRoute] {
+        // 首次启动预置「重写」版模板（和内置并存）。
+        CustomTemplateStore.seedPresetsIfNeeded()
         let hidden = Set(Prefs.hiddenTemplates)
         // ★★★ 2026-10-19（用户截图发现）：出现好几个「已删除的模板」磁贴。
         //   根因：模板删掉后 `Prefs.templateOrder` 里还留着 `custom:<uuid>`，

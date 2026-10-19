@@ -30,6 +30,8 @@ struct CustomTemplatePage: View {
     @State private var showSecondaryScan = false
     @State private var scannedTitle: String?
     @State private var scannedBestBefore: Date?
+    /// ★ 2026-10-19（用户）：「增加**无原始保质期**选项，如果无，自动填写最佳保质期 2099.12.31」
+    @State private var noExpiry = false
     @FocusState private var focus: AnyHashable?
 
     /// 从**扫码 Tab** 进来时带着原标签信息（二次制备）。
@@ -101,8 +103,13 @@ struct CustomTemplatePage: View {
             }
 
             Section {
+                Toggle("无原始保质期", isOn: $noExpiry)
+
                 LabelDatePicker(title: "原始保质期", date: $expireDate)
-                QuickDateChips(selection: $expireDate)
+                    .disabled(noExpiry)
+                if !noExpiry {
+                    QuickDateChips(selection: $expireDate)
+                }
 
                 LabelDatePicker(title: "最佳使用时间", date: $bestDate)
                 QuickDateChips(selection: $bestDate)
@@ -128,6 +135,22 @@ struct CustomTemplatePage: View {
         .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
         .onChange(of: selections) { _, _ in syncFromSelection() }
+        .onChange(of: noExpiry) { _, isOn in
+            guard isOn else { return }
+            // 无原始保质期 → 最佳使用时间固定填 2099/12/31（表示"无期限"）。
+            var comps = DateComponents()
+            comps.year = 2099
+            comps.month = 12
+            comps.day = 31
+            comps.hour = 23
+            comps.minute = 59
+            if let far = AppCalendar.shared.date(from: comps) {
+                withAnimation(.default) {
+                    bestDate = far
+                    expireDate = far
+                }
+            }
+        }
         .sheet(isPresented: $showSecondaryScan) {
             SecondaryScanView { title, best in
                 scannedTitle = title
@@ -196,6 +219,8 @@ struct CustomTemplatePage: View {
 
     /// 选中的天数：**自己的优先，没有就往上找最近祖先**，最后兜底模板默认天数。
     private var appliedDays: Int? {
+        // ★ 懒人一键保质期：直接用它，忽略各级菜单天数。
+        if let lazy = template.lazyDays { return lazy }
         let chain = chosenChain()
         guard !chain.isEmpty else { return nil }
         return chain.reversed().compactMap(\.days).first ?? template.defaultDays
@@ -218,6 +243,32 @@ struct CustomTemplatePage: View {
     ///   · **有菜单** → 默认 `第一层-第二层…`（"猪肉-五花肉"）；
     ///     开了「命名带模板名称」→ `模板名-第一层-第二层…`（"冷冻-猪肉-五花肉"）
     private func makeTitle(chain: [CustomNode]) -> String {
+        // ★★★ 2026-10-19（用户）：「还是增加名称自定义吧，**顺序啊、"‑"用哪些名称连接都可以自己来选择**」
+        //   ➜ `titleParts` 非空时，严格按用户排的顺序取字段；
+        //     为空则走旧的默认规则（兼容老模板）。
+        if !template.titleParts.isEmpty {
+            var values: [String] = []
+            for part in template.titleParts {
+                let value: String
+                switch part {
+                case .template:
+                    value = template.name
+                case .level1:
+                    value = chain.count > 0 ? chain[0].name : ""
+                case .level2:
+                    value = chain.count > 1 ? chain[1].name : ""
+                case .level3:
+                    value = chain.count > 2 ? chain[2].name : ""
+                case .manual:
+                    value = materialName.trimmingCharacters(in: .whitespaces)
+                case .source:
+                    value = scannedTitle ?? ""
+                }
+                if !value.isEmpty { values.append(value) }
+            }
+            return values.joined(separator: template.titleSeparator)
+        }
+
         if template.nodes.isEmpty {
             let name = materialName.trimmingCharacters(in: .whitespaces)
             return name.isEmpty ? "" : "\(template.name)-\(name)"
@@ -273,7 +324,7 @@ struct CustomTemplatePage: View {
             data = LabelTemplate.buildCustomSecondary(sourceTitle: sourceTitle,
                                                       suffix: title,
                                                       now: now,
-                                                      doneDays: template.secondaryDays,
+                                                      doneDays: template.defaultDays ?? 3,
                                                       sourceBestBefore: sourceBest,
                                                       maker: makerFinal)
         } else if template.usePrep {
@@ -289,7 +340,7 @@ struct CustomTemplatePage: View {
                                               maker: makerFinal)
         }
         let record = LabelTemplate.makeRecord(kind: .generic, data: data, createdAt: now,
-                                              expireAt: expireDate, bestBefore: bestDate,
+                                              expireAt: expireDate, bestBefore: min(bestDate, expireDate),
                                               maker: makerFinal)
         return LabelDraft(data: data, record: record)
     }

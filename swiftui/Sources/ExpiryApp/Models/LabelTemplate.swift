@@ -235,12 +235,15 @@ enum LabelTemplate {
     /// 通用 / 奶制品 / 肉类共用，只有标题的来源不同（见下面三个入口）。
     private static func buildOpenedLabel(title: String, now: Date, expireDate: Date,
                                          bestBefore: Date, maker: String) -> LabelData {
-        LabelData(
+        // ★★★ 2026-10-19（用户）：「所有日期规则里面，**最佳使用时间不应该超过原始保质期**。
+        //   如果原始保质期更短的话，最佳使用时间应该直接使用原始保质期的日期，而不是建议时间」
+        let best = min(bestBefore, expireDate)
+        return LabelData(
             title: clamp(title),
             rows: [
                 LabelRow(label: "开封时间：", value: fmtDateTime(now)),
                 LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, expireDate)),
-                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, bestBefore)),
+                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, best)),
             ],
             weekdayCn: weekdayCn(now),
             weekdayEn: weekdayEn(now),
@@ -280,7 +283,8 @@ enum LabelTemplate {
     ///   ③ 第三行「最佳使用时间」= 扫码那一刻 + `MeatRule.thawedBestDays`（3）天。
     static func buildMeatThaw(baseName: String, now: Date, maker: String) -> LabelData {
         let complete = MeatRule.thawedComplete(from: now)
-        let best = MeatRule.thawedBest(from: now)
+        // 同上：最佳不晚于「完成时间」那一行。
+        let best = min(MeatRule.thawedBest(from: now), complete)
         return LabelData(
             title: clamp(MeatRule.thawTitle(baseName: baseName)),
             rows: [
@@ -308,6 +312,8 @@ enum LabelTemplate {
     static func buildCustomPrep(title: String, now: Date, doneDays: Int,
                                bestBefore: Date, maker: String) -> LabelData {
         let done = AppCalendar.shared.date(byAdding: .day, value: max(1, doneDays), to: now) ?? now
+        // 同上：最佳不晚于完成时间。
+        let best = min(bestBefore, done)
         return LabelData(
             title: clamp(title),
             rows: [
@@ -331,6 +337,8 @@ enum LabelTemplate {
                                      maker: String) -> LabelData {
         let done = AppCalendar.shared.date(byAdding: .day,
                                            value: max(1, doneDays), to: now) ?? now
+        // ★ 用户：「**包括二次扫描之后**」—— 最佳同样不能晚于完成时间。
+        let best = min(sourceBestBefore, done)
         let combined = clamp("\(clamp(sourceTitle, maxTitleLength))-\(clamp(suffix, maxNameLength))",
                              maxTitleLength)
         return LabelData(

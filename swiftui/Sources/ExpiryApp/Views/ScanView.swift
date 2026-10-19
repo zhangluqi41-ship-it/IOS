@@ -849,6 +849,17 @@ struct ScanView: View {
         for candidate in candidates {
             guard let sourceID = candidate.sourceTemplateID,
                   let source = CustomTemplateStore.template(id: sourceID) else { continue }
+
+            // ★ 2026-10-19（用户）：「**绑定模板是可以选到下面的子菜单**的」
+            //   绑到具体路径时只认那一条（含「模板名-」前缀变体），比全树匹配更精确。
+            if !candidate.sourceNodePath.isEmpty {
+                let pathTitle = candidate.sourceNodePath.joined(separator: "-")
+                if title == pathTitle || title == "\(source.name)-\(pathTitle)" {
+                    return candidate
+                }
+                continue
+            }
+
             if sourceCanProduce(source, title: title) { return candidate }
         }
 

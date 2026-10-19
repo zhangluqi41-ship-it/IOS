@@ -162,10 +162,10 @@ struct MeatTemplateView: View {
 
         let now = Date()
         let data = LabelTemplate.buildMeat(animal: a, cut: c, storage: s, now: now,
-                                           expireDate: expireDate, bestBefore: bestDate,
+                                           expireDate: expireDate, bestBefore: min(bestDate, expireDate),
                                            maker: makerFinal)
         let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: now,
-                                              expireAt: expireDate, bestBefore: bestDate,
+                                              expireAt: expireDate, bestBefore: min(bestDate, expireDate),
                                               maker: makerFinal)
         return LabelDraft(data: data, record: record)
     }

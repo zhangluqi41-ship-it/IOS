@@ -91,10 +91,10 @@ struct DairyTemplateView: View {
         let now = Date()
         let data = LabelTemplate.buildDairy(kindLabel: k.label, now: now,
                                             expireDate: expireDate,
-                                            bestBefore: bestDate,
+                                            bestBefore: min(bestDate, expireDate),
                                             maker: makerFinal)
         let record = LabelTemplate.makeRecord(kind: .dairy, data: data, createdAt: now,
-                                              expireAt: expireDate, bestBefore: bestDate,
+                                              expireAt: expireDate, bestBefore: min(bestDate, expireDate),
                                               maker: makerFinal)
         return LabelDraft(data: data, record: record)
     }
