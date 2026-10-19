@@ -2,21 +2,23 @@ import SwiftUI
 
 // MARK: - 自定义模板：打印页
 //
-// ★★★ 2026-10-19（用户）：
-//   「不需要这么多层的选项，应该点开后**就是**『肉类』那种类型的页面，
-//    然后菜单应该是**三层树形结构**；
-//    我刚新建的模板『星巴克果汁』应该在这个红框（导航标题）里，而不是在名称里」
+// ★★★ 2026-10-19（用户，第三次纠正）：
+//   「(整棵树塞一个菜单) 不应该这样显示，他应该是（肉类页）**这样的菜单选项**存在」
 //
-// 所以这块**不用逐级导航**（原来的 CustomTemplatePicker 已废弃）：
-//   · 导航标题 = **模板名**（"星巴克果汁"）；
-//   · 页面里一个 **`Menu` 下拉**，把整棵树展平、用缩进表示层级（和「肉类」的品类菜单同款）；
-//   · 选到某一项 → 自动填标题（"星巴克果汁-桃浓缩汁"）和日期（今天 + 该级天数）；
-//   · 下面是日期 / 制作人 / 打印，与通用页完全一致。
+// 肉类页的品类是**每一层一个独立的菜单行**：
+//     保存类型        冷冻 ⌄
+//     肉类            鸡肉 ⌄
+//     部位            猪肉 ⌄
+//
+// 所以这里也改成**逐层 Picker**：选完上一层，下一层才出现；
+// 每层标题 = 上一层的名字（第一层叫「品类」）。
+// 选到某一层 → 标题 = 模板名 + 路径，日期 = 今天 + 该层（或最近祖先）的天数。
 
 struct CustomTemplatePage: View {
     let template: CustomTemplate
 
-    @State private var picked: NodeItem?
+    /// 每一层选中的节点 id（nil = 未选）。层级上限见 `CustomNode.maxDepth`。
+    @State private var selections: [UUID?] = Array(repeating: nil, count: CustomNode.maxDepth)
     @State private var title = ""
     @State private var expireDate = Date()
     @State private var bestDate = Date()
@@ -27,21 +29,33 @@ struct CustomTemplatePage: View {
     var body: some View {
         List {
             Section {
-                Menu {
-                    ForEach(flattened) { item in
-                        Button(item.display) { pick(item) }
+                // ★ 逐层菜单：和「肉类」的「保存类型 / 肉类 / 部位」同一个样子。
+                ForEach(visibleLevels, id: \.self) { level in
+                    Picker(levelTitle(level), selection: binding(for: level)) {
+                        Text("未选择").tag(UUID?.none)
+                        ForEach(options(at: level)) { node in
+                            // ★ 2026-10-19（用户）：「**不要在这里显示天数**」——
+                            //   和「肉类」页一样，菜单里只放名字（天数在下面的按钮里体现）。
+                            Text(node.name.isEmpty ? "未命名" : node.name)
+                                .tag(Optional(node.id))
+                        }
                     }
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: template.icon)
-                            .foregroundStyle(Theme.brand)
-                            .frame(width: 22)
-                        Text(picked?.path.joined(separator: "-") ?? "选择品类")
-                            .foregroundStyle(picked == nil ? Color.secondary : Color.primary)
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.footnote)
-                            .foregroundStyle(.tertiary)
+                    .pickerStyle(.menu)
+                }
+                // ★ 和「肉类」页同款：一行蓝色「按推荐填日期」，
+                //   右侧灰字显示推荐的天数；手动改过日期后可点它恢复。
+                if let days = appliedDays {
+                    Button {
+                        applyRecommendedDates()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "wand.and.stars")
+                            Text("按推荐填日期")
+                            Spacer(minLength: 8)
+                            Text("保质期 +\(days) 天 · 最佳 +\(days) 天")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             } header: {
@@ -54,12 +68,15 @@ struct CustomTemplatePage: View {
 
                 LabelDatePicker(title: "最佳使用时间", date: $bestDate)
                 QuickDateChips(selection: $bestDate)
+
+                // 只有真的算出天数才显示这一行（没选品类时完全不占位）。
+                if let days = appliedDays {
+                    Text("已按「\(chosenChain().last?.name ?? "")」的建议 \(days) 天自动填写，可手动改。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             } header: {
                 Text("日期")
-            } footer: {
-                if let item = picked, let days = days(for: item) {
-                    Text("已按「\(item.node.name)」的建议 \(days) 天自动填写，可手动改。")
-                }
             }
 
             Section {
@@ -72,40 +89,92 @@ struct CustomTemplatePage: View {
         .navigationBarTitleDisplayMode(.inline)
         .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
+        .onChange(of: selections) { _, _ in syncFromSelection() }
         .alert("请先选择品类", isPresented: $showPickerAlert) {
             Button("好", role: .cancel) {}
         }
     }
 
-    // MARK: 菜单项
+    // MARK: 层级
 
-    /// 展平后的菜单项（缩进用全角空格，`Menu` 里没有真正的层级视觉）。
-    private var flattened: [NodeItem] { flatten(template.nodes) }
+    /// 第 `level` 层的候选项。
+    private func options(at level: Int) -> [CustomNode] {
+        if level == 0 { return template.nodes }
+        guard let parent = pickedNode(at: level - 1) else { return [] }
+        return parent.children
+    }
 
-    private func flatten(_ nodes: [CustomNode], path: [String] = [],
-                         ancestors: [CustomNode] = [], level: Int = 0) -> [NodeItem] {
-        nodes.flatMap { node -> [NodeItem] in
-            let p = path + [node.name]
-            let selfItem = NodeItem(node: node, path: p, ancestors: ancestors, level: level)
-            return [selfItem] + flatten(node.children, path: p,
-                                        ancestors: ancestors + [node],
-                                        level: level + 1)
+    /// 第 `level` 层已选的节点。
+    private func pickedNode(at level: Int) -> CustomNode? {
+        guard level >= 0, level < selections.count, let id = selections[level] else { return nil }
+        return options(at: level).first { $0.id == id }
+    }
+
+    /// 从第 0 层到**最深已选**的节点链。
+    private func chosenChain() -> [CustomNode] {
+        var result: [CustomNode] = []
+        for level in 0..<selections.count {
+            guard let node = pickedNode(at: level) else { break }
+            result.append(node)
+        }
+        return result
+    }
+
+    /// 当前应该显示几层：
+    /// 第 0 层永远显示；第 N 层在「第 N-1 层已选 **且它还有子项**」时才出现。
+    private var visibleLevels: [Int] {
+        var result: [Int] = [0]
+        for level in 1..<CustomNode.maxDepth {
+            guard let parent = pickedNode(at: level - 1), !parent.children.isEmpty else { break }
+            result.append(level)
+        }
+        return result
+    }
+
+    /// 每层菜单左边的标题：第 0 层「品类」，之后用上一层的名字（和肉类页同理）。
+    private func levelTitle(_ level: Int) -> String {
+        if level == 0 { return "品类" }
+        return pickedNode(at: level - 1)?.name ?? "第 \(level + 1) 层"
+    }
+
+    private func binding(for level: Int) -> Binding<UUID?> {
+        Binding(
+            get: { level < selections.count ? selections[level] : nil },
+            set: { newValue in
+                guard level < selections.count else { return }
+                selections[level] = newValue
+                // 换了这一层，下面各层全部清空（避免残留不匹配的子项）。
+                for deeper in (level + 1)..<selections.count { selections[deeper] = nil }
+            }
+        )
+    }
+
+    /// 选中的天数：**自己的优先，没有就往上找最近祖先**，最后兜底模板默认天数。
+    private var appliedDays: Int? {
+        let chain = chosenChain()
+        guard !chain.isEmpty else { return nil }
+        return chain.reversed().compactMap(\.days).first ?? template.defaultDays
+    }
+
+    /// 点「按推荐填日期」：把两个日期重置成「今天 + 推荐天数」。
+    private func applyRecommendedDates() {
+        guard let days = appliedDays, days > 0 else { return }
+        let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+        withAnimation(.default) {
+            expireDate = due
+            bestDate = due
         }
     }
 
-    /// 该用几天：**自己的天数优先，没有就向上找最近祖先**。
-    ///
-    /// ★ 用户规则：一个模板里天数只出现在某一层（如"冷冻"），
-    ///   往下任何部位都继承它；所以选到"五花"时拿到的是"冷冻"的天数。
-    private func days(for item: NodeItem) -> Int? {
-        if let own = item.node.days { return own }
-        return item.ancestors.reversed().compactMap(\.days).first
-    }
-
-    private func pick(_ item: NodeItem) {
-        picked = item
-        title = item.path.joined(separator: "-")
-        if let days = days(for: item), days > 0 {
+    /// 选择变化后：刷新标题 + 日期。
+    private func syncFromSelection() {
+        let chain = chosenChain()
+        guard !chain.isEmpty else {
+            title = ""
+            return
+        }
+        title = ([template.name] + chain.map(\.name)).joined(separator: "-")
+        if let days = appliedDays, days > 0 {
             let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
             expireDate = due
             bestDate = due
@@ -132,24 +201,6 @@ struct CustomTemplatePage: View {
                                               expireAt: expireDate, bestBefore: bestDate,
                                               maker: makerFinal)
         return LabelDraft(data: data, record: record)
-    }
-}
-
-/// 展平后的一个菜单项。
-struct NodeItem: Identifiable {
-    let node: CustomNode
-    let path: [String]
-    /// 从根到**父级**的链（用于天数继承：自己的没有就往上找）。
-    let ancestors: [CustomNode]
-    let level: Int
-
-    var id: UUID { node.id }
-
-    /// 菜单里显示的文字：缩进 + 名字 +（天数）。
-    var display: String {
-        var text = String(repeating: "　", count: level) + node.name
-        if let days = node.days { text += "（\(days) 天）" }
-        return text
     }
 }
 

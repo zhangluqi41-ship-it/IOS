@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - 自定义模板（数据模型）
 //
@@ -19,8 +20,10 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     var name: String
     /// SF Symbol 名（磁贴图标）。
     var icon: String = "square.grid.2x2"
-    /// 磁贴主色（存名字，避免 Codable 存 Color）。
+    /// **图标块背景色**（存名字，避免 Codable 存 Color）。
     var tintName: String = "blue"
+    /// **图标本身的颜色**。
+    var iconColorName: String = "white"
     /// 第一级菜单。
     var nodes: [CustomNode] = []
     /// 创建时间（用于排序）。
@@ -33,9 +36,41 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     ///   ➜ 编辑器据此**只允许那一层填天数**，其他层禁用。
     ///     打印时：用自己的天数，没有就**向上找最近祖先**（继承）。
     var timeLevel: Int? = nil
+    /// ★ 2026-10-19（用户）：「这一项（模板名称）**也可以设置一个建议时间**」
+    ///   ➜ 模板本身的默认天数（第 0 层）。设了就等于 `timeLevel = 0`，
+    ///     下属各层不再设时间；打印时没选到具体天数就用它兜底。
+    var defaultDays: Int? = nil
 
     /// 叶子总数（删除确认、统计用）。
     var leafCount: Int { nodes.reduce(0) { $0 + $1.leafCount } }
+
+    /// 可选颜色（名字 → 系统色）。
+    static let colorChoices = [
+        "blue", "green", "orange", "red", "purple",
+        "pink", "teal", "indigo", "brown", "gray",
+        "yellow", "mint", "cyan", "white", "black",
+    ]
+
+    static func color(named name: String) -> Color {
+        switch name {
+        case "blue": return .blue
+        case "green": return .green
+        case "orange": return .orange
+        case "red": return .red
+        case "purple": return .purple
+        case "pink": return .pink
+        case "teal": return .teal
+        case "indigo": return .indigo
+        case "brown": return .brown
+        case "gray": return .gray
+        case "yellow": return .yellow
+        case "mint": return .mint
+        case "cyan": return .cyan
+        case "white": return .white
+        case "black": return .black
+        default: return .accentColor
+        }
+    }
 }
 
 /// 菜单树的一个节点。

@@ -90,7 +90,10 @@ enum TemplateRoute: Hashable {
         case .kombucha: return Theme.tplKombuchaTint
         case .dairy: return Theme.tplDairyTint
         case .meat: return Theme.tplMeatTint
-        case .custom: return Theme.brand
+        case .custom(let id):
+            // 图标颜色（自定义模板可调）。
+            let template = CustomTemplateStore.template(id: id)
+            return CustomTemplate.color(named: template?.iconColorName ?? "white")
         }
     }
 
@@ -100,7 +103,10 @@ enum TemplateRoute: Hashable {
         case .kombucha: return Theme.tplKombuchaFill
         case .dairy: return Theme.tplDairyFill
         case .meat: return Theme.tplMeatFill
-        case .custom: return Theme.brand.opacity(0.15)
+        case .custom(let id):
+            // 图标块背景色（自定义模板可调）。
+            let template = CustomTemplateStore.template(id: id)
+            return CustomTemplate.color(named: template?.tintName ?? "blue")
         }
     }
 }
@@ -136,16 +142,9 @@ struct TemplatesTab: View {
     @State private var pressedRoute: TemplateRoute?
     /// 打开自定义模板编辑器（新建）。
     @State private var showTemplateEditor = false
-    /// 打开编辑器**编辑已有模板**（v2 补：不用再删了重建）。
-    @State private var editingTemplate: CustomTemplate?
     /// ★ 2026-10-19（用户）：「选删除时**全部磁贴右上角增加一个红色减号圆形标**」
     ///   → 进入"删除模式"：图钉换成红减号，点一下删这个磁贴；拖动暂时禁用。
     @State private var deletingMode = false
-    /// ★★★ 2026-10-19（用户）：「**按住不拖动 → 弹出修改菜单（固定、编辑）**；
-    ///   按住拖动 → 进入顺序编辑模式」
-    ///   → 长按 0.45s 且**没有位移**时弹出 `confirmationDialog`；
-    ///     一旦移动超过 6pt，`highPriorityGesture(DragGesture)` 优先接管，走拖动排序。
-    @State private var menuRoute: TemplateRoute?
     /// 自定义模板列表（改动后刷新磁贴区用）。
     @State private var customTemplates: [CustomTemplate] = CustomTemplateStore.all
     /// 手指相对起点的位移 —— 直接当 offset 用（1:1 跟手）。
@@ -212,9 +211,14 @@ struct TemplatesTab: View {
             //   ➜ 半透明只加在**被拖的那张**身上（iOS 标准：拿起来的东西是半透明的）。
             .opacity(isDragging ? 0.85 : 1)
             .scaleEffect(isLifted ? 1.06 : 1)
-            // 阴影半径 14→8：大半径阴影在拖动中每帧重算，是掉帧大头之一。
-            .shadow(color: .black.opacity(isLifted ? 0.22 : 0),
-                    radius: isLifted ? 8 : 0, y: isLifted ? 5 : 0)
+            // ★ 2026-10-19：拖动中**不用 `shadow`**（实时高斯模糊是每帧的 GPU 大头），
+            //   改成 2pt 描边 —— 视觉上同样是"被拿起来"，渲染成本低一个量级。
+            .overlay {
+                if isLifted {
+                    RoundedRectangle(cornerRadius: Theme.tileRadius)
+                        .strokeBorder(Theme.brand.opacity(0.55), lineWidth: 2)
+                }
+            }
             // ⚠️ 这个 animation **只能**作用在它前面（scale/shadow）。
             // ★ 用户：「整个磁贴能否使用**苹果官方系统默认动画**」
             //   ➜ `.default` 就是系统默认曲线 + 时长，不再用我自定义的 `.snappy`。
@@ -277,13 +281,7 @@ struct TemplatesTab: View {
                         pressedRoute = nil
                     }
             )
-            // ★ 长按**不拖动** → 弹修改菜单（固定 / 编辑）。
-            //   `DragGesture(minimumDistance: 6)` 没达到阈值时不会触发，
-            //   所以长按和拖动互不干扰。
-            .onLongPressGesture(minimumDuration: 0.45) {
-                guard !deletingMode else { return }
-                menuRoute = route
-            }
+
     }
 
     /// 松手：换位 + 清所有拖动状态。
@@ -326,6 +324,10 @@ struct TemplatesTab: View {
         let pinned = isPinned(route)
         return ZStack(alignment: .topTrailing) {
             card(for: route)
+                // ★★★ 2026-10-19（用户）：「删除界面，**不应该存在『点击图标进入菜单』**」
+                //   ➜ 删除模式下 `NavigationLink` 一并禁用，点磁贴本体不会有任何跳转，
+                //     只有右上角的红减号是有效点击区。
+                .disabled(deletingMode)
                 // ★ 2026-10-19（用户）：目标**不要变半透明**（半透明只属于被拖的那张），
                 //   这里只保留一点点上移，作为"它要让位了"的提示。
                 .offset(y: isTarget ? -4 : 0)
@@ -484,7 +486,7 @@ struct TemplatesTab: View {
             .navigationTitle("效期打印")
             .background(Color(.systemGroupedBackground))
             .toolbar {
-                if !hiddenKeys.isEmpty {
+                if !hiddenKeys.isEmpty && !deletingMode {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("恢复全部") {
                             withAnimation(.default) {
@@ -508,62 +510,39 @@ struct TemplatesTab: View {
                         .fontWeight(.semibold)
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            showTemplateEditor = true
-                        } label: {
-                            Label("新建模板", systemImage: "plus")
-                        }
+                // ★ 2026-10-19（用户）：「**删除界面不需要这个按钮**，删除时只做删除处理」
+                //   → 删除模式下把 `⋯` 整个收起来，右上角只留「完成」。
+                if !deletingMode {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button {
+                                showTemplateEditor = true
+                            } label: {
+                                Label("新建模板", systemImage: "plus")
+                            }
 
-                        // ★ 2026-10-19（用户）：「⋯ 菜单**不应该有三项，只需要新建和删除**」
-                        //   点「删除」→ 进入删除模式：所有磁贴右上角变红减号，点一下删一个。
-                        Button(role: .destructive) {
-                            withAnimation(.default) { deletingMode = true }
+                            // ★ 2026-10-19（用户）：「⋯ 菜单**不应该有三项，只需要新建和删除**」
+                            //   点「删除」→ 进入删除模式：所有磁贴右上角变红减号，点一下删一个。
+                            Button(role: .destructive) {
+                                withAnimation(.default) { deletingMode = true }
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
                         } label: {
-                            Label("删除", systemImage: "trash")
+                            Image(systemName: "ellipsis.circle")
                         }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
-            .confirmationDialog(
-                menuRoute?.title ?? "",
-                isPresented: Binding(get: { menuRoute != nil },
-                                     set: { if !$0 { menuRoute = nil } }),
-                titleVisibility: .visible,
-                presenting: menuRoute
-            ) { route in
-                Button(isPinned(route) ? "取消固定" : "固定") {
-                    togglePin(route)
-                    menuRoute = nil
-                }
-                if route.isCustom {
-                    Button("编辑") {
-                        if case .custom(let id) = route,
-                           let template = CustomTemplateStore.template(id: id) {
-                            editingTemplate = template
-                        }
-                        menuRoute = nil
-                    }
-                }
-                Button("取消", role: .cancel) { menuRoute = nil }
-            } message: { route in
-                Text(route.subtitle)
-            }
+            // ★★★ 2026-10-19（用户）：「**整个菜单都不需要**。
+            //   以后只有：点击磁贴 → 进效期打印；按住磁贴 → 移动磁贴。
+            //   其他手势功能都不需要，以后也不会编辑已完成的标签」
+            //   → 长按弹菜单（固定/编辑）整块删除；固定仍靠右上角图钉点按。
             .sheet(isPresented: $showTemplateEditor) {
                 CustomTemplateEditor(original: nil) { template in
                     CustomTemplateStore.upsert(template)
                     customTemplates = CustomTemplateStore.all
                     // ★ 必须重算 order，否则新建的磁贴不会出现（order 只在 @State 初始化时算一次）。
-                    withAnimation(.default) { order = Self.loadOrder() }
-                }
-            }
-            .sheet(item: $editingTemplate) { template in
-                CustomTemplateEditor(original: template) { updated in
-                    CustomTemplateStore.upsert(updated)
-                    customTemplates = CustomTemplateStore.all
                     withAnimation(.default) { order = Self.loadOrder() }
                 }
             }
@@ -666,16 +645,13 @@ struct TemplateCard: View {
                     .frame(width: 46, height: 46)
                     .background(fill, in: RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
+                // ★ 2026-10-19（用户）：「红框里的**备注不需要，删除**」
+                //   → 磁贴上只留图标 + 标题，不再显示 subtitle。
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -683,6 +659,12 @@ struct TemplateCard: View {
                         in: RoundedRectangle(cornerRadius: Theme.tileRadius))
         }
         .buttonStyle(.plain)
+        // ★★★ 2026-10-19（用户）：「排序模式还是会掉帧，**特别厉害**，能否渲染也用苹果第一方工具」
+        //   ➜ `drawingGroup()` = 用 **Metal 把这一层栅格化成位图**（苹果第一方渲染路径）。
+        //     拖动的每一帧只是移动一张现成位图，不再重新走一遍 SwiftUI 的布局/绘制/圆角/文字排版，
+        //     这是 SwiftUI 里最直接的「交给系统 GPU 画」开关。
+        //   ⚠️ 副作用：文字由 Metal 光栅化，极端放大时可能略软（正常 1:1 显示无感）。
+        .drawingGroup()
     }
 }
 

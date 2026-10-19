@@ -26,8 +26,29 @@ struct CustomTemplateEditor: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("模板名称") {
-                    TextField("如：星巴克果汁", text: $draft.name)
+                Section {
+                    TextField("点击输入模板名称", text: $draft.name)
+                } header: {
+                    Text("模板名称")
+                } footer: {
+                    // ★ 用户：模板名称这一项**也可以设置一个建议时间**（作为这一层的默认天数）。
+                    Toggle("设建议天数", isOn: Binding(
+                        get: { draft.defaultDays != nil },
+                        set: { on in
+                            draft.defaultDays = on ? (draft.defaultDays ?? 3) : nil
+                            // 模板本身设了时间 → 锁定"第 0 层"，下级各层不再设。
+                            draft.timeLevel = on ? 0 : nil
+                        }
+                    ))
+                    if draft.defaultDays != nil {
+                        Stepper(value: Binding(
+                            get: { draft.defaultDays ?? 3 },
+                            set: { draft.defaultDays = max(1, $0) }
+                        ), in: 1...365) {
+                            Text("默认 \(draft.defaultDays ?? 3) 天")
+                                .monospacedDigit()
+                        }
+                    }
                 }
 
                 Section("图标") {
@@ -49,6 +70,15 @@ struct CustomTemplateEditor: View {
                         }
                     }
                     .padding(.vertical, 4)
+                }
+
+                // ★ 2026-10-19（用户）：「下方增加两个颜色选择：**背景色、图标颜色**」
+                Section("图标块背景色") {
+                    colorRow(selection: $draft.tintName)
+                }
+
+                Section("图标颜色") {
+                    colorRow(selection: $draft.iconColorName)
                 }
 
                 Section {
@@ -108,6 +138,38 @@ struct CustomTemplateEditor: View {
             levels.insert(row.level + 1)      // level 是 0-based → 层号 +1
         }
         draft.timeLevel = levels.count == 1 ? levels.first : nil
+    }
+
+    /// 一排色点（选中的带描边 + 对勾）。
+    @ViewBuilder
+    private func colorRow(selection: Binding<String>) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
+            ForEach(CustomTemplate.colorChoices, id: \.self) { name in
+                Button {
+                    selection.wrappedValue = name
+                } label: {
+                    Circle()
+                        .fill(CustomTemplate.color(named: name))
+                        .frame(width: 28, height: 28)
+                        .overlay {
+                            Circle().strokeBorder(
+                                Color.primary.opacity(selection.wrappedValue == name ? 0.9 : 0.12),
+                                lineWidth: selection.wrappedValue == name ? 2 : 1
+                            )
+                        }
+                        .overlay {
+                            if selection.wrappedValue == name {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(name == "white" || name == "yellow"
+                                                     ? Color.black : Color.white)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: 行
@@ -215,11 +277,14 @@ struct CustomTemplateEditor: View {
         }
     }
 
+    /// ★ 2026-10-19（用户）：「**增加图标数量**」→ 16 → 40 个（5 行 × 8）。
     static let iconChoices = [
-        "square.grid.2x2", "shippingbox", "drop", "leaf",
-        "flame", "snowflake", "cup.and.saucer", "carrot",
-        "fish", "birthday.cake", "takeoutbag.and.cup.and.straw", "fork.knife",
-        "thermometer", "clock", "tag", "barcode",
+        "square.grid.2x2", "shippingbox", "drop", "leaf", "flame", "snowflake",
+        "cup.and.saucer", "carrot", "fish", "birthday.cake", "fork.knife", "barcode",
+        "thermometer", "clock", "tag", "bag", "cart", "archivebox", "tray", "cylinder",
+        "cube", "square.stack", "mug", "wineglass", "basket", "heart", "star", "bolt",
+        "sparkles", "square.grid.3x3", "circle.hexagongrid", "doc.text", "checklist",
+        "bookmark", "flag", "paintpalette", "scissors", "wrench", "hammer", "takeoutbag.and.cup.and.straw",
     ]
 }
 
@@ -285,23 +350,25 @@ struct CustomNodeSheet: View {
 
                 if canAddChild {
                     Section("子菜单（第 \(level + 1) 层）") {
-                        ForEach(Array(node.children.enumerated()), id: \.element.id) { index, child in
-                            HStack {
-                                Text(child.name.isEmpty ? "未命名" : child.name)
-                                Spacer()
+                        // ★ 2026-10-19（用户）：「这里的名称**无法修改**」
+                        //   ➜ 原来子项只是只读的 `Text`。现在换成**内联 `TextField`**，
+                        //     点上去直接改名（不再嵌一层弹窗，避免递归）。
+                        //   ➜ 天数不在这里改 —— 按"时间只在一个层级"的规则，子项继承上级的天数。
+                        ForEach($node.children) { $child in
+                            HStack(spacing: 8) {
+                                TextField("未命名", text: $child.name)
+                                Spacer(minLength: 8)
                                 if let days = child.days {
-                                    Text("\(days) 天").font(.footnote).foregroundStyle(.secondary)
+                                    Text("\(days) 天")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
                                 }
-                            }
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    node.children.remove(at: index)
-                                } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .tint(.red)
                             }
                         }
+                        .onDelete { offsets in
+                            node.children.remove(atOffsets: offsets)
+                        }
+
                         Button {
                             node.children.append(CustomNode(name: ""))
                         } label: {
