@@ -696,8 +696,11 @@ targets:
         #   ④ 拖动手势改 highPriorityGesture（被 NavigationLink 抢）；
         #   ⑤ 松手落位改 easeOut(0.22) 自然过渡；
         #   ⑥ 扫码框按**硬件屏幕 R 角**比例（250pt 框 → 半径 35，角长 52）。
-        CURRENT_PROJECT_VERSION: 80
-        MARKETING_VERSION: 1.1.38
+        # ★ 2026-10-19 第四批：用完动画(系统默认) / 固定按钮去描边 /
+        #   拖动视觉(被拖的半透明+放大1.06, 目标不变淡) + 全默认动画 /
+        #   扫码框 215pt+线宽6+弧38+呼吸1.10/1.1s
+        CURRENT_PROJECT_VERSION: 81
+        MARKETING_VERSION: 1.1.39
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
         #   「真实现（能访问 ExpiryStore）」和「空实现（只是让扩展编译过）」。
@@ -749,8 +752,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.xiaoqi.expiry_manager.widget
         PRODUCT_NAME: ExpiryWidget
         SKIP_INSTALL: YES
-        MARKETING_VERSION: 1.1.38
-        CURRENT_PROJECT_VERSION: 80
+        MARKETING_VERSION: 1.1.39
+        CURRENT_PROJECT_VERSION: 81
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) EXPIRY_WIDGET"
         # ⚠️ Info.plist 放在 `Support/` 而不是 source 目录里 ——
         #    否则 xcodegen 可能把它当成资源再打一份进包里。

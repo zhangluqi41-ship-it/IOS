@@ -310,7 +310,10 @@ struct SummaryDetailView: View {
                     //   必须显式 `.tint(.red)`（之前截图里两个都是蓝色就是这个原因）。
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button {
-                            store.markUsed(record, used: record.usedAt == nil)
+                            // ★ 同效期管理：`withAnimation { }`（系统默认动画，非自定义曲线）。
+                            withAnimation {
+                                store.markUsed(record, used: record.usedAt == nil)
+                            }
                         } label: {
                             Image(systemName: record.usedAt == nil
                                   ? "checkmark.circle" : "arrow.uturn.backward")

@@ -146,11 +146,17 @@ struct TemplatesTab: View {
     private func tile(_ route: TemplateRoute) -> some View {
         let isDragging = dragging == route
         return tileCore(route)
-            .scaleEffect(isDragging ? 1.03 : 1)
+            // ★★★ 2026-10-19（用户）：「**正在被我拖动的变半透明**，
+            //   你把没被我拖动的、准备让位的那个变成半透明了」
+            //   ➜ 半透明只加在**被拖的那张**身上（iOS 标准：拿起来的东西是半透明的）。
+            .opacity(isDragging ? 0.85 : 1)
+            .scaleEffect(isDragging ? 1.06 : 1)
             .shadow(color: .black.opacity(isDragging ? 0.25 : 0),
                     radius: isDragging ? 14 : 0, y: isDragging ? 8 : 0)
             // ⚠️ 这个 animation **只能**作用在它前面（scale/shadow）。
-            .animation(.snappy(duration: 0.18), value: isDragging)
+            // ★ 用户：「整个磁贴能否使用**苹果官方系统默认动画**」
+            //   ➜ `.default` 就是系统默认曲线 + 时长，不再用我自定义的 `.snappy`。
+            .animation(.default, value: isDragging)
             // ★ offset 在 animation 之后 → 拖动中位移变化不带过渡 = 1:1 跟手。
             .offset(isDragging ? dragOffset : .zero)
             // ★★★ 2026-10-19（用户）：「图标移动的时候，现在是**瞬间移动**，
@@ -161,7 +167,7 @@ struct TemplatesTab: View {
             //     而不是"啪"地闪现。
             //   ⚠️ 重排那一步仍是**瞬间**的（`justDropped` 让这张不带 order 动画），
             //     所以不会出现"从老位置滑过去"。
-            .animation(isDragging ? nil : .easeOut(duration: 0.22), value: dragOffset)
+            .animation(isDragging ? nil : .default, value: dragOffset)
             .zIndex(isDragging ? 1 : 0)
             // ★★★ 2026-10-19（用户 bug）：「按住完全不能拖动，松手后会移动」
             //   根因：磁贴内部是 `NavigationLink`（点击进模板页），它的**内层点击手势
@@ -180,7 +186,7 @@ struct TemplatesTab: View {
                             $0.key != route && $0.value.contains(value.location)
                         }?.key
                         if hit != dropTarget {
-                            withAnimation(.snappy(duration: 0.15)) { dropTarget = hit }
+                            withAnimation(.default) { dropTarget = hit }
                         }
                     }
                     .onEnded { _ in
@@ -198,7 +204,7 @@ struct TemplatesTab: View {
         justDropped = route
 
         // ① 先结束拖动（isDragging = false）—— 让下一行 dragOffset 的变化走 `.easeOut` 过渡。
-        withAnimation(.snappy(duration: 0.15)) {
+        withAnimation(.default) {
             dragging = nil
             dropTarget = nil
         }
@@ -209,7 +215,7 @@ struct TemplatesTab: View {
            let fromIndex = order.firstIndex(of: route),
            let toIndex = order.firstIndex(of: target),
            fromIndex != toIndex {
-            withAnimation(.snappy(duration: 0.22)) {
+            withAnimation(.default) {
                 let moved = order.remove(at: fromIndex)
                 order.insert(moved, at: toIndex)
             }
@@ -229,13 +235,12 @@ struct TemplatesTab: View {
         let pinned = isPinned(route)
         return ZStack(alignment: .topTrailing) {
             card(for: route)
-                // 落在谁头上，谁变淡 + 轻微上移（让位趋势）；松手才真正换位。
-                .opacity(isTarget ? 0.55 : 1)
-                .offset(y: isTarget ? -5 : 0)
-                .animation(.snappy(duration: 0.18), value: isTarget)
-                // ★ 重排时：刚放下的那张**不带动画**（直接落到新格），其余平滑移动。
-                .animation(justDropped == route ? nil : .snappy(duration: 0.22),
-                           value: order)
+                // ★ 2026-10-19（用户）：目标**不要变半透明**（半透明只属于被拖的那张），
+                //   这里只保留一点点上移，作为"它要让位了"的提示。
+                .offset(y: isTarget ? -4 : 0)
+                .animation(.default, value: isTarget)
+                // 重排时：刚放下的那张不带动画（直接落到新格），其余走系统默认动画。
+                .animation(justDropped == route ? nil : .default, value: order)
 
             // 右上角「固定」快捷键：**点一下直接切换**（不弹任何菜单）。
             //
@@ -250,16 +255,10 @@ struct TemplatesTab: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(pinned ? Color.white : Color.secondary)
                     .frame(width: 28, height: 28)
+                    // ★ 2026-10-19（用户）：「**不要外面的描边，只要按钮背景色**」
+                    //   ➜ 去掉 `strokeBorder` 那一圈，只留实心圆形底。
                     .background(
                         Circle().fill(pinned ? Theme.brand : Color(.tertiarySystemFill))
-                    )
-                    .overlay(
-                        // 一圈极细描边，让圆形在浅色卡片上也有边界感。
-                        Circle().strokeBorder(
-                            pinned ? Color.white.opacity(0.22)
-                                   : Color.primary.opacity(0.10),
-                            lineWidth: 1
-                        )
                     )
                     // ★ 整个圆都是热区（不只是图标那 11pt）。
                     .contentShape(Circle())
@@ -286,7 +285,7 @@ struct TemplatesTab: View {
             pinned.append(route.key)
         }
         // 先改 @State（保证界面立刻重绘），再落盘。
-        withAnimation(.snappy) { pinnedKeys = pinned }
+        withAnimation(.default) { pinnedKeys = pinned }
         Prefs.pinnedTemplates = pinned
         applyPinOrder()
     }
@@ -295,20 +294,20 @@ struct TemplatesTab: View {
     private func applyPinOrder() {
         let pinned = pinnedKeys.compactMap { TemplateRoute.from(key: $0) }
         let rest = order.filter { !pinned.contains($0) }
-        withAnimation(.snappy) { order = pinned + rest }
+        withAnimation(.default) { order = pinned + rest }
         Prefs.templateOrder = order.map(\.key)
     }
 
     /// 删除（隐藏）磁贴 —— 记进 `Prefs.hiddenTemplates`，可用「恢复全部」找回。
     private func remove(_ route: TemplateRoute) {
         let remaining = pinnedKeys.filter { $0 != route.key }
-        withAnimation(.snappy) { pinnedKeys = remaining }
+        withAnimation(.default) { pinnedKeys = remaining }
         Prefs.pinnedTemplates = remaining
         var hidden = hiddenKeys
         if !hidden.contains(route.key) { hidden.append(route.key) }
-        withAnimation(.snappy) { hiddenKeys = hidden }
+        withAnimation(.default) { hiddenKeys = hidden }
         Prefs.hiddenTemplates = hidden
-        withAnimation(.snappy) {
+        withAnimation(.default) {
             order.removeAll { $0 == route }
         }
         Prefs.templateOrder = order.map(\.key)
@@ -360,7 +359,7 @@ struct TemplatesTab: View {
                 if !hiddenKeys.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("恢复全部") {
-                            withAnimation(.snappy) {
+                            withAnimation(.default) {
                                 hiddenKeys = []
                                 Prefs.hiddenTemplates = []
                                 order = Self.loadOrder()

@@ -448,7 +448,7 @@ extension QRScannerModel: AVCaptureMetadataOutputObjectsDelegate {
 struct ScannerCameraView: UIViewRepresentable {
     let session: AVCaptureSession
     /// 取景框边长（用来换算识别区域）。
-    var interestSide: CGFloat = 250
+    var interestSide: CGFloat = 215
     /// 换算好的识别区域（归一化坐标）回调。
     var onInterestRect: ((CGRect) -> Void)? = nil
 
@@ -480,7 +480,7 @@ final class CameraHostView: UIView {
     }
 
     /// 取景框边长（与 `ScanView.boxSide` 一致）。
-    var interestSide: CGFloat = 250 {
+    var interestSide: CGFloat = 215 {
         didSet { if oldValue != interestSide { setNeedsLayout() } }
     }
     /// 换算结果回调（SwiftUI 层接到后转给 `QRScannerModel.setInterestRect`）。
@@ -525,7 +525,7 @@ struct ScanView: View {
     @State private var alertTitle = "无法识别的标签"
     @State private var invalidText = ""
 
-    private let boxSide: CGFloat = 250
+    private let boxSide: CGFloat = 215
     /// 呼吸动画开关（`onAppear` 置 true，让 `.animation` 开始循环）。
     @State private var breathing = false
 
@@ -632,9 +632,11 @@ struct ScanView: View {
     private var viewfinder: some View {
         CornerBrackets(side: boxSide)
             .frame(width: boxSide, height: boxSide)
-            .scaleEffect(breathing ? 1.05 : 1.0)
-            .opacity(breathing ? 1.0 : 0.72)
-            .animation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true),
+            // ★ 2026-10-19（用户）：「增加呼吸幅度和速度」
+            //   幅度 1.05→**1.10**、透明度 0.72→**0.55**、单程 1.7s→**1.1s**。
+            .scaleEffect(breathing ? 1.10 : 1.0)
+            .opacity(breathing ? 1.0 : 0.55)
+            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true),
                        value: breathing)
             .onAppear { breathing = true }
     }
@@ -827,9 +829,9 @@ private struct CornerBrackets: View {
     ///   ➜ 半径 35 必须小于角长，所以角长从 30 加长到 **52**（弧占 67%、直线段 17），
     ///     视觉上就是"整个角大部分是圆弧"—— 和屏幕边角一个感觉。
     ///   ⚠️ 三个参数一起调才有意义：`cornerRadius` 不能 ≥ `length`。
-    private let length: CGFloat = 52
-    private let thickness: CGFloat = 4
-    private let cornerRadius: CGFloat = 35
+    private let length: CGFloat = 46
+    private let thickness: CGFloat = 6
+    private let cornerRadius: CGFloat = 38
 
     var body: some View {
         ZStack {

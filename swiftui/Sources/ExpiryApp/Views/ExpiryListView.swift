@@ -48,7 +48,13 @@ struct ExpiryListView: View {
                                 //   视觉从左到右 = 删除（红）、用完（蓝）。
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     Button {
-                                        store.markUsed(record, used: record.usedAt == nil)
+                                        // ★ 2026-10-19（用户）：「点击已用完完全无动画，
+                                        //   一瞬间消失，要求和删除的动画相同」
+                                        //   ➜ `withAnimation { }` **不传曲线** = 系统默认动画，
+                                        //     就是 `List` 删除行用的那一套。
+                                        withAnimation {
+                                            store.markUsed(record, used: record.usedAt == nil)
+                                        }
                                     } label: {
                                         Image(systemName: record.usedAt == nil
                                               ? "checkmark.circle" : "arrow.uturn.backward")
@@ -293,7 +299,9 @@ struct ExpiryDetailSheet: View {
 
                 Section {
                     Button(record.usedAt == nil ? "标记为已用完" : "恢复为使用中") {
-                        store.markUsed(record, used: record.usedAt == nil)
+                        withAnimation {
+                            store.markUsed(record, used: record.usedAt == nil)
+                        }
                         dismiss()
                     }
                     Button("删除这条记录", role: .destructive) {
