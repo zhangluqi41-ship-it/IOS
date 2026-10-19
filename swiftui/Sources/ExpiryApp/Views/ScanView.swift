@@ -821,6 +821,10 @@ private struct CornerBrackets: View {
     let side: CGFloat
     private let length: CGFloat = 30
     private let thickness: CGFloat = 4
+    /// ★ 2026-10-19（用户）：「这个**是直角**，统一苹果大 R 角（和苹果屏幕 R 角一致）」
+    ///   原来 L 形是两条直线拼的 90° 尖角；现在拐角用二次贝塞尔画圆弧。
+    ///   13 是相对角长 30 的比例（约 43%），视觉上就是苹果那种"大圆角"。
+    private let cornerRadius: CGFloat = 13
 
     var body: some View {
         ZStack {
@@ -833,8 +837,12 @@ private struct CornerBrackets: View {
 
     private var bracket: some View {
         Path { path in
+            // ★ 圆弧拐角：竖边 → 圆弧（控制点=直角顶点）→ 横边
+            let r = min(cornerRadius, length * 0.85)
             path.move(to: CGPoint(x: 0, y: length))
-            path.addLine(to: CGPoint(x: 0, y: 0))
+            path.addLine(to: CGPoint(x: 0, y: r))
+            path.addQuadCurve(to: CGPoint(x: r, y: 0),
+                              control: CGPoint(x: 0, y: 0))
             path.addLine(to: CGPoint(x: length, y: 0))
         }
         // ★ 2026-10-19：扫码器的四个角是**纯白**（原来是品牌浅蓝）。

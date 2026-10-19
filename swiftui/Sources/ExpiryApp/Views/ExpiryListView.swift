@@ -41,18 +41,20 @@ struct ExpiryListView: View {
                                     row(record)
                                 }
                                 .buttonStyle(.plain)
+                                // ★★★ 2026-10-19（用户）：「取消文字（重新打印、删除、用完
+                                //   全都只有图片），统一图片从效期数据里使用」
+                                //   → 全部改成 `Image(systemName:)`，不再用 `Label`（那会带文字）。
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     Button(role: .destructive) {
                                         store.delete(record)
                                     } label: {
-                                        Label("删除", systemImage: "trash")
+                                        Image(systemName: "trash")
                                     }
                                     Button {
                                         store.markUsed(record, used: record.usedAt == nil)
                                     } label: {
-                                        Label(record.usedAt == nil ? "用完" : "恢复",
-                                              systemImage: record.usedAt == nil
-                                                  ? "checkmark.circle" : "arrow.uturn.backward")
+                                        Image(systemName: record.usedAt == nil
+                                              ? "checkmark.circle" : "arrow.uturn.backward")
                                     }
                                     .tint(Theme.brand)
                                 }
@@ -60,7 +62,7 @@ struct ExpiryListView: View {
                                     Button {
                                         reprint(record)
                                     } label: {
-                                        Label("重新打印", systemImage: "printer")
+                                        Image(systemName: "printer")
                                     }
                                     .tint(Theme.brand)
                                 }

@@ -352,17 +352,12 @@ struct LabelActions: ViewModifier {
         case notice(title: String, message: String)
         /// ★ 2026-10-18（用户第 4 条）：首项 = 待打印草稿，次项 = 同名未过期记录。
         case duplicate(LabelDraft, [LabelRecord])
-        /// ★★★ 2026-10-19（用户选 A：「用真系统 alert（100% 原生）」）：
-        ///   打印确认不再自绘卡片，直接用系统 alert —— 按钮/玻璃/圆角全是系统的。
-        ///   代价：弹窗里**不能改份数**（份数用「打印机」页里的设置），
-        ///   因为系统 alert 放不下 Stepper。
-        case confirmPrint(LabelDraft)
+
 
         var title: String {
             switch self {
             case .notice(let t, _): return t
             case .duplicate: return "存在未过期物料"
-            case .confirmPrint: return "确认打印"
             }
         }
 
@@ -372,18 +367,6 @@ struct LabelActions: ViewModifier {
             case .duplicate(_, let list):
                 let names = Set(list.map(\.title)).joined(separator: "、")
                 return "「\(names)」还有 \(list.count) 条未过期。要把这批标记为已用完吗？"
-            case .confirmPrint(let draft):
-                // 预览 = 与标签同源的三块内容（标题 / 各行 / 制作人）。
-                // ⚠️ `LabelRow.label` 自带全角冒号，别再补。
-                var lines = [draft.data.title, ""]
-                for row in draft.data.rows {
-                    lines.append("\(row.label)\(row.value)")
-                }
-                if !draft.data.maker.isEmpty {
-                    lines.append("")
-                    lines.append(draft.data.maker)
-                }
-                return lines.joined(separator: "\n")
             }
         }
     }
@@ -408,10 +391,6 @@ struct LabelActions: ViewModifier {
                 if case .duplicate = prompt {
                     Button("标记已用完") { finishDuplicate(useUp: true) }
                     Button("不用", role: .cancel) { finishDuplicate(useUp: false) }
-                } else if case .confirmPrint = prompt {
-                    Button("取消", role: .cancel) { prompt = nil }
-                    // 份数用「打印机」页里的设置（系统 alert 里放不了 Stepper）。
-                    Button("打印 \(copies) 份") { runPrint() }
                 } else {
                     Button("好", role: .cancel) {}
                 }
@@ -454,7 +433,7 @@ struct LabelActions: ViewModifier {
                 && $0.id != draft.record.id
         }
         if sameTitle.isEmpty {
-            prompt = .confirmPrint(draft)
+            presentPrintConfirm(draft)
         } else {
             prompt = .duplicate(draft, sameTitle)
         }
@@ -467,18 +446,89 @@ struct LabelActions: ViewModifier {
             list.forEach { ExpiryStore.shared.markUsed($0) }
         }
         prompt = nil
-        // ★ 上一个 alert 还在关闭动画里，**立刻**设新值会被系统吞掉（第二个 alert 不出现）。
-        //   延后一点再弹打印确认。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            prompt = .confirmPrint(draft)
+        // ★ 上一个 alert 还在关闭动画里，**立刻**再 present 会被系统吞掉。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            presentPrintConfirm(draft)
         }
     }
 
-    /// 系统 alert 里点了「打印 N 份」。
-    private func runPrint() {
-        guard case let .confirmPrint(draft) = prompt else { return }
-        prompt = nil
-        confirmPrint(draft, copies: copies)
+    /// 弹**系统 alert**（`UIAlertController`）做打印确认。
+    ///
+    /// ★★★ 2026-10-19（用户）：「就是要这个样式完全没错，**但是不能输入打印份数了吗？**」
+    ///   ➜ SwiftUI 的 `.alert` 放不了输入框，但 **UIKit 的 `UIAlertController` 可以**
+    ///     （`addTextField`）—— 同样是系统 alert、同样的外观，只是多了一行**系统输入框**。
+    ///   ➜ 数字键盘、默认填上次的份数、1~20 之间钳制。
+    private func presentPrintConfirm(_ draft: LabelDraft) {
+        let alert = UIAlertController(title: "确认打印",
+                                      message: Self.confirmMessage(for: draft),
+                                      preferredStyle: .alert)
+
+        alert.addTextField { field in
+            field.text = "\(self.copies)"
+            field.keyboardType = .numberPad
+            field.textAlignment = .center
+            field.placeholder = "打印份数"
+
+            // ★★★ 2026-10-19（用户）：「这个输入框左右能增加『增加、减少』按钮吗？」
+            //   ➜ `UIAlertController` 的输入框**只能独占一行**（左右是系统留白，塞不进按钮）。
+            //   ➜ 第一方的替代做法：给它挂 **`inputAccessoryView`**（键盘正上方那条），
+            //     里面放 **`UIStepper`** —— 系统步进器本身就是「− / +」，
+            //     点它 → 数字直接回填到输入框。
+            let stepper = UIStepper()
+            stepper.minimumValue = 1
+            stepper.maximumValue = 20
+            stepper.stepValue = 1
+            stepper.value = Double(max(1, min(20, self.copies)))
+            stepper.addAction(UIAction { [weak field] action in
+                guard let field,
+                      let sender = action.sender as? UIStepper else { return }
+                field.text = "\(Int(sender.value))"
+            }, for: .valueChanged)
+
+            // 包一层容器让步进器居中（accessoryView 默认会被拉满整行）。
+            let holder = UIView(frame: CGRect(x: 0, y: 0, width: 0, height: 52))
+            holder.autoresizingMask = .flexibleWidth
+            stepper.translatesAutoresizingMaskIntoConstraints = false
+            holder.addSubview(stepper)
+            NSLayoutConstraint.activate([
+                stepper.centerXAnchor.constraint(equalTo: holder.centerXAnchor),
+                stepper.centerYAnchor.constraint(equalTo: holder.centerYAnchor)
+            ])
+            field.inputAccessoryView = holder
+        }
+
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "打印", style: .default) { [weak alert] _ in
+            let typed = alert?.textFields?.first?.text ?? ""
+            let count = max(1, min(20, Int(typed) ?? self.copies))
+            self.confirmPrint(draft, copies: count)
+        })
+
+        Self.topViewController()?.present(alert, animated: true)
+    }
+
+    /// 确认窗的正文（与标签同源：标题 / 各行 / 制作人）。
+    /// ⚠️ `LabelRow.label` 自带全角冒号，别再补。
+    private static func confirmMessage(for draft: LabelDraft) -> String {
+        var lines = [draft.data.title, ""]
+        for row in draft.data.rows {
+            lines.append("\(row.label)\(row.value)")
+        }
+        if !draft.data.maker.isEmpty {
+            lines.append("")
+            lines.append(draft.data.maker)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// 当前最顶层的控制器（用来 present UIKit alert）。
+    private static func topViewController() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+        var vc = scene?.windows.first { $0.isKeyWindow }?.rootViewController
+        while let presented = vc?.presentedViewController { vc = presented }
+        return vc
     }
 
     /// 用户在确认窗里点了「打印 N 份」。
@@ -486,7 +536,6 @@ struct LabelActions: ViewModifier {
         let count = max(1, chosen)
         // ★ 记住这次选的份数（下次弹窗默认用它）。
         copies = count
-        // ★ 弹窗在点按钮时已由系统关闭，这里直接发送任务。
 
         printer.printLabel(pdf: draft.pdf(),
                            fileName: draft.fileName,

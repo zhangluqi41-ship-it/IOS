@@ -43,6 +43,11 @@ enum Theme {
 
     /// 卡片圆角（squircle 近似）。
     static let cardRadius: CGFloat = 16
+
+    /// ★ 2026-10-19（用户）：「和苹果磁贴圆角大小相同」
+    ///   参照「密码」App 的磁贴（宽约 215pt、圆角约 22pt，比例 ≈ 10%）。
+    ///   原来的 16 显得偏方。
+    static let tileRadius: CGFloat = 22
     /// 按钮圆角。
     static let buttonRadius: CGFloat = 12
 }

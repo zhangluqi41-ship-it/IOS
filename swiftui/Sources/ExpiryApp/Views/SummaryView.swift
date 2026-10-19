@@ -80,8 +80,7 @@ struct SummaryView: View {
 
     /// ① 正在制作中（主磁贴，带前 3 件明细）
     private var progressTile: some View {
-        GroupBox {
-            NavigationLink(value: SummaryFilter.inProgress) {
+        NavigationLink(value: SummaryFilter.inProgress) {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("正在制作中")
@@ -131,13 +130,13 @@ struct SummaryView: View {
             }
         }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            .padding(16)
+            // ★ 同模板磁贴：GroupBox 浅色下画的就是页面底色（实测不可见）→ 自己画卡片。
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: Theme.tileRadius))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.tileRadius))
         }
-        // ★ 同模板磁贴：GroupBox 浅色下无可见背景 → 垫系统语义色（见 TemplatesTab 注释）。
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
+        .buttonStyle(.plain)
     }
 
     /// ② 小磁贴（今天到期 / 7 天内到期 / 已过期）
@@ -146,8 +145,7 @@ struct SummaryView: View {
                            icon: String,
                            tint: Color,
                            filter: SummaryFilter) -> some View {
-        GroupBox {
-            NavigationLink(value: filter) {
+        NavigationLink(value: filter) {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -164,19 +162,18 @@ struct SummaryView: View {
                 .foregroundStyle(value == 0 ? Color.secondary : Color.primary)
         }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            .padding(16)
+            // ★ 同模板磁贴：GroupBox 浅色下画的就是页面底色（实测不可见）→ 自己画卡片。
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: Theme.tileRadius))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.tileRadius))
         }
-        // ★ 同模板磁贴：GroupBox 浅色下无可见背景 → 垫系统语义色（见 TemplatesTab 注释）。
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
+        .buttonStyle(.plain)
     }
 
     /// ③ 总览
     private var totalTile: some View {
-        GroupBox {
-            NavigationLink(value: SummaryFilter.all) {
+        NavigationLink(value: SummaryFilter.all) {
         HStack(spacing: 10) {
             Image(systemName: "shippingbox.fill")
                 .font(.system(size: 13, weight: .semibold))
@@ -189,13 +186,13 @@ struct SummaryView: View {
                 .monospacedDigit()
         }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            .padding(16)
+            // ★ 同模板磁贴：GroupBox 浅色下画的就是页面底色（实测不可见）→ 自己画卡片。
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: Theme.tileRadius))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.tileRadius))
         }
-        // ★ 同模板磁贴：GroupBox 浅色下无可见背景 → 垫系统语义色（见 TemplatesTab 注释）。
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
+        .buttonStyle(.plain)
     }
 
     // MARK: 文案
@@ -301,26 +298,29 @@ struct SummaryDetailView: View {
                         row(record)
                     }
                     .buttonStyle(.plain)
-                    // ★ 2026-10-19（用户第 2 条）：「摘要磁贴点击后写一个和效期管理
-                    //   相似的界面，**要能操作的**」→ 加和效期管理一致的滑动操作。
+                    // ★★★ 2026-10-19（用户订正）：
+                    //   · 「『详情』是什么鬼，不需要」→ 滑动菜单里去掉详情；
+                    //   · 「右滑出现的菜单依次是**删除、用完**」→ 顺序固定，删除在前（最右）；
+                    //   · 「取消文字」→ 只用 `Image(systemName:)`，图标与效期管理完全一致。
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
-                            store.markUsed(record)
+                            store.delete(record)
                         } label: {
-                            Label("用完", systemImage: "checkmark")
+                            Image(systemName: "trash")
                         }
                         Button {
-                            selected = record
+                            store.markUsed(record, used: record.usedAt == nil)
                         } label: {
-                            Label("详情", systemImage: "info.circle")
+                            Image(systemName: record.usedAt == nil
+                                  ? "checkmark.circle" : "arrow.uturn.backward")
                         }
-                        .tint(.blue)
+                        .tint(Theme.brand)
                     }
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {
                             reprint(record)
                         } label: {
-                            Label("重新打印", systemImage: "printer")
+                            Image(systemName: "printer")
                         }
                         .tint(Theme.brand)
                     }

@@ -102,6 +102,10 @@ struct TemplatesTab: View {
 
     /// 正在拖的磁贴。
     @State private var dragging: TemplateRoute?
+    /// 手指相对起点的位移 —— 直接当 offset 用（1:1 跟手）。
+    @State private var dragOffset: CGSize = .zero
+    /// 每张磁贴在网格坐标空间里的位置（用来算手指落在谁头上）。
+    @State private var tileFrames: [TemplateRoute: CGRect] = [:]
     /// 手指当前落在哪个磁贴上（让位提示）。
     @State private var dropTarget: TemplateRoute?
     /// 刚放下的那张 —— 重排时它不加过渡动画（松手就落在新格）。
@@ -125,48 +129,79 @@ struct TemplatesTab: View {
 
     // MARK: 磁贴（拖动 + 长按菜单 + 固定）
 
-    /// 单张磁贴：卡片 + 右上角「固定」快捷键 + **系统拖放（健康 App 同款）**。
+    /// 单张磁贴：卡片 + 右上角「固定」快捷键 + **整张磁贴跟手拖动**。
     ///
-    /// ★★★ 2026-10-19（用户指出：「这是健康 app 的磁贴，你说动不了？这就是我动了的样子」）
-    ///   ➜ 我之前判断错了：健康 App 的磁贴**确实可以拖动**，用的是系统拖放。
-    ///   ➜ 这里同样用系统拖放（`.onDrag` + `.onDrop(delegate:)`）；
-    ///     关键是把 preview 换成**轻量视图** —— 之前拿整张 GroupBox 卡片当 preview，
-    ///     每帧重渲染导致卡顿，看起来像"不跟手"。
-    ///   ➜ 源位置的半透明残影由**系统**渲染（和健康 App 里一模一样），我不再手工改 opacity。
+    /// ★★★ 2026-10-19（用户两次订正后的结论）：
+    ///   · 「移动的时候截图出来个这玩意是啥？」（那个巨大的 "kombucha"）
+    ///     → 那是 `.onDrag` 的**系统 fallback**：当 preview 渲染异常时，
+    ///       系统会拿 `NSItemProvider` 里的**字符串内容**当拖拽预览，于是显示成一串大字。
+    ///   · 「移动的不是磁贴是个缩略图，**应该是磁贴跟我走**」
+    ///     → `.onDrag` 的 preview **必然是系统生成的快照**，做不到"整张磁贴跟手"。
+    ///   ➜ 结论：**只能用 `DragGesture` + `offset`**（唯一能让视图本体跟手的方案）。
+    ///
+    /// ★ 上次用 DragGesture「不跟手」的真因（已修）：
+    ///   我把 `.animation(_:value: isDragging)` 放在了 `.offset` **之后** ——
+    ///   于是 `isDragging` 翻转那一帧，`offset` 被从 0 动画到当前位移（0.18s 滑过去），
+    ///   看起来就是"慢半拍"。现在 **`.offset` 放在 `.animation` 之后**，位移永不被动画化。
     private func tile(_ route: TemplateRoute) -> some View {
-        tileCore(route)
-            .onDrag {
-                dragging = route
-                return NSItemProvider(object: route.key as NSString)
-            } preview: {
-                dragPreview(for: route)
-            }
-            .onDrop(of: [.text], delegate: TileDropDelegate(
-                item: route,
-                order: $order,
-                dragging: $dragging,
-                dropTarget: $dropTarget,
-                justDropped: $justDropped
-            ))
+        let isDragging = dragging == route
+        return tileCore(route)
+            .scaleEffect(isDragging ? 1.03 : 1)
+            .shadow(color: .black.opacity(isDragging ? 0.25 : 0),
+                    radius: isDragging ? 14 : 0, y: isDragging ? 8 : 0)
+            // ⚠️ 这个 animation **只能**作用在它前面（scale/shadow）。
+            .animation(.snappy(duration: 0.18), value: isDragging)
+            // ★ offset 在 animation 之后 → 位移变化不带动画 = 1:1 跟手。
+            .offset(isDragging ? dragOffset : .zero)
+            .zIndex(isDragging ? 1 : 0)
+            .gesture(
+                DragGesture(minimumDistance: 6, coordinateSpace: .named("tileGrid"))
+                    .onChanged { value in
+                        if dragging != route {
+                            // ⚠️ 不要 withAnimation：否则 offset 会从 0 滑到当前位置。
+                            dragging = route
+                        }
+                        dragOffset = value.translation
+                        let hit = tileFrames.first {
+                            $0.key != route && $0.value.contains(value.location)
+                        }?.key
+                        if hit != dropTarget {
+                            withAnimation(.snappy(duration: 0.15)) { dropTarget = hit }
+                        }
+                    }
+                    .onEnded { _ in
+                        finishDrag(from: route)
+                    }
+            )
     }
 
-    /// 拖动时跟手的那个"小卡片" —— **刻意做轻**：纯色圆角 + 图标 + 标题。
-    /// （用完整卡片的 GroupBox/NavigationLink/材质渲染，会拖慢跟手。）
-    private func dragPreview(for route: TemplateRoute) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: route.systemImage)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(route.tint)
-                .frame(width: 34, height: 34)
-                .background(route.fill, in: RoundedRectangle(cornerRadius: 9))
-            Text(route.title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
+    /// 松手：换位 + 清所有拖动状态。
+    ///
+    /// ★ 先复位状态、再重排（上次的 bug：先重排会带着"透明/变淡"渲染，看起来像消失）；
+    ///   换位不成功（同位置）则什么都不做 —— 磁贴自动回到原位。
+    private func finishDrag(from route: TemplateRoute) {
+        let target = dropTarget
+        justDropped = route
+        withAnimation(.snappy(duration: 0.15)) {
+            dragging = nil
+            dragOffset = .zero
+            dropTarget = nil
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .frame(width: 170)
+
+        if let target,
+           let fromIndex = order.firstIndex(of: route),
+           let toIndex = order.firstIndex(of: target),
+           fromIndex != toIndex {
+            withAnimation(.snappy(duration: 0.22)) {
+                let moved = order.remove(at: fromIndex)
+                order.insert(moved, at: toIndex)
+            }
+            Prefs.templateOrder = order.map(\.key)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            justDropped = nil
+        }
     }
 
     /// 磁贴本体：卡片 + 右上角「固定」快捷键。
@@ -265,7 +300,19 @@ struct TemplatesTab: View {
                               spacing: 12) {
                         ForEach(order, id: \.self) { route in
                             tile(route)
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear.preference(
+                                            key: TileFrameKey.self,
+                                            value: [route: geo.frame(in: .named("tileGrid"))]
+                                        )
+                                    }
+                                )
                         }
+                    }
+                    .coordinateSpace(name: "tileGrid")
+                    .onPreferenceChange(TileFrameKey.self) { frames in
+                        tileFrames = frames
                     }
                     howItWorks
                 }
@@ -354,13 +401,14 @@ struct TemplatesTab: View {
 
 /// 模板磁贴。
 ///
-/// ★★★ 2026-10-18 定版（用户确认「A. GroupBox（系统容器）」）：
-///   磁贴容器改用**苹果系统自带的 `GroupBox`** ——
-///   背景、圆角、内边距**全部由系统渲染**，这里只负责内容排版。
-///   ❌ 不要再用 `.background(..., in: RoundedRectangle(...))` 自己画卡片外形
-///     （那是"用系统色块拼一个卡片"，不是系统组件）。
-///   ❌ 右上角的圆形箭头已按用户要求删除（他看不懂那是什么）。
-///   ✅ 长按拖动排序：外层 `.draggable` / `.dropDestination`（见 `TemplatesTab`）。
+/// ★★★ 2026-10-19 定版（**不再用 `GroupBox`**）：
+///   实测证据——浅色模式下磁贴背景「完全不见了」：
+///   `GroupBox` 在**浅色模式画的就是页面背景色**（`systemGroupedBackground`），
+///   所以无论我在它外面叠什么颜色都被它盖住；深色模式能看见只是因为它比纯黑亮一点。
+///   ➜ 苹果「健康」App 的卡片本来就是**自己画的**：系统语义色 + 圆角，没有用 GroupBox。
+///     这里照它的做法来：
+///       `Color(.secondarySystemGroupedBackground)`（浅色=白、深色=#1C1C1E）
+///       + `RoundedRectangle(cornerRadius: Theme.tileRadius)`（22）。
 struct TemplateCard: View {
     let title: String
     let subtitle: String
@@ -370,39 +418,31 @@ struct TemplateCard: View {
     let route: TemplateRoute
 
     var body: some View {
-        GroupBox {
-            NavigationLink(value: route) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(tint)
-                        .frame(width: 46, height: 46)
-                        .background(fill, in: RoundedRectangle(cornerRadius: 12))
+        NavigationLink(value: route) {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 46, height: 46)
+                    .background(fill, in: RoundedRectangle(cornerRadius: 12))
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(title)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                        Text(subtitle)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // 让整块内容区都能点（否则只有文字本身响应）。
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: Theme.tileRadius))
         }
-        // ★★★ 2026-10-19（用户第 1 条）：「白天模式下**完全看不见磁贴**」
-        //   根因：`GroupBox` 是"靠间距分组"的容器，**浅色模式下它自己几乎不画背景**
-        //   （页面底色 `systemGroupedBackground` 与它完全融为一体，没有任何卡片边界）。
-        //   ➜ 垫一层**系统语义色** `secondarySystemGroupedBackground`
-        //     （浅色=白卡、深色=#1C1C1E），自动跟随外观，不是写死的颜色。
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
+        .buttonStyle(.plain)
     }
 }
 
@@ -411,60 +451,13 @@ struct TemplateCard: View {
 }
 
 
-// MARK: - 拖放代理（系统拖放，落点反馈 + 换位）
+// MARK: - 磁贴位置收集（DragGesture 方案）
 
-/// 磁贴拖放的落点反馈与换位。
-///
-/// ★ 为什么用 `DropDelegate` 而不是 `.dropDestination(for:)`：
-///   后者会在磁贴右上角画一个系统的**「+」角标**（用户明确否掉）。
-///   代理方式完全由我们控制 —— 只有"变淡 + 上移"的让位提示。
-struct TileDropDelegate: DropDelegate {
-    let item: TemplateRoute
-    @Binding var order: [TemplateRoute]
-    @Binding var dragging: TemplateRoute?
-    @Binding var dropTarget: TemplateRoute?
-    @Binding var justDropped: TemplateRoute?
-
-    /// 手指进入某张磁贴：只做"让位"提示，**不实时重排**（用户要求「不用完全移动」）。
-    func dropEntered(info: DropInfo) {
-        withAnimation(.snappy(duration: 0.18)) { dropTarget = item }
-    }
-
-    func dropExited(info: DropInfo) {
-        if dropTarget == item {
-            withAnimation(.snappy(duration: 0.18)) { dropTarget = nil }
-        }
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-
-    /// 松手才真正换位置。
-    ///
-    /// ★ 2026-10-19（用户 bug）：「移动磁贴后有些磁贴会突然消失」
-    ///   → **先把拖动状态清干净，再重排**；换位不成功（同位置）则什么都不做、自动回原位。
-    func performDrop(info: DropInfo) -> Bool {
-        let from = dragging
-        withAnimation(.snappy(duration: 0.15)) {
-            dropTarget = nil
-            dragging = nil
-        }
-        guard let from,
-              let fromIndex = order.firstIndex(of: from),
-              let toIndex = order.firstIndex(of: item),
-              fromIndex != toIndex else { return false }
-
-        // 刚放下的那张不加过渡动画（松手直接落在新格），其余磁贴平滑移动。
-        justDropped = from
-        withAnimation(.snappy(duration: 0.22)) {
-            let moved = order.remove(at: fromIndex)
-            order.insert(moved, at: toIndex)
-        }
-        Prefs.templateOrder = order.map(\.key)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            justDropped = nil
-        }
-        return true
+/// 收集每张磁贴在网格坐标空间里的 frame —— 松手/拖动中用它在算"手指落在哪张磁贴上"。
+struct TileFrameKey: PreferenceKey {
+    static var defaultValue: [TemplateRoute: CGRect] = [:]
+    static func reduce(value: inout [TemplateRoute: CGRect],
+                       nextValue: () -> [TemplateRoute: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
