@@ -129,8 +129,12 @@ enum TitlePart: String, Codable, CaseIterable, Identifiable {
 struct CustomNode: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
-    /// 建议天数；nil = 这一级不给建议时间。
+    /// ★ 2026-10-19（用户）：「懒人一键保质期，**这个就是原始保质期**，不是重复功能」
+    ///   → `days` = **原始保质期天数**（这一级）；`bestDays` = **最佳使用时间天数**。
+    ///   两者可以不同（奶制品就是 +7 / +3 这种）。
     var days: Int?
+    /// 最佳使用时间的天数（nil = 跟随 `days`，或继承上级）。
+    var bestDays: Int?
     var children: [CustomNode] = []
 
     /// 该节点及其所有后代的数量（含自己）。
@@ -200,19 +204,31 @@ enum CustomTemplateStore {
     /// ★ 2026-10-19（用户）：「能否用现有的新建模板功能**全部重写一遍原有功能**呢？
     ///   可以写完后在他们的后面**标出（重写）**，保留原有的先实验一下」
     static func seedPresetsIfNeeded() {
-        let key = "customTemplates.seeded.v1"
+        let key = "customTemplates.seeded.v2"
         guard !store.bool(forKey: key) else { return }
         store.set(true, forKey: key)
 
-        // 通用效期 = 空菜单（手输物料名）+ 建议天数 7 天 + 通用三行版式。
+        // ① 通用效期 = 空菜单（手输物料名）+ 原始 7 / 最佳 7 + 通用三行版式。
         var generic = CustomTemplate(name: "通用效期（重写）", icon: "clock")
         generic.tintName = "blue"
         generic.iconColorName = "white"
-        generic.defaultDays = 7
-        generic.usePrep = false
-        generic.useSecondary = false
+        generic.lazyDays = 7        // 原始保质期
+        generic.defaultDays = 7     // 最佳使用时间
         generic.nodes = []          // 空菜单 = 前缀模板：打印时手输物料名
-        all = all + [generic]
+
+        // ② 奶制品 = 菜单五项，每项两个天数（原始 / 最佳），和内置规则一致。
+        var dairy = CustomTemplate(name: "奶制品（重写）", icon: "drop")
+        dairy.tintName = "cyan"
+        dairy.iconColorName = "white"
+        dairy.nodes = [
+            CustomNode(name: "牛奶", days: 7, bestDays: 3),
+            CustomNode(name: "高蛋白", days: 7, bestDays: 3),
+            CustomNode(name: "豆奶", days: 7, bestDays: 3),
+            CustomNode(name: "燕麦奶", days: 45, bestDays: 5),
+            CustomNode(name: "巴旦木奶", days: 60, bestDays: 7),
+        ]
+
+        all = all + [generic, dairy]
     }
 }
 

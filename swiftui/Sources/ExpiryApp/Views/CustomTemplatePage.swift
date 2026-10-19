@@ -218,12 +218,23 @@ struct CustomTemplatePage: View {
     }
 
     /// 选中的天数：**自己的优先，没有就往上找最近祖先**，最后兜底模板默认天数。
+    /// 原始保质期该用几天。
     private var appliedDays: Int? {
-        // ★ 懒人一键保质期：直接用它，忽略各级菜单天数。
+        // 懒人一键保质期 = 模板级统一的原始保质期。
         if let lazy = template.lazyDays { return lazy }
         let chain = chosenChain()
         guard !chain.isEmpty else { return nil }
         return chain.reversed().compactMap(\.days).first ?? template.defaultDays
+    }
+
+    /// 最佳使用时间该用几天。
+    private var appliedBestDays: Int? {
+        // 模板级「设建议天数」在这里当统一的**最佳**天数。
+        if let uniform = template.defaultDays { return uniform }
+        let chain = chosenChain()
+        guard !chain.isEmpty else { return nil }
+        return chain.reversed().compactMap(\.bestDays).first
+            ?? chain.reversed().compactMap(\.days).first
     }
 
     /// 点「按推荐填日期」：把两个日期重置成「今天 + 推荐天数」。
@@ -298,10 +309,13 @@ struct CustomTemplatePage: View {
             return
         }
         title = makeTitle(chain: chain)
+        // 原始保质期
         if let days = appliedDays, days > 0 {
-            let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
-            expireDate = due
-            bestDate = due
+            expireDate = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+        }
+        // 最佳使用时间（没单独设就跟原始一致）
+        if let best = appliedBestDays ?? appliedDays, best > 0 {
+            bestDate = Calendar.current.date(byAdding: .day, value: best, to: Date()) ?? Date()
         }
     }
 

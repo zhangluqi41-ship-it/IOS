@@ -478,11 +478,31 @@ struct CustomNodeSheet: View {
                             }
                         }
                     }
+                    // ★ 2026-10-19（用户）：「懒人一键保质期，这个就是原始保质期」
+                    //   → 上面那个 = 原始保质期；这里再加一个 = 最佳使用时间。
+                    Toggle("设最佳天数", isOn: Binding(
+                        get: { node.bestDays != nil },
+                        set: { on in node.bestDays = on ? (node.bestDays ?? (node.days ?? 3)) : nil }
+                    ))
+                    if let best = node.bestDays {
+                        Stepper(value: Binding(
+                            get: { best },
+                            set: { node.bestDays = max(1, $0) }
+                        ), in: 1...365) {
+                            HStack {
+                                Text("最佳天数")
+                                Spacer()
+                                Text("\(best) 天")
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
                 } header: {
-                    Text("建议时间")
+                    Text("时间")
                 } footer: {
                     if canSetDays {
-                        Text("打印时选中这一级（或它的下级）就用这个天数，从打印当天往后算。")
+                        Text("「天数」= 原始保质期，「最佳天数」= 最佳使用时间（留空就跟随原始）。")
                     } else {
                         Text("这个模板的天数设在第 \(lockedLevel ?? 0) 层，这一层不用再设"
                              + "（下级会继承上面的天数）。")
