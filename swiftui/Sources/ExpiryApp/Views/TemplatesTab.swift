@@ -169,6 +169,36 @@ struct TemplatesTab: View {
         .frame(width: 170)
     }
 
+    /// 磁贴本体：卡片 + 右上角「固定」快捷键。
+    ///
+    /// ⚠️ 2026-10-19 补回：清理 `finishDrag` 时误删了这段（导致 `cannot find 'tileCore'` 编译失败）。
+    private func tileCore(_ route: TemplateRoute) -> some View {
+        let isTarget = dropTarget == route
+        return ZStack(alignment: .topTrailing) {
+            card(for: route)
+                // 落在谁头上，谁变淡 + 轻微上移（让位趋势）；松手才真正换位。
+                .opacity(isTarget ? 0.55 : 1)
+                .offset(y: isTarget ? -5 : 0)
+                .animation(.snappy(duration: 0.18), value: isTarget)
+                // ★ 重排时：刚放下的那张**不带动画**（直接落到新格），其余平滑移动。
+                .animation(justDropped == route ? nil : .snappy(duration: 0.22),
+                           value: order)
+
+            // 右上角「固定」快捷键：**点一下直接切换**（不弹任何菜单）。
+            Button {
+                togglePin(route)
+            } label: {
+                Image(systemName: isPinned(route) ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(isPinned(route) ? Theme.brand : Color.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(8)
+        }
+    }
+
     private func isPinned(_ route: TemplateRoute) -> Bool {
         pinnedKeys.contains(route.key)
     }
