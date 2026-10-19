@@ -32,46 +32,24 @@ struct CustomTemplatePage: View {
     @State private var scannedBestBefore: Date?
     @FocusState private var focus: AnyHashable?
 
+    /// 从**扫码 Tab** 进来时带着原标签信息（二次制备）。
+    /// - Parameters:
+    ///   - presetSourceTitle: 原标签标题（扫到的）
+    ///   - presetSourceBest: 原标签的最佳使用时间
+    init(template: CustomTemplate,
+         presetSourceTitle: String? = nil,
+         presetSourceBest: Date? = nil) {
+        self.template = template
+        _scannedTitle = State(initialValue: presetSourceTitle)
+        _scannedBestBefore = State(initialValue: presetSourceBest)
+    }
+
     var body: some View {
         List {
-            // ★ 2026-10-19（用户）：「扫描二维码二次制备」——开启后这里可以扫原标签。
-            if template.useSecondary {
-                Section {
-                    Button {
-                        showSecondaryScan = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "qrcode.viewfinder")
-                                .foregroundStyle(Theme.brand)
-                                .frame(width: 22)
-                            if let scannedTitle {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("已扫描：\(scannedTitle)")
-                                        .foregroundStyle(.primary)
-                                    if let date = scannedBestBefore {
-                                        Text("最佳使用时间 \(date.formatted(date: .abbreviated, time: .shortened))")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            } else {
-                                Text("扫描原标签")
-                                    .foregroundStyle(Theme.brand)
-                            }
-                            Spacer(minLength: 8)
-                            if scannedTitle != nil {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.footnote)
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                } footer: {
-                    Text("扫到后：完成时间 = 扫描时刻 + \(template.secondaryDays) 天，最佳使用时间沿用原标签。")
-                }
-            }
-
+            // ★★★ 2026-10-19（用户）：「这个功能不是这样的，他应该是**扫描已经打印出来的
+            //   某个二维码**二次制备…… 这个扫描功能应该是在 **tabbar 的扫描里**完成后弹出来的，
+            //   参考康普茶二发」+「在效期打印界面，如果不编辑或者删除模板，**他应该是被隐藏起来的**」
+            //   ➜ 打印页这里**不再有任何"扫描原标签"入口**；二次制备改由扫码 Tab 触发。
             if template.nodes.isEmpty {
                 // ★★★ 2026-10-19（用户）：「不添加菜单，就设置成**通用效期那种直接输入物料名称**的模板，
                 //   命名规则为『定义的模板名称』-『直接输入的物料名称』」
@@ -233,14 +211,27 @@ struct CustomTemplatePage: View {
         }
     }
 
+    /// 标签标题的唯一来源。
+    ///
+    /// ★ 2026-10-19（用户）命名规则（合并后的唯一实现）：
+    ///   · **没有菜单** → `模板名-手输物料名`（"冷冻-五花肉"）
+    ///   · **有菜单** → 默认 `第一层-第二层…`（"猪肉-五花肉"）；
+    ///     开了「命名带模板名称」→ `模板名-第一层-第二层…`（"冷冻-猪肉-五花肉"）
+    private func makeTitle(chain: [CustomNode]) -> String {
+        if template.nodes.isEmpty {
+            let name = materialName.trimmingCharacters(in: .whitespaces)
+            return name.isEmpty ? "" : "\(template.name)-\(name)"
+        }
+        guard !chain.isEmpty else { return "" }
+        var parts = chain.map(\.name)
+        if template.includeTemplateInTitle { parts.insert(template.name, at: 0) }
+        return parts.joined(separator: "-")
+    }
+
     /// 空菜单模板：标题 = 「模板名-物料名」，日期按模板级天数自动填。
     private func syncFromInput() {
+        title = makeTitle(chain: [])
         let name = materialName.trimmingCharacters(in: .whitespaces)
-        if name.isEmpty {
-            title = ""
-        } else {
-            title = "\(template.name)-\(name)"
-        }
         if let days = template.defaultDays, days > 0, !name.isEmpty {
             let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
             expireDate = due
@@ -255,10 +246,7 @@ struct CustomTemplatePage: View {
             title = ""
             return
         }
-        // ★★★ 2026-10-19（用户）：「**建了菜单后不需要模板名**」
-        //   ➜ 有菜单时标题 = 纯菜单路径（"猪肉-五花肉"），模板名只作为**页面标题**显示。
-        //   ➜ 只有空菜单时才用「模板名-手输名」。
-        title = chain.map(\.name).joined(separator: "-")
+        title = makeTitle(chain: chain)
         if let days = appliedDays, days > 0 {
             let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
             expireDate = due

@@ -31,6 +31,11 @@ enum ScanRoute: Hashable {
     case secondFermentation(KombuchaFirstLabel)
     /// 扫到**冷冻的肉类**标签 → 解冻页（冷藏 / 已解冻的标签不会走到这里）。
     case thaw(MeatLabelInfo)
+    /// ★ 2026-10-19（用户）：「扫描已经打印出来的某个二维码**二次制备**……在 tabbar 的扫描里
+    ///   完成后弹出来，参考康普茶二发」
+    ///   ➜ 扫到某个「开了二次制备」的自定义模板标签 → 直接进它的二次制备页。
+    case customSecondary(templateID: UUID, sourceTitle: String,
+                         sourceBest: Date, sourceQR: String)
 }
 
 // MARK: - 扫码模型
@@ -564,6 +569,14 @@ struct ScanView: View {
                     KombuchaSecondView(first: first)
                 case .thaw(let meat):
                     MeatThawView(meat: meat)
+                case .customSecondary(let templateID, let sourceTitle, let sourceBest, _):
+                    if let template = CustomTemplateStore.template(id: templateID) {
+                        CustomTemplatePage(template: template,
+                                           presetSourceTitle: sourceTitle,
+                                           presetSourceBest: sourceBest)
+                    } else {
+                        ContentUnavailableView("模板已删除", systemImage: "trash")
+                    }
                 }
             }
             .onAppear {
@@ -757,6 +770,31 @@ struct ScanView: View {
             return
         }
 
+        // ③ ★ 自定义模板二次制备（必须放在康普茶/肉类之后 —— 那些标签也带「时间：」字样）
+        if template_hasSecondary {
+            if let parsed = LabelTemplate.parseCustomQr(code),
+               let template = matchSecondaryTemplate(title: parsed.title) {
+                // 和康普茶一致：扫到的标签也进「效期管理」。
+                ExpiryStore.shared.add(
+                    LabelRecord(title: parsed.title,
+                                kind: .generic,
+                                maker: "",
+                                createdAt: Date(),
+                                printedAt: nil,
+                                expireAt: parsed.bestBefore,
+                                bestBefore: parsed.bestBefore,
+                                usedAt: nil,
+                                qrText: code,
+                                source: .scanned)
+                )
+                path.append(ScanRoute.customSecondary(templateID: template.id,
+                                                      sourceTitle: parsed.title,
+                                                      sourceBest: parsed.bestBefore,
+                                                      sourceQR: code))
+                return
+            }
+        }
+
         // ③ 通用 / 奶制品标签 —— 没有后续流程，但**必须入库**
         //    （清单「二、扫码」第 1 条：所有物料扫码后若无后续操作，
         //      都要重新加入效期管理系统）。
@@ -793,6 +831,55 @@ struct ScanView: View {
     ///     · 「冷冻打印出来的二维码，再次扫描就是解冻」
     ///     · 冷藏肉不需要解冻，「扫它不会再生成新标签」（模板页 footer 也是这么写的）
     ///     · 解冻标签自己再被扫，不能又解冻一次（否则会无限套娃）
+    /// 是否有任何模板开了「扫描二维码二次制备」（没有就不做这一步检测）。
+    private var template_hasSecondary: Bool {
+        CustomTemplateStore.all.contains { $0.useSecondary }
+    }
+
+    /// 从标题反查是哪个模板。
+    ///
+    /// ★ 2026-10-19（用户）：二次制备要在编辑器里**绑定源模板** →
+    ///   匹配时先看「这个标题能不能由绑定的源模板产出」，比前缀猜测可靠。
+    ///   没绑定的候选再退化成前缀匹配。
+    private func matchSecondaryTemplate(title: String) -> CustomTemplate? {
+        let candidates = CustomTemplateStore.all.filter { $0.useSecondary }
+        guard !candidates.isEmpty else { return nil }
+
+        // ① 绑定了源模板、且该源模板能产出这个标题 → 就是它。
+        for candidate in candidates {
+            guard let sourceID = candidate.sourceTemplateID,
+                  let source = CustomTemplateStore.template(id: sourceID) else { continue }
+            if sourceCanProduce(source, title: title) { return candidate }
+        }
+
+        // ② 退化：标题以「模板名-」开头。
+        if let prefixed = candidates.first(where: { title.hasPrefix($0.name + "-") }) {
+            return prefixed
+        }
+        // ③ 只有一个候选时直接用它。
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    /// 源模板能不能产出这个标题（枚举它所有菜单路径 + 模板名前缀）。
+    private func sourceCanProduce(_ source: CustomTemplate, title: String) -> Bool {
+        // 空菜单模板：标题一定是「模板名-xxx」。
+        if source.nodes.isEmpty { return title.hasPrefix(source.name + "-") }
+
+        var paths: [String] = []
+        func walk(_ nodes: [CustomNode], prefix: [String]) {
+            for node in nodes {
+                let p = prefix + [node.name]
+                paths.append(p.joined(separator: "-"))
+                if source.includeTemplateInTitle {
+                    paths.append(([source.name] + p).joined(separator: "-"))
+                }
+                walk(node.children, prefix: p)
+            }
+        }
+        walk(source.nodes, prefix: [])
+        return paths.contains(title)
+    }
+
     private func handleMeat(_ meat: MeatLabelInfo, code: String) {
         ExpiryStore.shared.add(
             LabelRecord(title: meat.title,

@@ -47,6 +47,15 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     var useSecondary: Bool = false
     /// 二次制备的完成天数（完成 = 扫码头那一刻 + N 天）。
     var secondaryDays: Int = 3
+    /// ★ 2026-10-19（用户）：「开启扫描功能后这里应该是**选择绑定的模板**」
+    ///   ➜ 二次制备必须知道"扫到的标签是哪个模板打的" —— 绑定一个**源模板**。
+    ///     扫码时只有标题能被这个源模板产出，才会进入本模板的二次制备。
+    var sourceTemplateID: UUID? = nil
+    /// ★ 2026-10-19（用户）：「命名是否带模板名称」——
+    ///   默认 **false**（建了菜单时标题只有菜单路径）。
+    ///   打开后标题变成「模板名-第一层-第二层」。
+    ///   ⚠️ 没有菜单时这一项不可用（空菜单的标题天然是「模板名-手输名」）。
+    var includeTemplateInTitle: Bool = false
 
     /// 叶子总数（删除确认、统计用）。
     var leafCount: Int { nodes.reduce(0) { $0 + $1.leafCount } }

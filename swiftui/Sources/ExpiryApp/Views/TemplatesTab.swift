@@ -143,6 +143,10 @@ struct TemplatesTab: View {
     /// ★ 2026-10-19（用户）：「选删除时**全部磁贴右上角增加一个红色减号圆形标**」
     ///   → 进入"删除模式"：图钉换成红减号，点一下删这个磁贴；拖动暂时禁用。
     @State private var deletingMode = false
+    /// ★ 2026-10-19（用户）：「和删除模板一样，红色减号变成**绿色加号**」——编辑模式。
+    @State private var editingMode = false
+    /// 正在编辑的自定义模板。
+    @State private var editingTemplate: CustomTemplate?
     /// 自定义模板列表（改动后刷新磁贴区用）。
     @State private var customTemplates: [CustomTemplate] = CustomTemplateStore.all
     /// 手指相对起点的位移 —— 直接当 offset 用（1:1 跟手）。
@@ -233,7 +237,14 @@ struct TemplatesTab: View {
                     TemplateGrid(order: $order,
                                  pinnedKeys: $pinnedKeys,
                                  deletingMode: deletingMode,
-                                 onRemove: remove)
+                                 editingMode: editingMode,
+                                 onRemove: remove,
+                                 onEdit: { route in
+                                     if case .custom(let id) = route,
+                                        let template = CustomTemplateStore.template(id: id) {
+                                         editingTemplate = template
+                                     }
+                                 })
                     // ★ 2026-10-19（用户）：「在磁贴上方拖动时掉帧很严重」
                     //   拖动每帧都会重算 body，这块静态卡片也跟着重画（里面有圆角/描边/多层背景）。
                     //   `drawingGroup()` 把它光栅化缓存，拖动期间不再重新渲染。
@@ -262,17 +273,20 @@ struct TemplatesTab: View {
                 //   和这张图片一致的功能；同时**自定义模板**可以做了，入口也在这里」
                 //   ➜ 右上角 `⋯`（和「效期管理」页同款 `ellipsis.circle`），
                 //     里面两项：新建模板 / 删除磁贴（子菜单列出当前所有磁贴）。
-                if deletingMode {
+                if deletingMode || editingMode {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("完成") {
-                            withAnimation(.default) { deletingMode = false }
+                            withAnimation(.default) {
+                                deletingMode = false
+                                editingMode = false
+                            }
                         }
                         .fontWeight(.semibold)
                     }
                 }
                 // ★ 2026-10-19（用户）：「**删除界面不需要这个按钮**，删除时只做删除处理」
                 //   → 删除模式下把 `⋯` 整个收起来，右上角只留「完成」。
-                if !deletingMode {
+                if !deletingMode && !editingMode {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Button {
@@ -281,10 +295,23 @@ struct TemplatesTab: View {
                                 Label("新建模板", systemImage: "plus")
                             }
 
-                            // ★ 2026-10-19（用户）：「⋯ 菜单**不应该有三项，只需要新建和删除**」
-                            //   点「删除」→ 进入删除模式：所有磁贴右上角变红减号，点一下删一个。
+                            // ★ 2026-10-19（用户）：「这里**没有编辑模板选项**，和删除模板一样，
+                            //   红色减号变成**绿色加号**」
+                            //   → 菜单三项：新建 / 编辑 / 删除；编辑模式 = 磁贴上显示绿加号。
+                            Button {
+                                withAnimation(.default) {
+                                    deletingMode = false
+                                    editingMode = true
+                                }
+                            } label: {
+                                Label("编辑模板", systemImage: "square.and.pencil")
+                            }
+
                             Button(role: .destructive) {
-                                withAnimation(.default) { deletingMode = true }
+                                withAnimation(.default) {
+                                    editingMode = false
+                                    deletingMode = true
+                                }
                             } label: {
                                 Label("删除", systemImage: "trash")
                             }
@@ -298,6 +325,16 @@ struct TemplatesTab: View {
             //   以后只有：点击磁贴 → 进效期打印；按住磁贴 → 移动磁贴。
             //   其他手势功能都不需要，以后也不会编辑已完成的标签」
             //   → 长按弹菜单（固定/编辑）整块删除；固定仍靠右上角图钉点按。
+            .sheet(item: $editingTemplate) { template in
+                CustomTemplateEditor(original: template) { updated in
+                    CustomTemplateStore.upsert(updated)
+                    customTemplates = CustomTemplateStore.all
+                    withAnimation(.default) {
+                        order = Self.loadOrder()
+                        editingMode = false
+                    }
+                }
+            }
             .sheet(isPresented: $showTemplateEditor) {
                 CustomTemplateEditor(original: nil) { template in
                     CustomTemplateStore.upsert(template)

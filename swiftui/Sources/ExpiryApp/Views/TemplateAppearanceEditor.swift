@@ -17,29 +17,16 @@ struct TemplateAppearanceEditor: View {
     let previewTitle: String
 
     var body: some View {
-        List {
-            // ── 实时预览：就是磁贴上的那个圆角方块 ──
-            Section {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 12) {
-                        Image(systemName: icon)
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(CustomTemplate.color(named: iconColorName))
-                            .frame(width: 52, height: 52)
-                            .background(
-                                CustomTemplate.color(named: tintName),
-                                in: RoundedRectangle(cornerRadius: 13)
-                            )
-                        Text(previewTitle.isEmpty ? "模板名称" : previewTitle)
-                            .font(.headline)
-                            .foregroundStyle(previewTitle.isEmpty ? .secondary : .primary)
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-            }
+        // ★★★ 2026-10-19（用户）：「这个（预览）可以**锁定在这里，不跟下面的滚动一起动**」
+        //   ➜ 预览从 `List` 里拿出来，做成导航栏下方的固定块；下面的图标/色板独立滚动。
+        VStack(spacing: 0) {
+            previewCard
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+                .background(Color(.systemGroupedBackground))
 
+            List {
             // ── 图标 ──
             Section("图标") {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
@@ -71,9 +58,38 @@ struct TemplateAppearanceEditor: View {
             Section("图标颜色") {
                 colorRow(selection: $iconColorName)
             }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
         }
         .navigationTitle("图标与颜色")
         .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+    }
+
+    /// 固定在顶部的预览卡片（就是磁贴上的那个方块）。
+    private var previewCard: some View {
+        HStack {
+            Spacer()
+            VStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(CustomTemplate.color(named: iconColorName))
+                    .frame(width: 52, height: 52)
+                    .background(
+                        CustomTemplate.color(named: tintName),
+                        in: RoundedRectangle(cornerRadius: 13)
+                    )
+                Text(previewTitle.isEmpty ? "模板名称" : previewTitle)
+                    .font(.headline)
+                    .foregroundStyle(previewTitle.isEmpty ? .secondary : .primary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 22)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 14))
     }
 
     /// 一排色点（选中的带描边 + 对勾）。

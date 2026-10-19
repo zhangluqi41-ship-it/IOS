@@ -18,8 +18,13 @@ struct TemplateGrid: View {
     @Binding var pinnedKeys: [String]
     /// 删除模式：磁贴只显示红减号、禁点击、禁拖动。
     let deletingMode: Bool
+    /// ★ 2026-10-19（用户）：「和删除模板一样，红色减号变成**绿色加号**」
+    ///   编辑模式：磁贴右上角显示绿加号（只有自定义模板有）。
+    let editingMode: Bool
     /// 删除动作交给父视图（它才持有 hiddenKeys 和自定义模板列表）。
     let onRemove: (TemplateRoute) -> Void
+    /// 编辑动作也交给父视图（它持有 sheet 状态）。
+    let onEdit: (TemplateRoute) -> Void
 
     @State private var dragging: TemplateRoute?
     /// 手指按下（不等到移动 6pt）—— 驱动"抬起"视觉。
@@ -75,7 +80,7 @@ struct TemplateGrid: View {
             .highPriorityGesture(
                 DragGesture(minimumDistance: 6, coordinateSpace: .named("tileGrid"))
                     .onChanged { value in
-                        guard !deletingMode else { return }
+                        guard !deletingMode, !editingMode else { return }
                         if dragging != route { dragging = route }
                         dragOffset = value.translation
                         let hit = frameStore.frames.first {
@@ -85,14 +90,14 @@ struct TemplateGrid: View {
                         if hit != dropTarget { dropTarget = hit }
                     }
                     .onEnded { _ in
-                        guard !deletingMode else { return }
+                        guard !deletingMode, !editingMode else { return }
                         finishDrag(from: route)
                     }
             )
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("tileGrid"))
                     .onChanged { _ in
-                        guard !deletingMode else { return }
+                        guard !deletingMode, !editingMode else { return }
                         if pressedRoute != route { pressedRoute = route }
                     }
                     .onEnded { _ in
@@ -108,7 +113,7 @@ struct TemplateGrid: View {
         return ZStack(alignment: .topTrailing) {
             card(for: route)
                 // 删除模式下禁用 NavigationLink（点本体不跳转）。
-                .disabled(deletingMode)
+                .disabled(deletingMode || editingMode)
                 // 目标只轻微上移（不让它变淡）。
                 .offset(y: isTarget ? -4 : 0)
                 .animation(.default, value: isTarget)
@@ -131,6 +136,25 @@ struct TemplateGrid: View {
                     .buttonStyle(.plain)
                 }
                 .padding(8)
+            } else if editingMode {
+                // 编辑模式：只有自定义模板能编辑（内置的没有可改的内容）。
+                if route.isCustom {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        Button {
+                            onEdit(route)
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 22, weight: .bold))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, .green)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(8)
+                }
             } else {
                 Button {
                     togglePin(route)

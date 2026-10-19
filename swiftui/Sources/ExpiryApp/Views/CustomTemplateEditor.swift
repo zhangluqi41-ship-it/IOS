@@ -96,6 +96,15 @@ struct CustomTemplateEditor: View {
                     Toggle("扫描二维码二次制备", isOn: $draft.useSecondary)
 
                     if draft.useSecondary {
+                        // ★ 2026-10-19（用户）：「开启扫描功能后这里应该是**选择绑定的模板**」
+                        Picker("绑定模板", selection: $draft.sourceTemplateID) {
+                            Text("未选择").tag(UUID?.none)
+                            ForEach(otherTemplates) { t in
+                                Text(t.name).tag(Optional(t.id))
+                            }
+                        }
+                        .pickerStyle(.menu)
+
                         Stepper(value: $draft.secondaryDays, in: 1...60) {
                             HStack {
                                 Text("完成天数")
@@ -114,8 +123,28 @@ struct CustomTemplateEditor: View {
                              + "关：用「开封时间 / 原始保质期 / 最佳使用时间」。")
                     }
                     if draft.useSecondary {
-                        Text("开：可以在打印页扫原标签续做二次制备 —— "
-                             + "完成时间 = 扫描时刻 + \(draft.secondaryDays) 天，最佳使用时间沿用原标签。")
+                        if draft.sourceTemplateID == nil {
+                            Text("请选择「绑定模板」—— 只有那个模板打出来的标签，扫码时才会进到这里。")
+                                .foregroundStyle(.orange)
+                        } else {
+                            Text("扫到「\(otherTemplates.first { $0.id == draft.sourceTemplateID }?.name ?? "")」"
+                                 + "的标签 → 完成时间 = 扫描时刻 + \(draft.secondaryDays) 天，"
+                                 + "最佳使用时间沿用原标签。")
+                        }
+                    }
+                }
+
+                // ★ 2026-10-19（用户）：「命名是否带模板名称」——没有菜单时这一项不可用（灰色）。
+                Section {
+                    Toggle("命名带模板名称", isOn: $draft.includeTemplateInTitle)
+                        .disabled(draft.nodes.isEmpty)
+                } footer: {
+                    if draft.nodes.isEmpty {
+                        Text("没有菜单时固定是「模板名-手输物料名」，这一项不适用。")
+                    } else if draft.includeTemplateInTitle {
+                        Text("标签标题 = 模板名-第一层-第二层…（如「冷冻-猪肉-五花肉」）。")
+                    } else {
+                        Text("标签标题 = 纯菜单路径（如「猪肉-五花肉」），不带模板名。")
                     }
                 }
 
@@ -132,8 +161,13 @@ struct CustomTemplateEditor: View {
                 } header: {
                     Text("菜单")
                 } footer: {
-                    Text("缩进表示层级（最多 3 层子菜单）。每一级都可以设建议天数；"
-                         + "打印时选中哪一级，就用那一级的建议天数（从打印当天往后算）。")
+                    if hasUnnamedNode {
+                        Text("有菜单项还没填名字，填好才能保存。")
+                            .foregroundStyle(.red)
+                    } else {
+                        Text("缩进表示层级（最多 3 层子菜单）。每一级都可以设建议天数；"
+                             + "打印时选中哪一级，就用那一级的建议天数（从打印当天往后算）。")
+                    }
                 }
             }
             .navigationTitle(original == nil ? "新建模板" : "编辑模板")
@@ -147,9 +181,11 @@ struct CustomTemplateEditor: View {
                         onSave(draft)
                         dismiss()
                     }
-                    // ★★★ 2026-10-19（用户）：「如果不添加菜单，就无法保存」→ 去掉菜单必须非空的限制。
-                    //   空菜单 = 「前缀模板」：打印时直接手输物料名，标题拼成「模板名-物料名」。
-                    .disabled(draft.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    // ★ 菜单整体可以为空（= 前缀模板，打印时手输物料名）；
+                    //   但只要建了菜单，**每一项都必须有名字** —— 不能留"未命名"
+                    //   （否则打印页的下拉里会出现一个空选项，用户实测要求禁止）。
+                    .disabled(draft.name.trimmingCharacters(in: .whitespaces).isEmpty
+                              || hasUnnamedNode)
                 }
             }
             .sheet(item: $editingPath) { path in
@@ -167,6 +203,21 @@ struct CustomTemplateEditor: View {
                 )
                 .onDisappear { syncTimeLevel() }
             }
+        }
+    }
+
+    /// 可以绑定为「源模板」的其他模板（排除自己）。
+    private var otherTemplates: [CustomTemplate] {
+        CustomTemplateStore.all.filter { $0.id != draft.id }
+    }
+
+    /// 树里是否存在「名字为空」的节点。
+    ///
+    /// ★ 2026-10-19（用户）：「**不能允许创建的时候存在未命名的菜单**」
+    ///   → 保存按钮在存在空节点时禁用。
+    private var hasUnnamedNode: Bool {
+        flattened().contains {
+            $0.node.name.trimmingCharacters(in: .whitespaces).isEmpty
         }
     }
 
