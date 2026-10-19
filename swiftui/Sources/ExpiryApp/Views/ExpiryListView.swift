@@ -44,12 +44,9 @@ struct ExpiryListView: View {
                                 // ★★★ 2026-10-19（用户）：「取消文字（重新打印、删除、用完
                                 //   全都只有图片），统一图片从效期数据里使用」
                                 //   → 全部改成 `Image(systemName:)`，不再用 `Label`（那会带文字）。
+                                // ★ 顺序同摘要页：**先声明「用完」→ 它显示在最右**；
+                                //   视觉从左到右 = 删除（红）、用完（蓝）。
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        store.delete(record)
-                                    } label: {
-                                        Image(systemName: "trash")
-                                    }
                                     Button {
                                         store.markUsed(record, used: record.usedAt == nil)
                                     } label: {
@@ -57,6 +54,13 @@ struct ExpiryListView: View {
                                               ? "checkmark.circle" : "arrow.uturn.backward")
                                     }
                                     .tint(Theme.brand)
+
+                                    Button(role: .destructive) {
+                                        store.delete(record)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .tint(.red)
                                 }
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     Button {

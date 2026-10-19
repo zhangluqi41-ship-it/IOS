@@ -459,8 +459,14 @@ struct LabelActions: ViewModifier {
     ///     （`addTextField`）—— 同样是系统 alert、同样的外观，只是多了一行**系统输入框**。
     ///   ➜ 数字键盘、默认填上次的份数、1~20 之间钳制。
     private func presentPrintConfirm(_ draft: LabelDraft) {
+        // ★ 2026-10-19（用户）：「它左边或者上面可以加个**输入打印份数的提示**吗？」
+        //   ➜ alert 的输入框左边塞不进东西（系统布局），但可以在 `message` 末尾加一行，
+        //     它正好显示在输入框**正上方**。
+        //   ⚠️ 输入框本身的**高度/宽度改不了** —— `UIAlertController` 的 textField
+        //     尺寸由系统决定（改 frame 会被忽略），只能改字号/对齐/键盘类型。
+        let message = Self.confirmMessage(for: draft) + "\n\n打印份数（1~20）"
         let alert = UIAlertController(title: "确认打印",
-                                      message: Self.confirmMessage(for: draft),
+                                      message: message,
                                       preferredStyle: .alert)
 
         alert.addTextField { field in
@@ -468,6 +474,8 @@ struct LabelActions: ViewModifier {
             field.keyboardType = .numberPad
             field.textAlignment = .center
             field.placeholder = "打印份数"
+            // 输入框高度是系统的（改不了），只能把字号调小一点，视觉上轻一些。
+            field.font = .systemFont(ofSize: 15, weight: .regular)
 
             // ★★★ 2026-10-19（用户）：「这个输入框左右能增加『增加、减少』按钮吗？」
             //   ➜ `UIAlertController` 的输入框**只能独占一行**（左右是系统留白，塞不进按钮）。

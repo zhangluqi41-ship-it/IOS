@@ -302,12 +302,13 @@ struct SummaryDetailView: View {
                     //   · 「『详情』是什么鬼，不需要」→ 滑动菜单里去掉详情；
                     //   · 「右滑出现的菜单依次是**删除、用完**」→ 顺序固定，删除在前（最右）；
                     //   · 「取消文字」→ 只用 `Image(systemName:)`，图标与效期管理完全一致。
+                    // ★★★ 2026-10-19（用户订正）：「**第一个是删除，第二个才是用完**」
+                    //   ⚠️ SwiftUI 的 `swipeActions(edge: .trailing)` 里，
+                    //   **先声明的按钮显示在最右边**（离屏幕边缘最近）。
+                    //   所以要「视觉从左到右 = 删除、用完」，声明顺序必须**倒过来写**。
+                    //   另外 `role: .destructive` 在滑动菜单里**不会自动变红**，
+                    //   必须显式 `.tint(.red)`（之前截图里两个都是蓝色就是这个原因）。
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            store.delete(record)
-                        } label: {
-                            Image(systemName: "trash")
-                        }
                         Button {
                             store.markUsed(record, used: record.usedAt == nil)
                         } label: {
@@ -315,6 +316,13 @@ struct SummaryDetailView: View {
                                   ? "checkmark.circle" : "arrow.uturn.backward")
                         }
                         .tint(Theme.brand)
+
+                        Button(role: .destructive) {
+                            store.delete(record)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .tint(.red)
                     }
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {

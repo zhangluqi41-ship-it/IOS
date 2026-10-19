@@ -819,12 +819,17 @@ struct ScanView: View {
 /// 四角取景框。
 private struct CornerBrackets: View {
     let side: CGFloat
-    private let length: CGFloat = 30
+    /// ★★★ 2026-10-19（用户二次纠正）：
+    ///   「弧度太小了，我不是让你仿照**苹果屏幕的大 R 角**来设计吗？
+    ///    我说的是**硬件屏幕的 R 角**，不是 App 里磁贴的 R 角」
+    ///   ➜ iPhone 硬件屏幕 R 角 ≈ **55pt**，屏幕宽 393pt → 比例 **14%**。
+    ///     取景框 250pt 按同一比例 → 圆弧半径 **35pt**。
+    ///   ➜ 半径 35 必须小于角长，所以角长从 30 加长到 **52**（弧占 67%、直线段 17），
+    ///     视觉上就是"整个角大部分是圆弧"—— 和屏幕边角一个感觉。
+    ///   ⚠️ 三个参数一起调才有意义：`cornerRadius` 不能 ≥ `length`。
+    private let length: CGFloat = 52
     private let thickness: CGFloat = 4
-    /// ★ 2026-10-19（用户）：「这个**是直角**，统一苹果大 R 角（和苹果屏幕 R 角一致）」
-    ///   原来 L 形是两条直线拼的 90° 尖角；现在拐角用二次贝塞尔画圆弧。
-    ///   13 是相对角长 30 的比例（约 43%），视觉上就是苹果那种"大圆角"。
-    private let cornerRadius: CGFloat = 13
+    private let cornerRadius: CGFloat = 35
 
     var body: some View {
         ZStack {

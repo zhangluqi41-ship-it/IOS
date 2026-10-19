@@ -151,10 +151,24 @@ struct TemplatesTab: View {
                     radius: isDragging ? 14 : 0, y: isDragging ? 8 : 0)
             // ⚠️ 这个 animation **只能**作用在它前面（scale/shadow）。
             .animation(.snappy(duration: 0.18), value: isDragging)
-            // ★ offset 在 animation 之后 → 位移变化不带动画 = 1:1 跟手。
+            // ★ offset 在 animation 之后 → 拖动中位移变化不带过渡 = 1:1 跟手。
             .offset(isDragging ? dragOffset : .zero)
+            // ★★★ 2026-10-19（用户）：「图标移动的时候，现在是**瞬间移动**，
+            //   能不能改的自然、线性一些？」
+            //   ➜ 拖动中（isDragging = true）→ animation 为 nil（跟手零延迟）；
+            //     松手后（isDragging = false）→ 用 `.easeOut(0.22)` 让 offset 从
+            //     **手指落点**平滑归零，于是磁贴是「从松手位置滑到新格」，
+            //     而不是"啪"地闪现。
+            //   ⚠️ 重排那一步仍是**瞬间**的（`justDropped` 让这张不带 order 动画），
+            //     所以不会出现"从老位置滑过去"。
+            .animation(isDragging ? nil : .easeOut(duration: 0.22), value: dragOffset)
             .zIndex(isDragging ? 1 : 0)
-            .gesture(
+            // ★★★ 2026-10-19（用户 bug）：「按住完全不能拖动，松手后会移动」
+            //   根因：磁贴内部是 `NavigationLink`（点击进模板页），它的**内层点击手势
+            //   优先级高于**外层的 `.gesture` → 拖动被它吃掉，一松手就当成"点击"跳页了。
+            //   ➜ 换成 **`.highPriorityGesture`**：拖动优先识别；
+            //     `minimumDistance: 6` 保证「没移动」时它直接失败、把点击还给 NavigationLink。
+            .highPriorityGesture(
                 DragGesture(minimumDistance: 6, coordinateSpace: .named("tileGrid"))
                     .onChanged { value in
                         if dragging != route {
@@ -182,11 +196,14 @@ struct TemplatesTab: View {
     private func finishDrag(from route: TemplateRoute) {
         let target = dropTarget
         justDropped = route
+
+        // ① 先结束拖动（isDragging = false）—— 让下一行 dragOffset 的变化走 `.easeOut` 过渡。
         withAnimation(.snappy(duration: 0.15)) {
             dragging = nil
-            dragOffset = .zero
             dropTarget = nil
         }
+        // ② offset 归零：因为上面 isDragging 已为 false，这一步会从**手指落点**平滑滑到新格。
+        dragOffset = .zero
 
         if let target,
            let fromIndex = order.firstIndex(of: route),
@@ -209,6 +226,7 @@ struct TemplatesTab: View {
     /// ⚠️ 2026-10-19 补回：清理 `finishDrag` 时误删了这段（导致 `cannot find 'tileCore'` 编译失败）。
     private func tileCore(_ route: TemplateRoute) -> some View {
         let isTarget = dropTarget == route
+        let pinned = isPinned(route)
         return ZStack(alignment: .topTrailing) {
             card(for: route)
                 // 落在谁头上，谁变淡 + 轻微上移（让位趋势）；松手才真正换位。
@@ -220,13 +238,30 @@ struct TemplatesTab: View {
                            value: order)
 
             // 右上角「固定」快捷键：**点一下直接切换**（不弹任何菜单）。
+            //
+            // ★ 2026-10-19（用户）：「固定增加**圆形外框**，里面做**对比色区分**，
+            //   整个圆形都是按键范围」
+            //   ➜ 圆形底：固定 = 品牌蓝实心 + 白图标；未固定 = 浅灰实心 + 灰图标。
+            //   ➜ 点击范围 = **整个 28pt 圆**（`contentShape(Circle())` 加在带背景的容器上）。
             Button {
                 togglePin(route)
             } label: {
-                Image(systemName: isPinned(route) ? "pin.fill" : "pin")
+                Image(systemName: pinned ? "pin.fill" : "pin")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(isPinned(route) ? Theme.brand : Color.secondary)
-                    .frame(width: 26, height: 26)
+                    .foregroundStyle(pinned ? Color.white : Color.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Circle().fill(pinned ? Theme.brand : Color(.tertiarySystemFill))
+                    )
+                    .overlay(
+                        // 一圈极细描边，让圆形在浅色卡片上也有边界感。
+                        Circle().strokeBorder(
+                            pinned ? Color.white.opacity(0.22)
+                                   : Color.primary.opacity(0.10),
+                            lineWidth: 1
+                        )
+                    )
+                    // ★ 整个圆都是热区（不只是图标那 11pt）。
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
