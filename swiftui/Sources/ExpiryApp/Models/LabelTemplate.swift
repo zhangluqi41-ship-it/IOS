@@ -488,7 +488,9 @@ enum LabelTemplate {
             rows = [
                 LabelRow(label: "开封时间：", value: fmtDateTime(now)),
                 LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, record.expireAt)),
-                LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
+                // ★ 2026-10-19：重打也要 clamp（否则和首次打印不一致）。
+                LabelRow(label: "最佳使用时间：",
+                         value: fmtDateByThreshold(now, min(record.bestBefore, record.expireAt))),
             ]
         case .meat:
             // 肉类有两副面孔：
@@ -510,13 +512,15 @@ enum LabelTemplate {
                     LabelRow(label: "解冻时间：", value: fmtDateTime(now)),
                     LabelRow(label: "完成时间：",
                              value: fmtDateByThreshold(now, record.expireAt)),
-                    LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
+                    LabelRow(label: "最佳使用时间：",
+                             value: fmtDateByThreshold(now, min(record.bestBefore, record.expireAt))),
                 ]
             } else {
                 rows = [
                     LabelRow(label: "开封时间：", value: fmtDateTime(now)),
                     LabelRow(label: "原始保质期：", value: fmtDateByThreshold(now, record.expireAt)),
-                    LabelRow(label: "最佳使用时间：", value: fmtDateByThreshold(now, record.bestBefore)),
+                    LabelRow(label: "最佳使用时间：",
+                             value: fmtDateByThreshold(now, min(record.bestBefore, record.expireAt))),
                 ]
             }
         case .kombucha:
