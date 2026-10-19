@@ -13,24 +13,44 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// 模板二级页路由。
-enum TemplateRoute: Hashable, CaseIterable {
+enum TemplateRoute: Hashable {
     case generic
     case kombucha
     case dairy
     case meat
+    /// ★★★ 2026-10-19（用户）：「为什么自定义磁贴不能拖不能固定？之后他和现有磁贴
+    ///   **应该是同一套东西**啊」
+    ///   ➜ 正解就是让它也成为一种 `route` —— 拖动、固定、排序、隐藏全部自动复用同一套代码。
+    ///   `id` 指向 `CustomTemplateStore` 里的模板（名字/图标都从那里取）。
+    case custom(UUID)
 
-    /// 持久化用的稳定 key（拖动排序要存进 UserDefaults）。
+    /// 内置的 4 个（不含自定义）。
+    /// ⚠️ 有关联值后 `CaseIterable` 无法自动合成，这里手写。
+    static var allCases: [TemplateRoute] { [.generic, .kombucha, .dairy, .meat] }
+
+    /// 是不是自定义模板。
+    var isCustom: Bool {
+        if case .custom = self { return true }
+        return false
+    }
+
+    /// 持久化用的稳定 key（拖动排序 / 固定 / 隐藏都用它）。
     var key: String {
         switch self {
         case .generic: return "generic"
         case .kombucha: return "kombucha"
         case .dairy: return "dairy"
         case .meat: return "meat"
+        case .custom(let id): return "custom:\(id.uuidString)"
         }
     }
 
     static func from(key: String) -> TemplateRoute? {
-        allCases.first { $0.key == key }
+        if key.hasPrefix("custom:"),
+           let id = UUID(uuidString: String(key.dropFirst("custom:".count))) {
+            return .custom(id)
+        }
+        return allCases.first { $0.key == key }
     }
 
     var title: String {
@@ -39,6 +59,7 @@ enum TemplateRoute: Hashable, CaseIterable {
         case .kombucha: return "康普茶"
         case .dairy: return "奶制品"
         case .meat: return "肉类"
+        case .custom(let id): return CustomTemplateStore.template(id: id)?.name ?? "已删除的模板"
         }
     }
 
@@ -48,6 +69,8 @@ enum TemplateRoute: Hashable, CaseIterable {
         case .kombucha: return "自动算一发二发日期"
         case .dairy: return "按品类套保质期"
         case .meat: return "冷藏 / 冷冻自动算"
+        case .custom:
+            return "自定义模板"
         }
     }
 
@@ -57,6 +80,7 @@ enum TemplateRoute: Hashable, CaseIterable {
         case .kombucha: return "drop.fill"
         case .dairy: return "flask.fill"
         case .meat: return "fork.knife"
+        case .custom(let id): return CustomTemplateStore.template(id: id)?.icon ?? "square.grid.2x2"
         }
     }
 
@@ -66,6 +90,7 @@ enum TemplateRoute: Hashable, CaseIterable {
         case .kombucha: return Theme.tplKombuchaTint
         case .dairy: return Theme.tplDairyTint
         case .meat: return Theme.tplMeatTint
+        case .custom: return Theme.brand
         }
     }
 
@@ -75,6 +100,7 @@ enum TemplateRoute: Hashable, CaseIterable {
         case .kombucha: return Theme.tplKombuchaFill
         case .dairy: return Theme.tplDairyFill
         case .meat: return Theme.tplMeatFill
+        case .custom: return Theme.brand.opacity(0.15)
         }
     }
 }
@@ -108,6 +134,20 @@ struct TemplatesTab: View {
     ///   ➜ 新增 `pressedRoute`：**手指一按下就置位**（`DragGesture(minimumDistance: 0)`），
     ///     放大/抬起视觉由 `dragging || pressed` 共同驱动。
     @State private var pressedRoute: TemplateRoute?
+    /// 打开自定义模板编辑器（新建）。
+    @State private var showTemplateEditor = false
+    /// 打开编辑器**编辑已有模板**（v2 补：不用再删了重建）。
+    @State private var editingTemplate: CustomTemplate?
+    /// ★ 2026-10-19（用户）：「选删除时**全部磁贴右上角增加一个红色减号圆形标**」
+    ///   → 进入"删除模式"：图钉换成红减号，点一下删这个磁贴；拖动暂时禁用。
+    @State private var deletingMode = false
+    /// ★★★ 2026-10-19（用户）：「**按住不拖动 → 弹出修改菜单（固定、编辑）**；
+    ///   按住拖动 → 进入顺序编辑模式」
+    ///   → 长按 0.45s 且**没有位移**时弹出 `confirmationDialog`；
+    ///     一旦移动超过 6pt，`highPriorityGesture(DragGesture)` 优先接管，走拖动排序。
+    @State private var menuRoute: TemplateRoute?
+    /// 自定义模板列表（改动后刷新磁贴区用）。
+    @State private var customTemplates: [CustomTemplate] = CustomTemplateStore.all
     /// 手指相对起点的位移 —— 直接当 offset 用（1:1 跟手）。
     @State private var dragOffset: CGSize = .zero
     /// 每张磁贴在网格坐标空间里的位置（用来算手指落在谁头上）。
@@ -131,9 +171,14 @@ struct TemplatesTab: View {
         let saved = Prefs.templateOrder
             .compactMap { TemplateRoute.from(key: $0) }
             .filter { !hidden.contains($0.key) }
-        let missing = TemplateRoute.allCases
+        // 内置 4 个里缺的补上。
+        let missingBuiltin = TemplateRoute.allCases
             .filter { !saved.contains($0) && !hidden.contains($0.key) }
-        let base = saved + missing
+        // ★ 自定义模板也要补进来（新建的要出现在末尾，且能和内置一起拖/固定）。
+        let customs = CustomTemplateStore.all.map { TemplateRoute.custom($0.id) }
+        let missingCustom = customs
+            .filter { !saved.contains($0) && !hidden.contains($0.key) }
+        let base = saved + missingBuiltin + missingCustom
         // ★ 固定的排最前，按**固定先后**（用户：「每个都可以固定，按固定顺序排先后」）。
         let pinned = Prefs.pinnedTemplates
             .compactMap { TemplateRoute.from(key: $0) }
@@ -201,6 +246,8 @@ struct TemplatesTab: View {
             .highPriorityGesture(
                 DragGesture(minimumDistance: 6, coordinateSpace: .named("tileGrid"))
                     .onChanged { value in
+                        // 删除模式下不拖动（只在点红减号时才响应）。
+                        guard !deletingMode else { return }
                         if dragging != route {
                             // ⚠️ 不要 withAnimation：否则 offset 会从 0 滑到当前位置。
                             dragging = route
@@ -214,6 +261,7 @@ struct TemplatesTab: View {
                         if hit != dropTarget { dropTarget = hit }
                     }
                     .onEnded { _ in
+                        guard !deletingMode else { return }
                         finishDrag(from: route)
                     }
             )
@@ -222,12 +270,20 @@ struct TemplatesTab: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("tileGrid"))
                     .onChanged { _ in
+                        guard !deletingMode else { return }
                         if pressedRoute != route { pressedRoute = route }
                     }
                     .onEnded { _ in
                         pressedRoute = nil
                     }
             )
+            // ★ 长按**不拖动** → 弹修改菜单（固定 / 编辑）。
+            //   `DragGesture(minimumDistance: 6)` 没达到阈值时不会触发，
+            //   所以长按和拖动互不干扰。
+            .onLongPressGesture(minimumDuration: 0.45) {
+                guard !deletingMode else { return }
+                menuRoute = route
+            }
     }
 
     /// 松手：换位 + 清所有拖动状态。
@@ -277,19 +333,31 @@ struct TemplatesTab: View {
                 // 重排时：刚放下的那张不带动画（直接落到新格），其余走系统默认动画。
                 .animation(justDropped == route ? nil : .default, value: order)
 
-            // 右上角「固定」快捷键：**点一下直接切换**（不弹任何菜单）。
-            //
-            // ★ 2026-10-19（用户）：「固定增加**圆形外框**，里面做**对比色区分**，
-            //   整个圆形都是按键范围」
-            //   ➜ 圆形底：固定 = 品牌蓝实心 + 白图标；未固定 = 浅灰实心 + 灰图标。
-            //   ➜ 点击范围 = **整个 28pt 圆**（`contentShape(Circle())` 加在带背景的容器上）。
-            Button {
-                togglePin(route)
-            } label: {
-                Image(systemName: pinned ? "pin.fill" : "pin")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(pinned ? Color.white : Color.secondary)
-                    .frame(width: 28, height: 28)
+            // 右上角：**删除模式下是红减号，平时是固定图钉**。
+            if deletingMode {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Button {
+                        remove(route)
+                    } label: {
+                        Image(systemName: "minus.circle.fill")
+                            .font(.system(size: 22, weight: .bold))
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .red)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(8)
+            } else {
+                Button {
+                    togglePin(route)
+                } label: {
+                    Image(systemName: pinned ? "pin.fill" : "pin")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(pinned ? Color.white : Color.secondary)
+                        .frame(width: 28, height: 28)
                     // ★ 2026-10-19（用户）：「**不要外面的描边，只要按钮背景色**」
                     //   ➜ 去掉 `strokeBorder` 那一圈，只留实心圆形底。
                     .background(
@@ -297,9 +365,10 @@ struct TemplatesTab: View {
                     )
                     // ★ 整个圆都是热区（不只是图标那 11pt）。
                     .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(8)
             }
-            .buttonStyle(.plain)
-            .padding(8)
         }
     }
 
@@ -338,6 +407,20 @@ struct TemplatesTab: View {
         let remaining = pinnedKeys.filter { $0 != route.key }
         withAnimation(.default) { pinnedKeys = remaining }
         Prefs.pinnedTemplates = remaining
+
+        if case .custom(let id) = route {
+            // ★ 自定义模板：**真删除**（模板数据一起删），不是像内置那样"隐藏"。
+            withAnimation(.default) {
+                CustomTemplateStore.delete(id: id)
+                customTemplates = CustomTemplateStore.all
+                order.removeAll { $0 == route }
+                hiddenKeys.removeAll { $0 == route.key }
+            }
+            Prefs.hiddenTemplates = hiddenKeys
+            Prefs.templateOrder = order.map(\.key)
+            return
+        }
+
         var hidden = hiddenKeys
         if !hidden.contains(route.key) { hidden.append(route.key) }
         withAnimation(.default) { hiddenKeys = hidden }
@@ -413,9 +496,86 @@ struct TemplatesTab: View {
                         .font(.footnote)
                     }
                 }
+                // ★★★ 2026-10-19（用户）：「B-2 删除磁贴入口放在『效期打印』界面的右上角，
+                //   和这张图片一致的功能；同时**自定义模板**可以做了，入口也在这里」
+                //   ➜ 右上角 `⋯`（和「效期管理」页同款 `ellipsis.circle`），
+                //     里面两项：新建模板 / 删除磁贴（子菜单列出当前所有磁贴）。
+                if deletingMode {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") {
+                            withAnimation(.default) { deletingMode = false }
+                        }
+                        .fontWeight(.semibold)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            showTemplateEditor = true
+                        } label: {
+                            Label("新建模板", systemImage: "plus")
+                        }
+
+                        // ★ 2026-10-19（用户）：「⋯ 菜单**不应该有三项，只需要新建和删除**」
+                        //   点「删除」→ 进入删除模式：所有磁贴右上角变红减号，点一下删一个。
+                        Button(role: .destructive) {
+                            withAnimation(.default) { deletingMode = true }
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+            .confirmationDialog(
+                menuRoute?.title ?? "",
+                isPresented: Binding(get: { menuRoute != nil },
+                                     set: { if !$0 { menuRoute = nil } }),
+                titleVisibility: .visible,
+                presenting: menuRoute
+            ) { route in
+                Button(isPinned(route) ? "取消固定" : "固定") {
+                    togglePin(route)
+                    menuRoute = nil
+                }
+                if route.isCustom {
+                    Button("编辑") {
+                        if case .custom(let id) = route,
+                           let template = CustomTemplateStore.template(id: id) {
+                            editingTemplate = template
+                        }
+                        menuRoute = nil
+                    }
+                }
+                Button("取消", role: .cancel) { menuRoute = nil }
+            } message: { route in
+                Text(route.subtitle)
+            }
+            .sheet(isPresented: $showTemplateEditor) {
+                CustomTemplateEditor(original: nil) { template in
+                    CustomTemplateStore.upsert(template)
+                    customTemplates = CustomTemplateStore.all
+                    // ★ 必须重算 order，否则新建的磁贴不会出现（order 只在 @State 初始化时算一次）。
+                    withAnimation(.default) { order = Self.loadOrder() }
+                }
+            }
+            .sheet(item: $editingTemplate) { template in
+                CustomTemplateEditor(original: template) { updated in
+                    CustomTemplateStore.upsert(updated)
+                    customTemplates = CustomTemplateStore.all
+                    withAnimation(.default) { order = Self.loadOrder() }
+                }
             }
             .navigationDestination(for: TemplateRoute.self) { route in
                 switch route {
+                case .custom(let id):
+                    // ★ 自定义模板：进入逐级选择页（选到某一项后进打印页）。
+                    if let template = CustomTemplateStore.template(id: id) {
+                        CustomTemplatePicker(template: template)
+                    } else {
+                        ContentUnavailableView("模板已删除", systemImage: "trash")
+                    }
                 case .generic:
                     GenericTemplateView()
                 case .kombucha:

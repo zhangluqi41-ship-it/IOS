@@ -18,6 +18,22 @@ struct GenericTemplateView: View {
     ///   这样键盘才会播系统动画而不是瞬间消失。
     @FocusState private var focus: AnyHashable?
 
+    /// ★★★ 2026-10-19 新增：允许**预填**（自定义模板选中某一项后直接进来）。
+    ///   - `presetTitle`：标题（"解冻-猪肉-梅花肉"）；
+    ///   - `presetDays`：建议天数（从**今天**往后算，用户确认「打印时的开封时间都是打印当时」）。
+    ///   ⚠️ 不传参时行为和以前完全一致（各字段保持默认空值）。
+    init(presetTitle: String? = nil, presetDays: Int? = nil) {
+        if let t = presetTitle {
+            _title = State(initialValue: t)
+        }
+        if let days = presetDays, days > 0 {
+            let now = Date()
+            let due = Calendar.current.date(byAdding: .day, value: days, to: now) ?? now
+            _expireDate = State(initialValue: due)
+            _bestDate = State(initialValue: due)
+        }
+    }
+
     var body: some View {
         List {
             Section {

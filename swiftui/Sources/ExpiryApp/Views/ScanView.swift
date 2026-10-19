@@ -246,6 +246,22 @@ final class QRScannerModel: NSObject, ObservableObject {
         device = camera
         currentInput = input
 
+        // ★★★ 2026-10-19（用户）：「点开扫码后会有一个**画面平移**，疑似切换了摄像头？
+        //   每次打开都要卡一下（画面整体平移，清晰度也有变化）」
+        //   ➜ 根因：`configureAndRun` 的顺序是
+        //     `startRunning()`（首帧用 **1× 广角** 渲染，此时已显示在屏幕上）
+        //     → 紧接着 `applyTuning(zoom: 2.0)` → 虚拟多摄**切到长焦镜头**
+        //     → 用户看到"画面平移 + 清晰度变化"。
+        //   ➜ 修法：**在会话启动之前**就把 `videoZoomFactor` 设成 2×，
+        //     让首帧直接由长焦输出，不存在"先广角再切"的过程。
+        //     （`applyTuning` 里仍是幂等的 —— 若系统在 startRunning 时重置了，
+        //      它会在后面兜底补一次，但绝大多数情况下不会再有跳变。）
+        if camera.position == .back, (try? camera.lockForConfiguration()) != nil {
+            let cap = min(camera.activeFormat.videoMaxZoomFactor, 10)
+            camera.videoZoomFactor = min(Self.preferredZoom, cap)
+            camera.unlockForConfiguration()
+        }
+
         session.beginConfiguration()
         session.sessionPreset = .high
         session.addInput(input)
