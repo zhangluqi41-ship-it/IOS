@@ -318,23 +318,17 @@ struct SummaryDetailView: View {
                     //   所以要「视觉从左到右 = 删除、用完」，声明顺序必须**倒过来写**。
                     //   另外 `role: .destructive` 在滑动菜单里**不会自动变红**，
                     //   必须显式 `.tint(.red)`（之前截图里两个都是蓝色就是这个原因）。
-                    // ★★★ 2026-10-19（用户第二次纠正）：「删除和用完的逻辑是反的」
-                    //   ⚠️ SwiftUI 的 `swipeActions(edge: .trailing)` 按钮**按声明顺序从左到右**排，
-                    //     不是倒序（我上次判错，把「用完」写在前面 → 变成 用完在左、删除在右）。
-                    //   ➜ 想要「左=删除、右=用完」，声明顺序必须是 **删除在前、用完在后**。
+                    // ★ 顺序同效期管理：**先声明用完（显示在最右）→ 视觉 左=删除、右=用完**。
+                    //   `swipeActions(edge: .trailing)` 是**从右往左**排的（截图实测）。
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            store.delete(record)
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .tint(.red)
-
                         Button {
-                            // 和效期管理完全一致：先移除数据源 → 原生删行动画 → 再改数据。
                             if record.usedAt == nil {
                                 withAnimation { pendingRemoval.insert(record.id) }
                                 store.markUsed(record)
+                                // 动画结束后清标记，否则这条会被永久隐藏（像被删了）。
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                                    pendingRemoval.remove(record.id)
+                                }
                             } else {
                                 pendingRemoval.remove(record.id)
                                 withAnimation {
@@ -346,6 +340,13 @@ struct SummaryDetailView: View {
                                   ? "checkmark.circle" : "arrow.uturn.backward")
                         }
                         .tint(Theme.brand)
+
+                        Button(role: .destructive) {
+                            store.delete(record)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .tint(.red)
                     }
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {

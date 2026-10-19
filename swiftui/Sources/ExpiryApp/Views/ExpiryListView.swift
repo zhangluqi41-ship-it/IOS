@@ -52,20 +52,20 @@ struct ExpiryListView: View {
                                 //   → 全部改成 `Image(systemName:)`，不再用 `Label`（那会带文字）。
                                 // ★ 顺序同摘要页：**先声明「用完」→ 它显示在最右**；
                                 //   视觉从左到右 = 删除（红）、用完（蓝）。
-                                // ★ 顺序：**删除在前、用完在后** → 视觉 左=删除（红）、右=用完（蓝）。
+                                // ★★★ 2026-10-19（用户第三次纠正，有截图为证）：
+                                //   「**第一个按钮：删除；第二个按钮：用完**」
+                                //   ⚠️ `swipeActions(edge: .trailing)` 的按钮是**从右往左**排的
+                                //     —— **先声明的在最右边**。截图实测：声明 [删除, 用完]
+                                //     渲染出来是 「✓ 用完(左) | 🗑 删除(右)」，正好反了。
+                                //   ➜ 所以想要「左=删除、右=用完」，必须**先声明用完、后声明删除**。
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        store.delete(record)
-                                    } label: {
-                                        Image(systemName: "trash")
-                                    }
-                                    .tint(.red)
-
                                     Button {
-                                        // 和删除走完全相同的路径：先移除数据源 → 原生删行动画 → 再改数据。
+                                        // 先移除数据源（原生删行动画）→ 再改数据；**动画结束后必须清标记**，
+                                        // 否则这条记录会被永久隐藏（连"显示已用完"都看不到 = 像被删了）。
                                         if record.usedAt == nil {
                                             withAnimation { pendingRemoval.insert(record.id) }
                                             store.markUsed(record)
+                                            clearPendingLater(record.id)
                                         } else {
                                             pendingRemoval.remove(record.id)
                                             withAnimation {
@@ -77,6 +77,13 @@ struct ExpiryListView: View {
                                               ? "checkmark.circle" : "arrow.uturn.backward")
                                     }
                                     .tint(Theme.brand)
+
+                                    Button(role: .destructive) {
+                                        store.delete(record)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .tint(.red)
                                 }
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     Button {
@@ -231,6 +238,18 @@ struct ExpiryListView: View {
     // MARK: - 动作
 
     /// 重新打印一条已有记录的标签（内容与原标签逐字一致）。
+    /// 动画结束后清掉"本地已移除"标记。
+    ///
+    /// ★★★ 2026-10-19（用户 bug）：「现在删除和用完也没区别，**全部都是删除**，
+    ///   后台看不到已用完的数据」—— 根因就是这个标记**从来没被清**：
+    ///   完成后该记录被永久过滤掉，即使打开「显示已用完」也看不到。
+    ///   现在只让它活 0.45 秒（够播放删行动画），之后交回 `grouped(includeUsed:)`。
+    private func clearPendingLater(_ id: UUID) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            pendingRemoval.remove(id)
+        }
+    }
+
     /// 列表分组（叠加"本地已移除"的乐观过滤）。
     /// 用完一条时它会先从这里消失 → 走的是和 `delete` **完全相同**的行移除动画。
     private var sections: [ExpiryGroup] {

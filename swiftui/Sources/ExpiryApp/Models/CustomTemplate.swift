@@ -25,6 +25,14 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     var nodes: [CustomNode] = []
     /// 创建时间（用于排序）。
     var createdAt: Date = Date()
+    /// ★★★ 2026-10-19（用户）：「时间的设定**只会存在一个树级**……
+    ///   冷冻-猪肉-五花，时间只会设置在冷冻上；冷冻和冷藏是同一级的东西……
+    ///   所以时间的设定只会在一个树级单位上，不会重复出现」
+    ///   ➜ `timeLevel` = 建议天数设在第几层（1 = 第一级，2 = 第二级…）。
+    ///     `nil` = 还没定（编辑器里第一次填天数时自动锁定）。
+    ///   ➜ 编辑器据此**只允许那一层填天数**，其他层禁用。
+    ///     打印时：用自己的天数，没有就**向上找最近祖先**（继承）。
+    var timeLevel: Int? = nil
 
     /// 叶子总数（删除确认、统计用）。
     var leafCount: Int { nodes.reduce(0) { $0 + $1.leafCount } }

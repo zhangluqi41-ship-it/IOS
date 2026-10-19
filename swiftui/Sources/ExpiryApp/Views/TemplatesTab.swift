@@ -570,9 +570,10 @@ struct TemplatesTab: View {
             .navigationDestination(for: TemplateRoute.self) { route in
                 switch route {
                 case .custom(let id):
-                    // ★ 自定义模板：进入逐级选择页（选到某一项后进打印页）。
+                    // ★ 2026-10-19（用户）：「点开后**就是**『肉类』那种页面，不要多层」
+                    //   → 直接进打印页，品类用下拉菜单选；标题 = 模板名。
                     if let template = CustomTemplateStore.template(id: id) {
-                        CustomTemplatePicker(template: template)
+                        CustomTemplatePage(template: template)
                     } else {
                         ContentUnavailableView("模板已删除", systemImage: "trash")
                     }

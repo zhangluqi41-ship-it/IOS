@@ -202,14 +202,10 @@ final class QRScannerModel: NSObject, ObservableObject {
         if device.isFocusModeSupported(.continuousAutoFocus) {
             device.focusMode = .continuousAutoFocus
         }
-        // ③ 近景优先（前置不设 —— 自拍场景距离不定）
-        if preferNearFocus, device.isAutoFocusRangeRestrictionSupported {
-            device.autoFocusRangeRestriction = .near
-        }
-        // ④ 平滑对焦：虚拟多摄切换镜头时不要出现呼吸感
-        if device.isSmoothAutoFocusSupported {
-            device.isSmoothAutoFocusEnabled = true
-        }
+        // ★ 2026-10-19：去掉下面两项 —— 它们都会让相机**重新对焦一次**，
+        //   在开屏那一刻和 `startRunning` 叠在一起，加重"卡一下"的感觉。
+        //   扫码只要 `continuousAutoFocus` 就够了。
+        _ = preferNearFocus
     }
 
     private func configure() {
@@ -221,20 +217,15 @@ final class QRScannerModel: NSObject, ObservableObject {
         //   直接切到长焦（或 48MP 主摄的 2 倍裁切），比在主摄上做数字放大
         //   清晰得多，对焦也更快。
         //
-        //   优先级：三摄（有真长焦）→ 双摄广角（超广+广角）→ 双摄 → 单广角。
-        let virtualTypes: [AVCaptureDevice.DeviceType] = [
-            .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera,
-        ]
-        var back: AVCaptureDevice?
-        for type in virtualTypes {
-            if let candidate = AVCaptureDevice.default(type, for: .video, position: .back) {
-                back = candidate
-                break
-            }
-        }
-        if back == nil {
-            back = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
-        }
+        // ★★★ 2026-10-19（用户）：「我意思是**就跟切摄像头一样**」
+        //   ➜ 确认了：虚拟多摄（triple / dualWide）在 `videoZoomFactor` 跨过阈值时
+        //     会**切换物理镜头**（广角 → 长焦）—— 画面平移 + 清晰度突变，就是那"一下"。
+        //     在 `configure` 里预设 zoom 也压不住：`startRunning` 后仍会出一次首帧 1× 再切。
+        //   ➜ 改成**单广角（主摄）+ 数字 2×**：视场角一样，但**永远不切镜头**，开屏无跳变。
+        //     代价：2× 变成数字裁切，细节略逊于长焦（扫码足够；真要更长焦可双击 4×）。
+        let back: AVCaptureDevice? = AVCaptureDevice.default(.builtInWideAngleCamera,
+                                                            for: .video,
+                                                            position: .back)
         let front = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
         guard let camera = back ?? front ?? AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: camera),
@@ -391,17 +382,13 @@ final class QRScannerModel: NSObject, ObservableObject {
         }
     }
 
-    /// 按位置取摄像头，后置优先虚拟多摄（与 `configure` 保持同一套优先级）。
+    /// 按位置取摄像头。
+    ///
+    /// ★ 2026-10-19：**后置统一用单广角**（和 `configure` 保持一致）。
+    ///   原来这里也优先虚拟多摄 —— 那样「切前置再切回后置」会换回虚拟多摄设备，
+    ///   又是一次物理镜头切换（画面跳变）。现在两处用同一台设备。
     static func camera(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
-        if position == .back {
-            for type in [AVCaptureDevice.DeviceType.builtInTripleCamera,
-                         .builtInDualWideCamera, .builtInDualCamera] {
-                if let candidate = AVCaptureDevice.default(type, for: .video, position: .back) {
-                    return candidate
-                }
-            }
-        }
-        return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
     }
 
     // MARK: 手电筒
@@ -535,6 +522,8 @@ final class CameraHostView: UIView {
 
 struct ScanView: View {
     @Binding var path: NavigationPath
+    /// 用来在 App 进后台时关相机（前台不再反复开关）。
+    @Environment(\.scenePhase) private var scenePhase
 
     @StateObject private var scanner = QRScannerModel()
     @State private var showInvalidAlert = false
@@ -582,8 +571,22 @@ struct ScanView: View {
                 scanner.resume()
             }
             .onDisappear {
-                scanner.stop()
+                // ★★★ 2026-10-19（用户）：「摄像头还是要卡顿一下是怎么回事呢？」
+                //   ➜ 根因不是启动配置，而是**每次切走这个 tab 都会 `stop()` 关掉会话**，
+                //     切回来再 `startRunning()` —— 重启摄像头本身要 0.3~0.5 秒，就是那"一下"。
+                //   ➜ 改成：**切 tab 不停相机**（只关手电筒）；只在 App 进后台时停（见下面的 scenePhase）。
+                //     代价是不在扫码页时相机仍在采集（耗电略增），换来无卡顿。
                 scanner.turnTorchOff()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .background:
+                    scanner.stop()
+                case .active:
+                    if path.isEmpty { scanner.resume() }
+                default:
+                    break
+                }
             }
             .onChange(of: path.count) { _, count in
                 if count == 0 { scanner.resume() }
