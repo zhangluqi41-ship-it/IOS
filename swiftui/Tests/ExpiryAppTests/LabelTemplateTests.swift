@@ -61,7 +61,9 @@ final class LabelTemplateTests: XCTestCase {
         XCTAssertEqual(data.rows[1].label, "原始保质期：")
         XCTAssertEqual(data.rows[1].value, "2026/10/12 15:30") // ≤7 天
         XCTAssertEqual(data.rows[2].label, "最佳使用时间：")
-        XCTAssertEqual(data.rows[2].value, "2026/10/15 23:59") // >7 天
+        // ★ 2026-10-19 新规则：最佳使用时间**不允许超过原始保质期**（10/12），
+        //   所以传入的 10/15 会被 clamp 成 10/12。
+        XCTAssertEqual(data.rows[2].value, "2026/10/12 15:30")
         XCTAssertEqual(data.maker, "制作人：四野")
         XCTAssertEqual(data.rightText, "15:30")
     }
@@ -127,7 +129,7 @@ final class LabelTemplateTests: XCTestCase {
         // 名称 + 后两组时间；**不含**第一组「开封时间」，也不含制作人
         XCTAssertEqual(
             data.qrText,
-            "杨桃汁原始保质期：2026/10/12 15:30最佳使用时间：2026/10/15 23:59"
+            "杨桃汁原始保质期：2026/10/12 15:30最佳使用时间：2026/10/12 15:30"
         )
     }
 

@@ -222,7 +222,8 @@ final class MeatTests: XCTestCase {
         //   「完成时间」（= 解冻 + 1 天），不再是冷冻标签的原保 ——
         //   重打时第二行直接读这个存量值（与 `buildMeatThaw` 同源，逐字一致）。
         let complete = MeatRule.thawedComplete(from: stamp)
-        let best = MeatRule.thawedBest(from: stamp)
+        // ★ 2026-10-19 新规则：最佳不晚于完成时间（解冻标签的"原始保质期"行就是完成时间）。
+        let best = min(MeatRule.thawedBest(from: stamp), complete)
         let data = LabelTemplate.buildMeatThaw(baseName: "牛肉-眼肉", now: stamp, maker: "四野")
         let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: stamp,
                                               expireAt: complete, bestBefore: best,
