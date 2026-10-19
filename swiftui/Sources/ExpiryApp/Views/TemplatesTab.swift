@@ -133,13 +133,11 @@ struct TemplatesTab: View {
     //   落点用 `.onDrop(delegate:)`（**不是** `.dropDestination`）：后者会画系统「+」角标。
 
     /// 正在拖的磁贴。
-    @State private var dragging: TemplateRoute?
     /// ★ 2026-10-19（用户）：「按住后（进入排序模式）并没有放大，**只有拖拽走后才放大**，
     ///   应该是**按住后只要开始能够移动就放大**」
     ///   ➜ 原来是靠 `dragging`（要移动 6pt 才置位）驱动放大，所以"按下去"那一刻没反应。
     ///   ➜ 新增 `pressedRoute`：**手指一按下就置位**（`DragGesture(minimumDistance: 0)`），
     ///     放大/抬起视觉由 `dragging || pressed` 共同驱动。
-    @State private var pressedRoute: TemplateRoute?
     /// 打开自定义模板编辑器（新建）。
     @State private var showTemplateEditor = false
     /// ★ 2026-10-19（用户）：「选删除时**全部磁贴右上角增加一个红色减号圆形标**」
@@ -148,7 +146,6 @@ struct TemplatesTab: View {
     /// 自定义模板列表（改动后刷新磁贴区用）。
     @State private var customTemplates: [CustomTemplate] = CustomTemplateStore.all
     /// 手指相对起点的位移 —— 直接当 offset 用（1:1 跟手）。
-    @State private var dragOffset: CGSize = .zero
     /// 每张磁贴在网格坐标空间里的位置（用来算手指落在谁头上）。
     ///
     /// ★★★ 2026-10-19（用户）：「在拖动的过程中，**时间越久，掉帧越严重**」
@@ -158,17 +155,24 @@ struct TemplatesTab: View {
     ///   每帧都在自增一轮，所以越拖越卡。
     ///   ➜ 改成 **引用类型**（class）存放：改它的属性**不会**触发 SwiftUI 重绘，
     ///     只作为"查询表"用，彻底断掉这个循环。
-    @State private var frameStore = TileFrameStore()
     /// 手指当前落在哪个磁贴上（让位提示）。
-    @State private var dropTarget: TemplateRoute?
     /// 刚放下的那张 —— 重排时它不加过渡动画（松手就落在新格）。
-    @State private var justDropped: TemplateRoute?
 
     /// 读保存的顺序：**跳过已删除的**，并补上新增的路由。
     private static func loadOrder() -> [TemplateRoute] {
         let hidden = Set(Prefs.hiddenTemplates)
+        // ★★★ 2026-10-19（用户截图发现）：出现好几个「已删除的模板」磁贴。
+        //   根因：模板删掉后 `Prefs.templateOrder` 里还留着 `custom:<uuid>`，
+        //   `from(key:)` 又能解析回来 → 变成**幽灵磁贴**（标题兜底成"已删除的模板"）。
+        //   ➜ 过滤掉「模板已不存在」的 key。
         let saved = Prefs.templateOrder
-            .compactMap { TemplateRoute.from(key: $0) }
+            .compactMap { key -> TemplateRoute? in
+                guard let route = TemplateRoute.from(key: key) else { return nil }
+                if case .custom(let id) = route, CustomTemplateStore.template(id: id) == nil {
+                    return nil
+                }
+                return route
+            }
             .filter { !hidden.contains($0.key) }
         // 内置 4 个里缺的补上。
         let missingBuiltin = TemplateRoute.allCases
@@ -182,229 +186,13 @@ struct TemplatesTab: View {
         let pinned = Prefs.pinnedTemplates
             .compactMap { TemplateRoute.from(key: $0) }
             .filter { base.contains($0) }
-        return pinned + base.filter { !pinned.contains($0) }
+        let final = pinned + base.filter { !pinned.contains($0) }
+        // 顺手把清理后的顺序写回，幽灵 key 就此消失。
+        let keys = final.map(\.key)
+        if keys != Prefs.templateOrder { Prefs.templateOrder = keys }
+        return final
     }
 
-    // MARK: 磁贴（拖动 + 长按菜单 + 固定）
-
-    /// 单张磁贴：卡片 + 右上角「固定」快捷键 + **整张磁贴跟手拖动**。
-    ///
-    /// ★★★ 2026-10-19（用户两次订正后的结论）：
-    ///   · 「移动的时候截图出来个这玩意是啥？」（那个巨大的 "kombucha"）
-    ///     → 那是 `.onDrag` 的**系统 fallback**：当 preview 渲染异常时，
-    ///       系统会拿 `NSItemProvider` 里的**字符串内容**当拖拽预览，于是显示成一串大字。
-    ///   · 「移动的不是磁贴是个缩略图，**应该是磁贴跟我走**」
-    ///     → `.onDrag` 的 preview **必然是系统生成的快照**，做不到"整张磁贴跟手"。
-    ///   ➜ 结论：**只能用 `DragGesture` + `offset`**（唯一能让视图本体跟手的方案）。
-    ///
-    /// ★ 上次用 DragGesture「不跟手」的真因（已修）：
-    ///   我把 `.animation(_:value: isDragging)` 放在了 `.offset` **之后** ——
-    ///   于是 `isDragging` 翻转那一帧，`offset` 被从 0 动画到当前位移（0.18s 滑过去），
-    ///   看起来就是"慢半拍"。现在 **`.offset` 放在 `.animation` 之后**，位移永不被动画化。
-    private func tile(_ route: TemplateRoute) -> some View {
-        let isDragging = dragging == route
-        // 抬起态：**手指按下就算**（不用等移动 6pt），拖动中当然也算。
-        let isLifted = isDragging || pressedRoute == route
-        return tileCore(route)
-            // ★★★ 2026-10-19（用户）：「**正在被我拖动的变半透明**，
-            //   你把没被我拖动的、准备让位的那个变成半透明了」
-            //   ➜ 半透明只加在**被拖的那张**身上（iOS 标准：拿起来的东西是半透明的）。
-            .opacity(isDragging ? 0.85 : 1)
-            .scaleEffect(isLifted ? 1.06 : 1)
-            // ★ 2026-10-19：拖动中**不用 `shadow`**（实时高斯模糊是每帧的 GPU 大头），
-            //   改成 2pt 描边 —— 视觉上同样是"被拿起来"，渲染成本低一个量级。
-            .overlay {
-                if isLifted {
-                    RoundedRectangle(cornerRadius: Theme.tileRadius)
-                        .strokeBorder(Theme.brand.opacity(0.55), lineWidth: 2)
-                }
-            }
-            // ⚠️ 这个 animation **只能**作用在它前面（scale/shadow）。
-            // ★ 用户：「整个磁贴能否使用**苹果官方系统默认动画**」
-            //   ➜ `.default` 就是系统默认曲线 + 时长，不再用我自定义的 `.snappy`。
-            .animation(.default, value: isLifted)
-            // ★ offset 在 animation 之后 → 拖动中位移变化不带过渡 = 1:1 跟手。
-            .offset(isDragging ? dragOffset : .zero)
-            // ★★★ 2026-10-19（用户）：「图标移动的时候，现在是**瞬间移动**，
-            //   能不能改的自然、线性一些？」
-            //   ➜ 拖动中（isDragging = true）→ animation 为 nil（跟手零延迟）；
-            //     松手后（isDragging = false）→ 用 `.easeOut(0.22)` 让 offset 从
-            //     **手指落点**平滑归零，于是磁贴是「从松手位置滑到新格」，
-            //     而不是"啪"地闪现。
-            //   ⚠️ 重排那一步仍是**瞬间**的（`justDropped` 让这张不带 order 动画），
-            //     所以不会出现"从老位置滑过去"。
-            .animation(isDragging ? nil : .default, value: dragOffset)
-            // ★★★ 2026-10-19（用户）：「替换的时候图层应该是**我手上的磁贴在最上图层**，
-            //   被迫移动的图标在下图层；现在我松手后，被迫移动的图标跑到上图层了」
-            //   根因：`zIndex` 只在 `isDragging` 时为 1，松手立刻归 0 →
-            //   重排后它会和"被挤开的那张"同层，而 SwiftUI 的绘制顺序 = ForEach 声明顺序，
-            //   排到后面的兄弟会盖住它。
-            //   ➜ 松手后用 `justDropped` 再维持 **0.45 秒**的上层（紧接着的动画期），
-            //     动画结束自动回落到普通层。
-            .zIndex(isDragging ? 2 : (justDropped == route ? 1 : 0))
-            // ★★★ 2026-10-19（用户 bug）：「按住完全不能拖动，松手后会移动」
-            //   根因：磁贴内部是 `NavigationLink`（点击进模板页），它的**内层点击手势
-            //   优先级高于**外层的 `.gesture` → 拖动被它吃掉，一松手就当成"点击"跳页了。
-            //   ➜ 换成 **`.highPriorityGesture`**：拖动优先识别；
-            //     `minimumDistance: 6` 保证「没移动」时它直接失败、把点击还给 NavigationLink。
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 6, coordinateSpace: .named("tileGrid"))
-                    .onChanged { value in
-                        // 删除模式下不拖动（只在点红减号时才响应）。
-                        guard !deletingMode else { return }
-                        if dragging != route {
-                            // ⚠️ 不要 withAnimation：否则 offset 会从 0 滑到当前位置。
-                            dragging = route
-                        }
-                        dragOffset = value.translation
-                        let hit = frameStore.frames.first {
-                            $0.key != route && $0.value.contains(value.location)
-                        }?.key
-                        // ★ 不加 withAnimation：拖动中每次变化都开一个动画事务会堆叠、加剧掉帧。
-                        //   目标只是轻微上移 4pt，直接改值即可。
-                        if hit != dropTarget { dropTarget = hit }
-                    }
-                    .onEnded { _ in
-                        guard !deletingMode else { return }
-                        finishDrag(from: route)
-                    }
-            )
-            // ★ 手指一按下就进入"抬起"视觉（放大 + 投影）；松手复原。
-            //   用 `simultaneousGesture` 同时识别：不抢点击（进模板页）、也不抢拖动。
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .named("tileGrid"))
-                    .onChanged { _ in
-                        guard !deletingMode else { return }
-                        if pressedRoute != route { pressedRoute = route }
-                    }
-                    .onEnded { _ in
-                        pressedRoute = nil
-                    }
-            )
-
-    }
-
-    /// 松手：换位 + 清所有拖动状态。
-    ///
-    /// ★ 先复位状态、再重排（上次的 bug：先重排会带着"透明/变淡"渲染，看起来像消失）；
-    ///   换位不成功（同位置）则什么都不做 —— 磁贴自动回到原位。
-    private func finishDrag(from route: TemplateRoute) {
-        let target = dropTarget
-        justDropped = route
-
-        // ① 先结束拖动（isDragging = false）—— 让下一行 dragOffset 的变化走 `.easeOut` 过渡。
-        withAnimation(.default) {
-            dragging = nil
-            dropTarget = nil
-        }
-        // ② offset 归零：因为上面 isDragging 已为 false，这一步会从**手指落点**平滑滑到新格。
-        dragOffset = .zero
-
-        if let target,
-           let fromIndex = order.firstIndex(of: route),
-           let toIndex = order.firstIndex(of: target),
-           fromIndex != toIndex {
-            withAnimation(.default) {
-                let moved = order.remove(at: fromIndex)
-                order.insert(moved, at: toIndex)
-            }
-            Prefs.templateOrder = order.map(\.key)
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            justDropped = nil
-        }
-    }
-
-    /// 磁贴本体：卡片 + 右上角「固定」快捷键。
-    ///
-    /// ⚠️ 2026-10-19 补回：清理 `finishDrag` 时误删了这段（导致 `cannot find 'tileCore'` 编译失败）。
-    private func tileCore(_ route: TemplateRoute) -> some View {
-        let isTarget = dropTarget == route
-        let pinned = isPinned(route)
-        return ZStack(alignment: .topTrailing) {
-            card(for: route)
-                // ★★★ 2026-10-19（用户）：「删除界面，**不应该存在『点击图标进入菜单』**」
-                //   ➜ 删除模式下 `NavigationLink` 一并禁用，点磁贴本体不会有任何跳转，
-                //     只有右上角的红减号是有效点击区。
-                .disabled(deletingMode)
-                // ★ 2026-10-19（用户）：目标**不要变半透明**（半透明只属于被拖的那张），
-                //   这里只保留一点点上移，作为"它要让位了"的提示。
-                .offset(y: isTarget ? -4 : 0)
-                .animation(.default, value: isTarget)
-                // 重排时：刚放下的那张不带动画（直接落到新格），其余走系统默认动画。
-                .animation(justDropped == route ? nil : .default, value: order)
-
-            // 右上角：**删除模式下是红减号，平时是固定图钉**。
-            if deletingMode {
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    Button {
-                        remove(route)
-                    } label: {
-                        Image(systemName: "minus.circle.fill")
-                            .font(.system(size: 22, weight: .bold))
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, .red)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(8)
-            } else {
-                Button {
-                    togglePin(route)
-                } label: {
-                    Image(systemName: pinned ? "pin.fill" : "pin")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(pinned ? Color.white : Color.secondary)
-                        .frame(width: 28, height: 28)
-                    // ★ 2026-10-19（用户）：「**不要外面的描边，只要按钮背景色**」
-                    //   ➜ 去掉 `strokeBorder` 那一圈，只留实心圆形底。
-                    .background(
-                        Circle().fill(pinned ? Theme.brand : Color(.tertiarySystemFill))
-                    )
-                    // ★ 整个圆都是热区（不只是图标那 11pt）。
-                    .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .padding(8)
-            }
-        }
-    }
-
-    private func isPinned(_ route: TemplateRoute) -> Bool {
-        pinnedKeys.contains(route.key)
-    }
-
-    /// 固定 / 取消固定。
-    ///
-    /// ★ 2026-10-18 用户订正：「固定只能最多选 1 个，不应该，**每个都可以固定，
-    ///   **按固定顺序排先后**」
-    ///   ➜ 存成数组：**先固定的排前面**，后固定的排后面。
-    private func togglePin(_ route: TemplateRoute) {
-        var pinned = pinnedKeys
-        if let index = pinned.firstIndex(of: route.key) {
-            pinned.remove(at: index)
-        } else {
-            pinned.append(route.key)
-        }
-        // 先改 @State（保证界面立刻重绘），再落盘。
-        withAnimation(.default) { pinnedKeys = pinned }
-        Prefs.pinnedTemplates = pinned
-        applyPinOrder()
-    }
-
-    /// 按固定顺序把固定的磁贴排到最前（其余保持原有相对顺序）。
-    private func applyPinOrder() {
-        let pinned = pinnedKeys.compactMap { TemplateRoute.from(key: $0) }
-        let rest = order.filter { !pinned.contains($0) }
-        withAnimation(.default) { order = pinned + rest }
-        Prefs.templateOrder = order.map(\.key)
-    }
-
-    /// 删除（隐藏）磁贴 —— 记进 `Prefs.hiddenTemplates`，可用「恢复全部」找回。
     private func remove(_ route: TemplateRoute) {
         let remaining = pinnedKeys.filter { $0 != route.key }
         withAnimation(.default) { pinnedKeys = remaining }
@@ -433,47 +221,19 @@ struct TemplatesTab: View {
         Prefs.templateOrder = order.map(\.key)
     }
 
-    /// 按路由生成一张磁贴（4 张卡片的元数据都收在 `TemplateRoute` 里了）。
-    private func card(for route: TemplateRoute) -> some View {
-        TemplateCard(title: route.title,
-                     subtitle: route.subtitle,
-                     systemImage: route.systemImage,
-                     tint: route.tint,
-                     fill: route.fill,
-                     route: route)
-    }
-
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
-                                        GridItem(.flexible(), spacing: 12)],
-                              spacing: 12) {
-                        ForEach(order, id: \.self) { route in
-                            tile(route)
-                                .background(
-                                    GeometryReader { geo in
-                                        Color.clear.preference(
-                                            key: TileFrameKey.self,
-                                            value: [route: geo.frame(in: .named("tileGrid"))]
-                                        )
-                                    }
-                                )
-                        }
-                    }
-                    .coordinateSpace(name: "tileGrid")
-                    .onPreferenceChange(TileFrameKey.self) { frames in
-                        // 只更新引用类型的属性 —— 不会引起重绘。
-                        frameStore.frames = frames
-                    }
-                    // ★★★ 2026-10-19（用户）：「他不应该在最上图层吗，怎么拖到下面就在下图层了」
-                    //   根因：`zIndex` **只在兄弟视图之间比较**。被拖的磁贴在 `LazyVGrid` 内部，
-                    //   而下面的「使用流程」卡片是网格的**兄弟** → 磁贴永远压不过它。
-                    //   ➜ 把**整个网格**在拖动时提到最上层，磁贴内部的 zIndex 才真正有意义。
-                    .zIndex(dragging != nil ? 1 : 0)
+                    // ★★★ 2026-10-19（用户第三次反馈「拖动还是有卡顿」）—— 根治：
+                    //   网格连同它的拖动状态已经整体搬进 `TemplateGrid` 子视图。
+                    //   手指移动时**只有网格重算**，本页的大标题、"使用流程"一行都不动。
+                    TemplateGrid(order: $order,
+                                 pinnedKeys: $pinnedKeys,
+                                 deletingMode: deletingMode,
+                                 onRemove: remove)
                     // ★ 2026-10-19（用户）：「在磁贴上方拖动时掉帧很严重」
                     //   拖动每帧都会重算 body，这块静态卡片也跟着重画（里面有圆角/描边/多层背景）。
                     //   `drawingGroup()` 把它光栅化缓存，拖动期间不再重新渲染。
@@ -630,7 +390,6 @@ struct TemplatesTab: View {
 ///       + `RoundedRectangle(cornerRadius: Theme.tileRadius)`（22）。
 struct TemplateCard: View {
     let title: String
-    let subtitle: String
     let systemImage: String
     let tint: Color
     let fill: Color

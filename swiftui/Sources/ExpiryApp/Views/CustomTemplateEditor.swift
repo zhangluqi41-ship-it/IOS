@@ -28,26 +28,39 @@ struct CustomTemplateEditor: View {
             List {
                 Section {
                     TextField("点击输入模板名称", text: $draft.name)
-                } header: {
-                    Text("模板名称")
-                } footer: {
-                    // ★ 用户：模板名称这一项**也可以设置一个建议时间**（作为这一层的默认天数）。
+
+                    // ★★★ 2026-10-19（用户）：「这里**没有天数**，增加功能」
+                    //   ➜ 根因：`Section` 的 **footer 只支持纯文本**，把 `Toggle`/`Stepper`
+                    //     塞进 footer 里 Stepper 根本不会渲染（Toggle 侥幸显示出来了）。
+                    //   ➜ 现在整组放进 Section 的**正文**：开关 + 天数步进器都在这张卡片里。
                     Toggle("设建议天数", isOn: Binding(
                         get: { draft.defaultDays != nil },
                         set: { on in
                             draft.defaultDays = on ? (draft.defaultDays ?? 3) : nil
-                            // 模板本身设了时间 → 锁定"第 0 层"，下级各层不再设。
+                            // 模板本身设了天数 → 锁定在第 0 层，下面各级的天数开关全部禁用。
                             draft.timeLevel = on ? 0 : nil
                         }
                     ))
+
                     if draft.defaultDays != nil {
                         Stepper(value: Binding(
                             get: { draft.defaultDays ?? 3 },
                             set: { draft.defaultDays = max(1, $0) }
                         ), in: 1...365) {
-                            Text("默认 \(draft.defaultDays ?? 3) 天")
-                                .monospacedDigit()
+                            HStack {
+                                Text("天数")
+                                Spacer()
+                                Text("\(draft.defaultDays ?? 3) 天")
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
                         }
+                    }
+                } header: {
+                    Text("模板名称")
+                } footer: {
+                    if draft.defaultDays != nil {
+                        Text("设在这里，下面各级菜单就不用再设天数了（它们会继承这个值）。")
                     }
                 }
 
@@ -311,7 +324,7 @@ struct CustomNodeSheet: View {
         NavigationStack {
             List {
                 Section("名称") {
-                    TextField("如：桃浓缩汁", text: $node.name)
+                    TextField("点击输入名称", text: $node.name)
                 }
 
                 Section {

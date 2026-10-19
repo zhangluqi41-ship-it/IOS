@@ -58,7 +58,7 @@ struct ExpiryListView: View {
                                 //     —— **先声明的在最右边**。截图实测：声明 [删除, 用完]
                                 //     渲染出来是 「✓ 用完(左) | 🗑 删除(右)」，正好反了。
                                 //   ➜ 所以想要「左=删除、右=用完」，必须**先声明用完、后声明删除**。
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button {
                                         // 先移除数据源（原生删行动画）→ 再改数据；**动画结束后必须清标记**，
                                         // 否则这条记录会被永久隐藏（连"显示已用完"都看不到 = 像被删了）。

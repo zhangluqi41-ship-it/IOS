@@ -320,7 +320,7 @@ struct SummaryDetailView: View {
                     //   必须显式 `.tint(.red)`（之前截图里两个都是蓝色就是这个原因）。
                     // ★ 顺序同效期管理：**先声明用完（显示在最右）→ 视觉 左=删除、右=用完**。
                     //   `swipeActions(edge: .trailing)` 是**从右往左**排的（截图实测）。
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button {
                             if record.usedAt == nil {
                                 withAnimation { pendingRemoval.insert(record.id) }
