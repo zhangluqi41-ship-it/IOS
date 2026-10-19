@@ -40,6 +40,13 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     ///   ➜ 模板本身的默认天数（第 0 层）。设了就等于 `timeLevel = 0`，
     ///     下属各层不再设时间；打印时没选到具体天数就用它兜底。
     var defaultDays: Int? = nil
+    /// ★ 2026-10-19（用户）：「使用制备功能」——
+    ///   开启后标签改用「制备时间 / 完成时间 / 最佳使用时间」三行（同康普茶一发）。
+    var usePrep: Bool = false
+    /// 「扫描二维码二次制备」——开启后可在打印页扫原标签续做（同康普茶二发）。
+    var useSecondary: Bool = false
+    /// 二次制备的完成天数（完成 = 扫码头那一刻 + N 天）。
+    var secondaryDays: Int = 3
 
     /// 叶子总数（删除确认、统计用）。
     var leafCount: Int { nodes.reduce(0) { $0 + $1.leafCount } }

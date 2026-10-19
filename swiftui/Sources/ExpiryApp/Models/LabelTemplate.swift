@@ -302,6 +302,74 @@ enum LabelTemplate {
         return v.hasPrefix(kombuchaPrefix) ? v : "\(kombuchaPrefix)-\(v)"
     }
 
+    /// 自定义模板的「制备版式」：制备时间 / 完成时间 / 最佳使用时间。
+    ///
+    /// ★ 2026-10-19（用户）：「使用制备功能」开启后用这个，和康普茶一发同构。
+    static func buildCustomPrep(title: String, now: Date, doneDays: Int,
+                               bestBefore: Date, maker: String) -> LabelData {
+        let done = AppCalendar.shared.date(byAdding: .day, value: max(1, doneDays), to: now) ?? now
+        return LabelData(
+            title: clamp(title),
+            rows: [
+                LabelRow(label: "制备时间：", value: fmtDateTime(now)),
+                LabelRow(label: "完成时间：", value: fmtDateTime(done)),
+                LabelRow(label: "最佳使用时间：", value: fmtDateTime(bestBefore)),
+            ],
+            weekdayCn: weekdayCn(now),
+            weekdayEn: weekdayEn(now),
+            rightText: fmtTime(now),
+            maker: makerFooter(maker)
+        )
+    }
+
+    /// 自定义模板的「二次制备」版式：制备 / 完成 / 最佳（最佳沿用原标签）。
+    ///
+    /// ★ 2026-10-19（用户）：「扫描二维码二次制备」——扫原标签后续做，
+    ///   完成 = **扫描时刻 + `doneDays`**，最佳使用时间**沿用原标签**（和康普茶二发一致）。
+    static func buildCustomSecondary(sourceTitle: String, suffix: String, now: Date,
+                                     doneDays: Int, sourceBestBefore: Date,
+                                     maker: String) -> LabelData {
+        let done = AppCalendar.shared.date(byAdding: .day,
+                                           value: max(1, doneDays), to: now) ?? now
+        let combined = clamp("\(clamp(sourceTitle, maxTitleLength))-\(clamp(suffix, maxNameLength))",
+                             maxTitleLength)
+        return LabelData(
+            title: combined,
+            rows: [
+                LabelRow(label: "制备时间：", value: fmtDateTime(now)),
+                LabelRow(label: "完成时间：", value: fmtDateTime(done)),
+                LabelRow(label: "最佳使用时间：", value: fmtDateTime(sourceBestBefore)),
+            ],
+            weekdayCn: weekdayCn(now),
+            weekdayEn: weekdayEn(now),
+            rightText: fmtTime(now),
+            maker: makerFooter(maker)
+        )
+    }
+
+    /// 通用二维码解析（自定义模板二次制备用）：从 `qrText` 里取**标题**和**最佳使用时间**。
+    ///
+    /// 二维码内容 = 标题 + 各行的「label + value」拼起来，例如：
+    ///   `冷冻-猪肉-五花肉开封时间：2026/10/19 10:00原始保质期：2026/10/24 10:00最佳使用时间：2026/10/24 10:00`
+    static func parseCustomQr(_ raw: String) -> (title: String, bestBefore: Date)? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.utf8.count <= maxQrBytes else { return nil }
+
+        // 标题 = 第一个「XX时间：」之前的所有内容。
+        guard let firstTime = text.range(of: "时间：") else { return nil }
+        let title = String(text[text.startIndex..<firstTime.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+
+        // 最佳使用时间：取「最佳使用时间：」后面那一串，直到下一个「：」或结尾。
+        guard let bestRange = text.range(of: "最佳使用时间：") else { return nil }
+        let tail = String(text[bestRange.upperBound...])
+        let candidate = tail.split(separator: "：").first.map(String.init) ?? tail
+        guard let date = parseDate(candidate) else { return nil }
+
+        return (title, date)
+    }
+
     static func buildKombuchaFirst(variety: String, now: Date, maker: String) -> LabelData {
         let done = AppCalendar.shared.date(byAdding: .day, value: kombuchaDoneDays, to: now) ?? now
         let best = AppCalendar.shared.date(byAdding: .day, value: kombuchaBestDays, to: now) ?? now

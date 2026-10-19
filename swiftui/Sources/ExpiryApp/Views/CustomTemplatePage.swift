@@ -20,14 +20,73 @@ struct CustomTemplatePage: View {
     /// 每一层选中的节点 id（nil = 未选）。层级上限见 `CustomNode.maxDepth`。
     @State private var selections: [UUID?] = Array(repeating: nil, count: CustomNode.maxDepth)
     @State private var title = ""
+    /// 空菜单模板时，用户直接输入的物料名称。
+    @State private var materialName = ""
     @State private var expireDate = Date()
     @State private var bestDate = Date()
     @State private var maker = Prefs.lastMaker
     @State private var showPickerAlert = false
+    /// ★ 二次制备：扫到的原标签信息 + sheet 开关。
+    @State private var showSecondaryScan = false
+    @State private var scannedTitle: String?
+    @State private var scannedBestBefore: Date?
     @FocusState private var focus: AnyHashable?
 
     var body: some View {
         List {
+            // ★ 2026-10-19（用户）：「扫描二维码二次制备」——开启后这里可以扫原标签。
+            if template.useSecondary {
+                Section {
+                    Button {
+                        showSecondaryScan = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "qrcode.viewfinder")
+                                .foregroundStyle(Theme.brand)
+                                .frame(width: 22)
+                            if let scannedTitle {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("已扫描：\(scannedTitle)")
+                                        .foregroundStyle(.primary)
+                                    if let date = scannedBestBefore {
+                                        Text("最佳使用时间 \(date.formatted(date: .abbreviated, time: .shortened))")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            } else {
+                                Text("扫描原标签")
+                                    .foregroundStyle(Theme.brand)
+                            }
+                            Spacer(minLength: 8)
+                            if scannedTitle != nil {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.footnote)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } footer: {
+                    Text("扫到后：完成时间 = 扫描时刻 + \(template.secondaryDays) 天，最佳使用时间沿用原标签。")
+                }
+            }
+
+            if template.nodes.isEmpty {
+                // ★★★ 2026-10-19（用户）：「不添加菜单，就设置成**通用效期那种直接输入物料名称**的模板，
+                //   命名规则为『定义的模板名称』-『直接输入的物料名称』」
+                Section {
+                    HStack(spacing: 12) {
+                        Image(systemName: template.icon)
+                            .foregroundStyle(Theme.brand)
+                            .frame(width: 22)
+                        TextField("点击输入物料名称", text: $materialName)
+                            .onChange(of: materialName) { _, _ in syncFromInput() }
+                    }
+                } header: {
+                    Text("物料名称")
+                }
+            } else {
             Section {
                 // ★ 逐层菜单：和「肉类」的「保存类型 / 肉类 / 部位」同一个样子。
                 ForEach(visibleLevels, id: \.self) { level in
@@ -61,6 +120,7 @@ struct CustomTemplatePage: View {
             } header: {
                 Text("品类")
             }
+            }
 
             Section {
                 LabelDatePicker(title: "原始保质期", date: $expireDate)
@@ -90,7 +150,14 @@ struct CustomTemplatePage: View {
         .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
         .onChange(of: selections) { _, _ in syncFromSelection() }
-        .alert("请先选择品类", isPresented: $showPickerAlert) {
+        .sheet(isPresented: $showSecondaryScan) {
+            SecondaryScanView { title, best in
+                scannedTitle = title
+                scannedBestBefore = best
+            }
+        }
+        .alert(template.nodes.isEmpty ? "请先输入物料名称" : "请先选择品类",
+               isPresented: $showPickerAlert) {
             Button("好", role: .cancel) {}
         }
     }
@@ -166,6 +233,21 @@ struct CustomTemplatePage: View {
         }
     }
 
+    /// 空菜单模板：标题 = 「模板名-物料名」，日期按模板级天数自动填。
+    private func syncFromInput() {
+        let name = materialName.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty {
+            title = ""
+        } else {
+            title = "\(template.name)-\(name)"
+        }
+        if let days = template.defaultDays, days > 0, !name.isEmpty {
+            let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+            expireDate = due
+            bestDate = due
+        }
+    }
+
     /// 选择变化后：刷新标题 + 日期。
     private func syncFromSelection() {
         let chain = chosenChain()
@@ -173,7 +255,10 @@ struct CustomTemplatePage: View {
             title = ""
             return
         }
-        title = ([template.name] + chain.map(\.name)).joined(separator: "-")
+        // ★★★ 2026-10-19（用户）：「**建了菜单后不需要模板名**」
+        //   ➜ 有菜单时标题 = 纯菜单路径（"猪肉-五花肉"），模板名只作为**页面标题**显示。
+        //   ➜ 只有空菜单时才用「模板名-手输名」。
+        title = chain.map(\.name).joined(separator: "-")
         if let days = appliedDays, days > 0 {
             let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
             expireDate = due
@@ -193,10 +278,28 @@ struct CustomTemplatePage: View {
         let now = Date()
         // ★ 版式复用「通用效期」（开封时间 / 原始保质期 / 最佳使用时间）——
         //   用户要的就是"和肉类那种页面一样"，只是标题来自自定义模板的路径。
-        let data = LabelTemplate.buildGeneric(title: name, now: now,
+        // ★ 2026-10-19（用户）：「使用制备功能」→ 三行改成 制备/完成/最佳。
+        let data: LabelData
+        if template.useSecondary, let sourceTitle = scannedTitle, let sourceBest = scannedBestBefore {
+            // ★ 二次制备：标题 = 原标签标题-当前选择的名称；完成 = 现在 + N 天；最佳沿用原标签。
+            data = LabelTemplate.buildCustomSecondary(sourceTitle: sourceTitle,
+                                                      suffix: title,
+                                                      now: now,
+                                                      doneDays: template.secondaryDays,
+                                                      sourceBestBefore: sourceBest,
+                                                      maker: makerFinal)
+        } else if template.usePrep {
+            // 完成天数复用模板级「建议天数」（没设就按 3 天）。
+            data = LabelTemplate.buildCustomPrep(title: name, now: now,
+                                                 doneDays: template.defaultDays ?? 3,
+                                                 bestBefore: bestDate,
+                                                 maker: makerFinal)
+        } else {
+            data = LabelTemplate.buildGeneric(title: name, now: now,
                                               expireDate: expireDate,
                                               bestBefore: bestDate,
                                               maker: makerFinal)
+        }
         let record = LabelTemplate.makeRecord(kind: .generic, data: data, createdAt: now,
                                               expireAt: expireDate, bestBefore: bestDate,
                                               maker: makerFinal)

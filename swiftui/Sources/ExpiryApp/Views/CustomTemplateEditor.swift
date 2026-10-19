@@ -64,34 +64,59 @@ struct CustomTemplateEditor: View {
                     }
                 }
 
-                Section("图标") {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
-                        ForEach(Self.iconChoices, id: \.self) { name in
-                            Button { draft.icon = name } label: {
-                                Image(systemName: name)
-                                    .font(.system(size: 17))
-                                    .frame(width: 34, height: 34)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 9)
-                                            .fill(draft.icon == name
-                                                  ? Color.accentColor.opacity(0.22)
-                                                  : Color(uiColor: .tertiarySystemFill))
-                                    )
-                                    .foregroundStyle(draft.icon == name ? Color.accentColor : .secondary)
-                            }
-                            .buttonStyle(.plain)
+                // ★★★ 2026-10-19（用户）：「图标设置占用太大了，可以**单独开一个子菜单**来设置，
+                //   同时在设置颜色时**增加一个预览**」
+                //   ➜ 图标 40 个 + 两组色板全部收进 `TemplateAppearanceEditor`，
+                //     主页只留这一行（带当前外观的小预览）。
+                Section {
+                    NavigationLink {
+                        TemplateAppearanceEditor(icon: $draft.icon,
+                                                 tintName: $draft.tintName,
+                                                 iconColorName: $draft.iconColorName,
+                                                 previewTitle: draft.name)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: draft.icon)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(CustomTemplate.color(named: draft.iconColorName))
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    CustomTemplate.color(named: draft.tintName),
+                                    in: RoundedRectangle(cornerRadius: 8)
+                                )
+                            Text("图标与颜色")
+                            Spacer()
                         }
                     }
-                    .padding(.vertical, 4)
                 }
 
-                // ★ 2026-10-19（用户）：「下方增加两个颜色选择：**背景色、图标颜色**」
-                Section("图标块背景色") {
-                    colorRow(selection: $draft.tintName)
-                }
+                // ★ 2026-10-19（用户）：新建模板页加两个功能开关。
+                Section {
+                    Toggle("使用制备功能", isOn: $draft.usePrep)
+                    Toggle("扫描二维码二次制备", isOn: $draft.useSecondary)
 
-                Section("图标颜色") {
-                    colorRow(selection: $draft.iconColorName)
+                    if draft.useSecondary {
+                        Stepper(value: $draft.secondaryDays, in: 1...60) {
+                            HStack {
+                                Text("完成天数")
+                                Spacer()
+                                Text("\(draft.secondaryDays) 天")
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                } header: {
+                    Text("功能")
+                } footer: {
+                    if draft.usePrep {
+                        Text("开：标签用「制备时间 / 完成时间 / 最佳使用时间」三行（同康普茶）。"
+                             + "关：用「开封时间 / 原始保质期 / 最佳使用时间」。")
+                    }
+                    if draft.useSecondary {
+                        Text("开：可以在打印页扫原标签续做二次制备 —— "
+                             + "完成时间 = 扫描时刻 + \(draft.secondaryDays) 天，最佳使用时间沿用原标签。")
+                    }
                 }
 
                 Section {
@@ -122,8 +147,9 @@ struct CustomTemplateEditor: View {
                         onSave(draft)
                         dismiss()
                     }
-                    .disabled(draft.name.trimmingCharacters(in: .whitespaces).isEmpty
-                              || draft.nodes.isEmpty)
+                    // ★★★ 2026-10-19（用户）：「如果不添加菜单，就无法保存」→ 去掉菜单必须非空的限制。
+                    //   空菜单 = 「前缀模板」：打印时直接手输物料名，标题拼成「模板名-物料名」。
+                    .disabled(draft.name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
             .sheet(item: $editingPath) { path in
@@ -151,38 +177,6 @@ struct CustomTemplateEditor: View {
             levels.insert(row.level + 1)      // level 是 0-based → 层号 +1
         }
         draft.timeLevel = levels.count == 1 ? levels.first : nil
-    }
-
-    /// 一排色点（选中的带描边 + 对勾）。
-    @ViewBuilder
-    private func colorRow(selection: Binding<String>) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
-            ForEach(CustomTemplate.colorChoices, id: \.self) { name in
-                Button {
-                    selection.wrappedValue = name
-                } label: {
-                    Circle()
-                        .fill(CustomTemplate.color(named: name))
-                        .frame(width: 28, height: 28)
-                        .overlay {
-                            Circle().strokeBorder(
-                                Color.primary.opacity(selection.wrappedValue == name ? 0.9 : 0.12),
-                                lineWidth: selection.wrappedValue == name ? 2 : 1
-                            )
-                        }
-                        .overlay {
-                            if selection.wrappedValue == name {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(name == "white" || name == "yellow"
-                                                     ? Color.black : Color.white)
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.vertical, 4)
     }
 
     // MARK: 行
