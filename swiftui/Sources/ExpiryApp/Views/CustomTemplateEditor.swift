@@ -155,7 +155,7 @@ struct CustomTemplateEditor: View {
         let node: CustomNode
         let path: [Int]
         let level: Int
-        var pathKey: String { path.map(String.init).joined("/") }
+        var pathKey: String { path.map(String.init).joined(separator: "/") }
     }
 
     private func flattened(_ nodes: [CustomNode]? = nil,
@@ -226,7 +226,7 @@ struct CustomTemplateEditor: View {
 /// 节点在树里的位置（索引路径），用作 sheet 的 item。
 struct NodePath: Identifiable, Hashable {
     let indices: [Int]
-    var id: String { indices.map(String.init).joined("/") }
+    var id: String { indices.map(String.init).joined(separator: "/") }
 }
 
 // MARK: - 单项编辑弹窗
