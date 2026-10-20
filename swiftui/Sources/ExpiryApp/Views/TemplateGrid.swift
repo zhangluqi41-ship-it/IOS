@@ -84,7 +84,14 @@ struct TemplateGrid: View {
             //   ➜ 改成 **`LongPressGesture(0.4s).sequenced(before: DragGesture)`**：
             //     没长按够 0.4 秒时前置手势**失败**，手势让给外层 ScrollView → 正常滚动；
             //     长按够 0.4 秒才接管后续位移 → 拖动排序。
-            .highPriorityGesture(
+            //
+            //   ⚠️⚠️ 2026-10-20 回归修复（用户报「**史诗级 bug**：图标点击不能进、编辑删除全失效」）：
+            //   之前用的是 **`highPriorityGesture`** —— 它的优先级**高于子视图**，
+            //   连 `NavigationLink` 的点击和右上角 Button 都被它吞掉，磁贴变成"只能拖、不能点"。
+            //   ➜ 换成 **`simultaneousGesture`**：与子视图手势**同时**识别，
+            //     Button / NavigationLink 照常响应；拖动手势要长按 0.4s 才成立，
+            //     所以正常滑动和点击都不受干扰。
+            .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.4)
                     .sequenced(before: DragGesture(minimumDistance: 0,
                                                    coordinateSpace: .named("tileGrid")))

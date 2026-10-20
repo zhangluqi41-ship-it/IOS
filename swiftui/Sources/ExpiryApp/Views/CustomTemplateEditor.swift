@@ -33,24 +33,53 @@ struct CustomTemplateEditor: View {
                     //   ➜ 根因：`Section` 的 **footer 只支持纯文本**，把 `Toggle`/`Stepper`
                     //     塞进 footer 里 Stepper 根本不会渲染（Toggle 侥幸显示出来了）。
                     //   ➜ 现在整组放进 Section 的**正文**：开关 + 天数步进器都在这张卡片里。
-                    Toggle("设建议天数", isOn: Binding(
+                    Toggle("设最佳使用时间", isOn: Binding(
                         get: { draft.defaultDays != nil },
                         set: { on in
                             draft.defaultDays = on ? (draft.defaultDays ?? 3) : nil
-                            // 模板本身设了天数 → 锁定在第 0 层，下面各级的天数开关全部禁用。
-                            draft.timeLevel = on ? 0 : nil
                         }
                     ))
 
-                    if draft.defaultDays != nil {
+                    if let days = draft.defaultDays {
                         Stepper(value: Binding(
-                            get: { draft.defaultDays ?? 3 },
+                            get: { days },
                             set: { draft.defaultDays = max(1, $0) }
                         ), in: 1...365) {
                             HStack {
-                                Text("天数")
+                                Text("最佳天数")
                                 Spacer()
-                                Text("\(draft.defaultDays ?? 3) 天")
+                                Text("\(days) 天")
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+
+                    // ★★★ 2026-10-20（用户）：「把**懒人一键保质期**改名为**无保质期**，
+                    //   下面再增加一栏**设原始保质期**，数据绑定到原始保质期中」
+                    //   +「开启制备功能后，设原始保质期和无保质期**都变灰色无法点击**」
+                    //   +「无保质期和设原始保质期只能二选一，选了其中一个，另一个
+                    //      **在任何一个层级都是灰色**」
+                    Toggle("无保质期", isOn: $draft.noExpiry)
+                        .disabled(draft.usePrep || anyOriginalDays)
+
+                    Toggle("设原始保质期", isOn: Binding(
+                        get: { draft.originalDays != nil },
+                        set: { on in
+                            draft.originalDays = on ? (draft.originalDays ?? 30) : nil
+                        }
+                    ))
+                    .disabled(draft.usePrep || anyNoExpiry)
+
+                    if let days = draft.originalDays {
+                        Stepper(value: Binding(
+                            get: { days },
+                            set: { draft.originalDays = max(1, $0) }
+                        ), in: 1...3650) {
+                            HStack {
+                                Text("原始天数")
+                                Spacer()
+                                Text("\(days) 天")
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
@@ -95,33 +124,28 @@ struct CustomTemplateEditor: View {
                     Toggle("使用制备功能", isOn: $draft.usePrep)
                         // ★★★ 2026-10-20（用户）：「打开制备开关的时候，**懒人的按钮应该弹回**、
                         //   变灰，而不是直接变灰」
-                        //   ➜ 打开制备时把 `lazyDays` 清空 → Toggle 自己弹回"关"，再跟着变灰。
+                        //   ➜ 打开制备时把 `noExpiry` 关掉 → Toggle 自己弹回"关"，再跟着变灰。
                         .onChange(of: draft.usePrep) { _, isOn in
-                            if isOn { draft.lazyDays = nil }
+                            if isOn {
+                                draft.noExpiry = false
+                                draft.originalDays = nil   // 制备模式没有"原始保质期"
+                            }
                         }
 
-                    // ★ 2026-10-19（用户）：「**懒人一键保质期**，然后选择顺延的天数」
-                    //   ★ 同日追加：「**有制备功能后就不需要懒人保质期了**，因为打印出来的
-                    //     没有保质期信息。打开制备信息，懒人保质期变灰色」
-                    Toggle("懒人一键保质期", isOn: Binding(
-                        get: { draft.lazyDays != nil },
-                        set: { on in draft.lazyDays = on ? (draft.lazyDays ?? 7) : nil }
-                    ))
-                    .disabled(draft.usePrep)
-                    if let days = draft.lazyDays {
-                        Stepper(value: Binding(
-                            get: { days },
-                            set: { draft.lazyDays = max(1, $0) }
-                        ), in: 1...365) {
+                    // ★★★ 2026-10-20（用户）：「开启制备功能后**没有需要制备的天数，
+                    //   应该增加制备天数设置**」→ 制备版式的完成时间 = 制备 + prepDays。
+                    if draft.usePrep {
+                        Stepper(value: $draft.prepDays, in: 1...365) {
                             HStack {
-                                Text("顺延天数")
+                                Text("制备天数")
                                 Spacer()
-                                Text("\(days) 天")
+                                Text("\(draft.prepDays) 天")
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
                         }
                     }
+
                     Toggle("扫描二维码二次制备", isOn: $draft.useSecondary)
 
                     if draft.useSecondary {
@@ -282,12 +306,10 @@ struct CustomTemplateEditor: View {
                     ),
                     level: path.indices.count,
                     canAddChild: path.indices.count < CustomNode.maxDepth,
-                    // ★ 用户规则：天数**只出现在某一层**。还没定时随便哪层都能设；
-                    //   一旦定了，其他层的开关就禁用（避免同一棵树里时间出现在两个层级）。
-                    canSetDays: draft.timeLevel == nil || draft.timeLevel == path.indices.count,
-                    lockedLevel: draft.timeLevel
+                    anyNoExpiry: anyNoExpiry,
+                    anyOriginalDays: anyOriginalDays,
+                    templateUsesPrep: draft.usePrep
                 )
-                .onDisappear { syncTimeLevel() }
             }
         }
     }
@@ -361,8 +383,7 @@ struct CustomTemplateEditor: View {
             if depth >= 3 { parts.append(.level3) }
         }
         if draft.useSecondary, draft.sourceTemplateID != nil {
-            parts.append(.source)
-            // ★ 2026-10-20（用户）：绑定了母标签时，原标签的**每一层**也能单独取。
+            // ★ 2026-10-20（用户）：删掉「原标签标题」（整体），只保留逐层字段。
             //   层数 = 绑定路径的深度（绑到「冷冻」时原标签是「冷冻-猪肉」→ 2 层）。
             let sourceDepth = max(1, draft.sourceNodePath.count + 1)
             if sourceDepth >= 1 { parts.append(.sourceLevel1) }
@@ -379,6 +400,24 @@ struct CustomTemplateEditor: View {
     }
 
     /// 可以绑定为「源模板」的其他模板（排除自己）。
+    /// 整棵树（含模板级）里有没有任何一项开了「无保质期」。
+    private var anyNoExpiry: Bool {
+        draft.noExpiry || hasNode(draft.nodes) { $0.noExpiry }
+    }
+
+    /// 整棵树（含模板级）里有没有任何一项设了「原始保质期」。
+    private var anyOriginalDays: Bool {
+        draft.originalDays != nil || hasNode(draft.nodes) { $0.originalDays != nil }
+    }
+
+    private func hasNode(_ nodes: [CustomNode], where predicate: (CustomNode) -> Bool) -> Bool {
+        for node in nodes {
+            if predicate(node) { return true }
+            if hasNode(node.children, where: predicate) { return true }
+        }
+        return false
+    }
+
     private var otherTemplates: [CustomTemplate] {
         CustomTemplateStore.all.filter { $0.id != draft.id }
     }
@@ -393,14 +432,6 @@ struct CustomTemplateEditor: View {
         }
     }
 
-    /// 扫全树，把"唯一有天数的那一层"记到 `timeLevel`。
-    private func syncTimeLevel() {
-        var levels = Set<Int>()
-        for row in flattened() where row.node.days != nil {
-            levels.insert(row.level + 1)      // level 是 0-based → 层号 +1
-        }
-        draft.timeLevel = levels.count == 1 ? levels.first : nil
-    }
 
     // MARK: 行
 
@@ -530,10 +561,12 @@ struct CustomNodeSheet: View {
     @Binding var node: CustomNode
     let level: Int
     let canAddChild: Bool
-    /// 这一层能不能设天数（同一模板里天数只能出现在一层）。
-    let canSetDays: Bool
-    /// 已经定下来的时间层（用于提示）。
-    let lockedLevel: Int?
+    /// ★ 全局：整棵树里有没有任何一项开了「无保质期」/ 设了「原始保质期」——
+    ///   这两项**只能二选一**，任一层选了另一个，所有层都灰。
+    let anyNoExpiry: Bool
+    let anyOriginalDays: Bool
+    /// 模板开了「使用制备功能」→ 所有层级的「设原始保质期」都禁用。
+    let templateUsesPrep: Bool
 
     @Environment(\.dismiss) private var dismiss
 
@@ -545,21 +578,19 @@ struct CustomNodeSheet: View {
                 }
 
                 Section {
-                    Toggle("设建议天数", isOn: Binding(
+                    Toggle("设最佳使用时间", isOn: Binding(
                         get: { node.days != nil },
                         set: { on in
-                            guard canSetDays else { return }
                             node.days = on ? (node.days ?? 3) : nil
                         }
                     ))
-                    .disabled(!canSetDays)
                     if node.days != nil {
                         Stepper(value: Binding(
                             get: { node.days ?? 3 },
                             set: { node.days = max(1, $0) }
                         ), in: 1...365) {
                             HStack {
-                                Text("天数")
+                                Text("最佳天数")
                                 Spacer()
                                 Text("\(node.days ?? 3) 天")
                                     .foregroundStyle(.secondary)
@@ -567,21 +598,26 @@ struct CustomNodeSheet: View {
                             }
                         }
                     }
-                    // ★ 2026-10-19（用户）：「懒人一键保质期，这个就是原始保质期」
-                    //   → 上面那个 = 原始保质期；这里再加一个 = 最佳使用时间。
-                    Toggle("设最佳天数", isOn: Binding(
-                        get: { node.bestDays != nil },
-                        set: { on in node.bestDays = on ? (node.bestDays ?? (node.days ?? 3)) : nil }
+                    // ★★★ 2026-10-20（用户）：「最佳使用时间下面**也增加无保质期和设原始保质期**，
+                    //   功能和前面一样」+ 二选一互斥（跨层级生效）。
+                    Toggle("无保质期", isOn: $node.noExpiry)
+                        .disabled(anyOriginalDays)
+
+                    Toggle("设原始保质期", isOn: Binding(
+                        get: { node.originalDays != nil },
+                        set: { on in node.originalDays = on ? (node.originalDays ?? 30) : nil }
                     ))
-                    if let best = node.bestDays {
+                    .disabled(anyNoExpiry || templateUsesPrep)
+
+                    if let days = node.originalDays {
                         Stepper(value: Binding(
-                            get: { best },
-                            set: { node.bestDays = max(1, $0) }
-                        ), in: 1...365) {
+                            get: { days },
+                            set: { node.originalDays = max(1, $0) }
+                        ), in: 1...3650) {
                             HStack {
-                                Text("最佳天数")
+                                Text("原始天数")
                                 Spacer()
-                                Text("\(best) 天")
+                                Text("\(days) 天")
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
@@ -590,12 +626,7 @@ struct CustomNodeSheet: View {
                 } header: {
                     Text("时间")
                 } footer: {
-                    if canSetDays {
-                        Text("「天数」= 原始保质期，「最佳天数」= 最佳使用时间（留空就跟随原始）。")
-                    } else {
-                        Text("这个模板的天数设在第 \(lockedLevel ?? 0) 层，这一层不用再设"
-                             + "（下级会继承上面的天数）。")
-                    }
+                    Text("打印时按**最深的选中层**往上找：这一级设了就用它，没设就继承上级。")
                 }
 
                 if canAddChild {

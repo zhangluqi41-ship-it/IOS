@@ -31,18 +31,24 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     /// ★★★ 2026-10-19（用户）：「时间的设定**只会存在一个树级**……
     ///   冷冻-猪肉-五花，时间只会设置在冷冻上；冷冻和冷藏是同一级的东西……
     ///   所以时间的设定只会在一个树级单位上，不会重复出现」
-    ///   ➜ `timeLevel` = 建议天数设在第几层（1 = 第一级，2 = 第二级…）。
     ///     `nil` = 还没定（编辑器里第一次填天数时自动锁定）。
     ///   ➜ 编辑器据此**只允许那一层填天数**，其他层禁用。
     ///     打印时：用自己的天数，没有就**向上找最近祖先**（继承）。
-    var timeLevel: Int? = nil
+    // ★★★ 2026-10-20（用户）：「「时间只在一级」的约束**取消掉**，应该**按最子级设定，
+    //   如果子级没设置，就取父级时间**，这样更科学一些」
+    //   → `timeLevel` 字段删除；打印时按「最深的选中层 → 往上找第一个有值的」。
     /// ★ 2026-10-19（用户）：「这一项（模板名称）**也可以设置一个建议时间**」
-    ///   ➜ 模板本身的默认天数（第 0 层）。设了就等于 `timeLevel = 0`，
     ///     下属各层不再设时间；打印时没选到具体天数就用它兜底。
+    /// 模板级统一的**最佳使用时间**天数（没建菜单时用；建了菜单就按各级的 `days`）。
     var defaultDays: Int? = nil
     /// ★ 2026-10-19（用户）：「使用制备功能」——
     ///   开启后标签改用「制备时间 / 完成时间 / 最佳使用时间」三行（同康普茶一发）。
     var usePrep: Bool = false
+    /// ★★★ 2026-10-20（用户）：「开启制备功能后**没有需要制备的天数，应该增加制备天数设置**，
+    ///   而且开启制备天数后，**就不会在标签中保存"原始保质期"的信息**，
+    ///   此时**所有菜单中的原始保质期设置都应该变成关闭灰色不可选择**」
+    ///   → 制备版式的「完成时间 = 制备时间 + prepDays」。
+    var prepDays: Int = 3
     /// 「扫描二维码二次制备」——开启后可在打印页扫原标签续做（同康普茶二发）。
     var useSecondary: Bool = false
     // ★ 2026-10-19（用户）：「这里面**不需要重复选天数**了啊，上面不是有天数吗」
@@ -56,9 +62,12 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     ///   打开后标题变成「模板名-第一层-第二层」。
     ///   ⚠️ 没有菜单时这一项不可用（空菜单的标题天然是「模板名-手输名」）。
     var includeTemplateInTitle: Bool = false
-    /// ★ 2026-10-19（用户）：「**懒人一键保质期**，然后选择顺延的天数」
-    ///   ➜ 开启后打印页**不看菜单天数**，两个日期一律 = 今天 + N 天。
-    var lazyDays: Int? = nil
+    /// ★★★ 2026-10-20（用户）：「把现在的**懒人一键保质期**功能改名为**无保质期**，
+    ///   下面再增加一栏**设原始保质期**，数据绑定到原始保质期中」
+    ///   ➜ 开启 = 没有保质期，原始保质期记 2099/12/31。
+    var noExpiry: Bool = false
+    /// 模板级的**原始保质期**天数（和 `noExpiry` 全局二选一）。
+    var originalDays: Int? = nil
     /// ★ 绑定模板可以精确到**某个菜单路径**（如「康普茶一发 → 桃味」）。
     ///   空数组 = 绑整个模板。
     var sourceNodePath: [String] = []
@@ -120,7 +129,8 @@ enum TitlePart: String, Codable, CaseIterable, Identifiable {
     case level2 = "第二层"
     case level3 = "第三层"
     case manual = "手输名称"
-    case source = "原标签标题"
+    // ★★★ 2026-10-20（用户）：「**删除原标签标题**，完全就按第几层来选择，不要整体的，
+    //   因为分开设置也能连接成整体」→ `case source` 已删除。
     /// ★ 2026-10-20（用户）：「绑定标签后，命名规则里**只有一条原标签标题**，是不是应该
     /// 读取原标签信息呢，明明下面还有 2 个菜单」→ 把原标签标题按连接符拆开，逐层可取。
     case sourceLevel1 = "原标签第一层"
@@ -134,12 +144,21 @@ enum TitlePart: String, Codable, CaseIterable, Identifiable {
 struct CustomNode: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
-    /// ★ 2026-10-19（用户）：「懒人一键保质期，**这个就是原始保质期**，不是重复功能」
-    ///   → `days` = **原始保质期天数**（这一级）；`bestDays` = **最佳使用时间天数**。
-    ///   两者可以不同（奶制品就是 +7 / +3 这种）。
+    /// ★★★ 2026-10-20（用户）：「**设建议天数改为设最佳使用时间**……
+    ///   时间中应该**只有一个**设最佳天数。同时修改后台数据库逻辑」
+    ///   ➜ 每级只保留**一个**天数，语义 = **最佳使用时间**。
+    ///   ➜ 原来的 `bestDays` 字段已删除（旧数据里的会被忽略）。
+    ///   ➜ 每个菜单项三个时间字段：
+    ///     · `days` = **最佳使用时间**天数
+    ///     · `originalDays` = **原始保质期**天数
+    ///     · `noExpiry` = **无保质期**（原始保质期记 2099/12/31）
+    ///   ★ 2026-10-20（用户）：「**无保质期**和**设原始保质期**可以都不选……或者只能二选一，
+    ///     选择了其中一个，另外一个**在任何一个层级都是灰色**」→ 由编辑器全局判定。
     var days: Int?
-    /// 最佳使用时间的天数（nil = 跟随 `days`，或继承上级）。
-    var bestDays: Int?
+    /// 原始保质期天数（nil = 跟随最佳）
+    var originalDays: Int?
+    /// 无保质期（原始保质期 = 2099/12/31）
+    var noExpiry: Bool = false
     var children: [CustomNode] = []
 
     /// 该节点及其所有后代的数量（含自己）。
@@ -213,8 +232,7 @@ enum CustomTemplateStore {
         var generic = CustomTemplate(name: "通用效期（重写）", icon: "clock")
         generic.tintName = "blue"
         generic.iconColorName = "white"
-        generic.lazyDays = 7        // 原始保质期
-        generic.defaultDays = 7     // 最佳使用时间
+        generic.defaultDays = 7     // 最佳使用时间（原始保质期与它一致）
         generic.nodes = []          // 空菜单 = 前缀模板：打印时手输物料名
 
         // ② 奶制品 = 菜单五项，每项两个天数（原始 / 最佳），和内置规则一致。
@@ -222,11 +240,11 @@ enum CustomTemplateStore {
         dairy.tintName = "cyan"
         dairy.iconColorName = "white"
         dairy.nodes = [
-            CustomNode(name: "牛奶", days: 7, bestDays: 3),
-            CustomNode(name: "高蛋白", days: 7, bestDays: 3),
-            CustomNode(name: "豆奶", days: 7, bestDays: 3),
-            CustomNode(name: "燕麦奶", days: 45, bestDays: 5),
-            CustomNode(name: "巴旦木奶", days: 60, bestDays: 7),
+            CustomNode(name: "牛奶", days: 3),
+            CustomNode(name: "高蛋白", days: 3),
+            CustomNode(name: "豆奶", days: 3),
+            CustomNode(name: "燕麦奶", days: 5),
+            CustomNode(name: "巴旦木奶", days: 7),
         ]
 
         // ③ 肉类：冷藏 / 冷冻两大分支，各带原始 + 最佳天数。
@@ -234,10 +252,10 @@ enum CustomTemplateStore {
         meat.tintName = "red"
         meat.iconColorName = "white"
         meat.nodes = [
-            CustomNode(name: "冷藏", days: 3, bestDays: 3, children: [
+            CustomNode(name: "冷藏", days: 3, children: [
                 CustomNode(name: "牛肉"), CustomNode(name: "猪肉"), CustomNode(name: "鸡肉"),
             ]),
-            CustomNode(name: "冷冻", days: 30, bestDays: 30, children: [
+            CustomNode(name: "冷冻", days: 30, children: [
                 CustomNode(name: "牛肉"), CustomNode(name: "猪肉"), CustomNode(name: "鸡肉"),
             ]),
         ]
@@ -248,15 +266,14 @@ enum CustomTemplateStore {
         thaw.iconColorName = "white"
         thaw.useSecondary = true
         thaw.sourceTemplateID = meat.id
-        thaw.lazyDays = 3                   // 解冻完成 = 扫码 + 3 天
+        thaw.defaultDays = 3                // 解冻完成 / 最佳 = 扫码 + 3 天
 
         // ⑤ 康普茶一发：制备版式（制备 / 完成 7 天 / 最佳 30 天）。
         var kombucha = CustomTemplate(name: "康普茶一发（重写）", icon: "cup.and.saucer")
         kombucha.tintName = "green"
         kombucha.iconColorName = "white"
         kombucha.usePrep = true
-        kombucha.lazyDays = 7               // 完成 = 制备 + 7 天
-        kombucha.defaultDays = 30           // 最佳 = 制备 + 30 天
+        kombucha.defaultDays = 30           // 最佳 = 制备 + 30 天（完成时间也取它）
         kombucha.nodes = [
             CustomNode(name: "原味"), CustomNode(name: "桃味"),
             CustomNode(name: "草莓"), CustomNode(name: "蓝莓"),
@@ -268,7 +285,7 @@ enum CustomTemplateStore {
         kombucha2.iconColorName = "white"
         kombucha2.useSecondary = true
         kombucha2.sourceTemplateID = kombucha.id
-        kombucha2.lazyDays = 3              // 二发完成 = 扫码 + 3 天
+        kombucha2.defaultDays = 3           // 二发完成 / 最佳 = 扫码 + 3 天
 
         all = all + [generic, dairy, meat, thaw, kombucha, kombucha2]
     }

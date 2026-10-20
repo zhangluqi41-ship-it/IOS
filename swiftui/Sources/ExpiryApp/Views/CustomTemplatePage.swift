@@ -43,6 +43,8 @@ struct CustomTemplatePage: View {
         self.template = template
         _scannedTitle = State(initialValue: presetSourceTitle)
         _scannedBestBefore = State(initialValue: presetSourceBest)
+        // ★ 模板配了「懒人一键保质期」→ 页面默认就是"无保质期"。
+        _noExpiry = State(initialValue: template.noExpiry)
     }
 
     var body: some View {
@@ -82,7 +84,7 @@ struct CustomTemplatePage: View {
                 }
                 // ★ 和「肉类」页同款：一行蓝色「按推荐填日期」，
                 //   右侧灰字显示推荐的天数；手动改过日期后可点它恢复。
-                if let days = appliedDays {
+                if let days = appliedBestDays {
                     Button {
                         applyRecommendedDates()
                     } label: {
@@ -114,7 +116,7 @@ struct CustomTemplatePage: View {
                 QuickDateChips(selection: $bestDate)
 
                 // 只有真的算出天数才显示这一行（没选品类时完全不占位）。
-                if let days = appliedDays {
+                if let days = appliedBestDays {
                     Text("已按「\(chosenChain().last?.name ?? "")」的建议 \(days) 天自动填写，可手动改。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -136,19 +138,8 @@ struct CustomTemplatePage: View {
         .onChange(of: selections) { _, _ in syncFromSelection() }
         .onChange(of: noExpiry) { _, isOn in
             guard isOn else { return }
-            // 无原始保质期 → 最佳使用时间固定填 2099/12/31（表示"无期限"）。
-            var comps = DateComponents()
-            comps.year = 2099
-            comps.month = 12
-            comps.day = 31
-            comps.hour = 23
-            comps.minute = 59
-            if let far = AppCalendar.shared.date(from: comps) {
-                withAnimation(.default) {
-                    bestDate = far
-                    expireDate = far
-                }
-            }
+            // 无保质期 → 原始保质期固定填 2099/12/31（最佳使用时间仍按天数算）。
+            withAnimation(.default) { expireDate = Self.farFutureDate }
         }
         .alert(template.nodes.isEmpty ? "请先输入物料名称" : "请先选择品类",
                isPresented: $showPickerAlert) {
@@ -211,32 +202,23 @@ struct CustomTemplatePage: View {
     }
 
     /// 选中的天数：**自己的优先，没有就往上找最近祖先**，最后兜底模板默认天数。
-    /// 原始保质期该用几天。
-    private var appliedDays: Int? {
-        // 懒人一键保质期 = 模板级统一的原始保质期。
-        if let lazy = template.lazyDays { return lazy }
-        let chain = chosenChain()
-        guard !chain.isEmpty else { return nil }
-        return chain.reversed().compactMap(\.days).first ?? template.defaultDays
-    }
-
-    /// 最佳使用时间该用几天。
+    /// ★★★ 2026-10-20（用户）：「设为**只有一个设最佳天数**……修改后台数据库逻辑」
+    ///   ➜ 只有一个天数：模板级「设最佳使用时间」优先，否则按菜单层级继承。
+    ///   ➜ 原始保质期不再单独设：无保质期 → 2099/12/31；否则与最佳一致。
     private var appliedBestDays: Int? {
-        // 模板级「设建议天数」在这里当统一的**最佳**天数。
         if let uniform = template.defaultDays { return uniform }
         let chain = chosenChain()
         guard !chain.isEmpty else { return nil }
-        return chain.reversed().compactMap(\.bestDays).first
-            ?? chain.reversed().compactMap(\.days).first
+        return chain.reversed().compactMap(\.days).first
     }
 
     /// 点「按推荐填日期」：把两个日期重置成「今天 + 推荐天数」。
     private func applyRecommendedDates() {
-        guard let days = appliedDays, days > 0 else { return }
+        guard let days = appliedBestDays, days > 0 else { return }
         let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
         withAnimation(.default) {
-            expireDate = due
             bestDate = due
+            expireDate = resolvedExpireDate(fallback: due)
         }
     }
 
@@ -272,12 +254,12 @@ struct CustomTemplatePage: View {
                     value = chain.count > 2 ? chain[2].name : ""
                 case .manual:
                     value = materialName.trimmingCharacters(in: .whitespaces)
-                case .source:
-                    value = scannedTitle ?? ""
                 case .sourceLevel1, .sourceLevel2, .sourceLevel3:
-                    // 原标签标题按连接符拆开（扫码页解析出来的标题是「冷冻-猪肉」这种）。
+                    // ★ 2026-10-20（用户提问引出的 bug）：原标签是**原模板**用它的连接符拼的，
+                    //   拿当前模板的 `titleSeparator` 去拆会拆不开（一个用"·"一个用"-"）。
+                    //   ➜ 优先用「绑定的源模板」自己的连接符。
                     let pieces = (scannedTitle ?? "")
-                        .components(separatedBy: template.titleSeparator)
+                        .components(separatedBy: sourceSeparator)
                         .map { $0.trimmingCharacters(in: .whitespaces) }
                         .filter { !$0.isEmpty }
                     let index: Int = (part == .sourceLevel1 ? 0
@@ -323,14 +305,51 @@ struct CustomTemplatePage: View {
             return
         }
         title = makeTitle(chain: chain)
-        // 原始保质期
-        if let days = appliedDays, days > 0 {
-            expireDate = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+        if let best = appliedBestDays, best > 0 {
+            let due = Calendar.current.date(byAdding: .day, value: best, to: Date()) ?? Date()
+            bestDate = due
+            expireDate = resolvedExpireDate(fallback: due)
         }
-        // 最佳使用时间（没单独设就跟原始一致）
-        if let best = appliedBestDays ?? appliedDays, best > 0 {
-            bestDate = Calendar.current.date(byAdding: .day, value: best, to: Date()) ?? Date()
+    }
+
+    /// 原标签标题用的连接符（取**源模板**的设置，拆层才不会错）。
+    private var sourceSeparator: String {
+        guard let id = template.sourceTemplateID,
+              let source = CustomTemplateStore.template(id: id) else {
+            return template.titleSeparator
         }
+        return source.titleSeparator
+    }
+
+    /// 原始保质期的最终取值：无保质期 → 2099；设了原始天数 → 今天+N；都没设 → 跟最佳一致。
+    private func resolvedExpireDate(fallback: Date) -> Date {
+        // 页面上的临时开关（@State noExpiry）优先级最高，其次是模板/节点配置。
+        if noExpiry || isNoExpiry { return Self.farFutureDate }
+        if let orig = appliedOriginalDays, orig > 0 {
+            return Calendar.current.date(byAdding: .day, value: orig, to: Date()) ?? fallback
+        }
+        return fallback
+    }
+
+    /// 原始保质期该用几天（模板级优先，其次按层级继承）。
+    private var appliedOriginalDays: Int? {
+        if let t = template.originalDays { return t }
+        let chain = chosenChain()
+        return chain.reversed().compactMap(\.originalDays).first
+    }
+
+    /// 当前选择链路上有没有任何一项开了「无保质期」。
+    private var isNoExpiry: Bool {
+        if template.noExpiry { return true }
+        return chosenChain().contains { $0.noExpiry }
+    }
+
+    /// 「无保质期」时使用的日期：2099/12/31 23:59。
+    static var farFutureDate: Date {
+        var comps = DateComponents()
+        comps.year = 2099; comps.month = 12; comps.day = 31
+        comps.hour = 23; comps.minute = 59
+        return AppCalendar.shared.date(from: comps) ?? Date()
     }
 
     // MARK: 打印
@@ -359,7 +378,7 @@ struct CustomTemplatePage: View {
             // 完成天数复用模板级「建议天数」（没设就按 3 天）。
             // 完成天数 = 原始保质期（懒人天数优先），不是最佳天数。
             data = LabelTemplate.buildCustomPrep(title: name, now: now,
-                                                 doneDays: template.lazyDays ?? template.defaultDays ?? 3,
+                                                 doneDays: template.prepDays,
                                                  bestBefore: bestDate,
                                                  maker: makerFinal)
         } else {
