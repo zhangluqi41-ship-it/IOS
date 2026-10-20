@@ -199,6 +199,39 @@ struct TemplatesTab: View {
         return final
     }
 
+    /// 网格高度：2 列、每格 132 + 行距 12。
+    private var gridHeight: CGFloat {
+        let rows = max(1, Int(ceil(Double(order.count) / 2.0)))
+        return CGFloat(rows) * 132 + CGFloat(max(0, rows - 1)) * 12
+    }
+
+    /// 拖动换位（UICollectionView 算好 from/to，这里只管数组和持久化）。
+    private func move(from: Int, to: Int) {
+        guard order.indices.contains(from), order.indices.contains(to), from != to else { return }
+        withAnimation(.default) {
+            let item = order.remove(at: from)
+            order.insert(item, at: to)
+        }
+        Prefs.templateOrder = order.map(\.key)
+    }
+
+    /// 固定 / 取消固定（先固定的排前面）。
+    private func togglePin(_ route: TemplateRoute) {
+        var pinned = pinnedKeys
+        if let index = pinned.firstIndex(of: route.key) {
+            pinned.remove(at: index)
+        } else {
+            pinned.append(route.key)
+        }
+        withAnimation(.default) { pinnedKeys = pinned }
+        Prefs.pinnedTemplates = pinned
+
+        let pinnedRoutes = pinned.compactMap { TemplateRoute.from(key: $0) }
+        let rest = order.filter { !pinnedRoutes.contains($0) }
+        withAnimation(.default) { order = pinnedRoutes + rest }
+        Prefs.templateOrder = order.map(\.key)
+    }
+
     private func remove(_ route: TemplateRoute) {
         let remaining = pinnedKeys.filter { $0 != route.key }
         withAnimation(.default) { pinnedKeys = remaining }
@@ -236,17 +269,30 @@ struct TemplatesTab: View {
                     // ★★★ 2026-10-19（用户第三次反馈「拖动还是有卡顿」）—— 根治：
                     //   网格连同它的拖动状态已经整体搬进 `TemplateGrid` 子视图。
                     //   手指移动时**只有网格重算**，本页的大标题、"使用流程"一行都不动。
-                    TemplateGrid(order: $order,
-                                 pinnedKeys: $pinnedKeys,
-                                 deletingMode: deletingMode,
-                                 editingMode: editingMode,
-                                 onRemove: remove,
-                                 onEdit: { route in
-                                     if case .custom(let id) = route,
-                                        let template = CustomTemplateStore.template(id: id) {
-                                         editingTemplate = template
-                                     }
-                                 })
+                    // ★★★ 2026-10-21：换成 **UICollectionView 版**（SpringBoard 同款骨架）。
+                    //   拖动时的"抬起放大 / 其他磁贴实时让开 / 半透明占位 / 弹性归位 /
+                    //   边缘自动滚动"全部由系统播放，不再自己算 offset。
+                    TileGrid(order: order,
+                             pinnedKeys: pinnedKeys,
+                             deletingMode: deletingMode,
+                             editingMode: editingMode,
+                             onSelect: { route in
+                                 path.append(route)
+                             },
+                             onPin: { route in
+                                 togglePin(route)
+                             },
+                             onRemove: remove,
+                             onEdit: { route in
+                                 if case .custom(let id) = route,
+                                    let template = CustomTemplateStore.template(id: id) {
+                                     editingTemplate = template
+                                 }
+                             },
+                             onMove: { from, to in
+                                 move(from: from, to: to)
+                             })
+                    .frame(height: gridHeight)
                     // ★ 2026-10-19（用户）：「在磁贴上方拖动时掉帧很严重」
                     //   拖动每帧都会重算 body，这块静态卡片也跟着重画（里面有圆角/描边/多层背景）。
                     //   `drawingGroup()` 把它光栅化缓存，拖动期间不再重新渲染。
@@ -431,44 +477,6 @@ struct TemplatesTab: View {
 ///     这里照它的做法来：
 ///       `Color(.secondarySystemGroupedBackground)`（浅色=白、深色=#1C1C1E）
 ///       + `RoundedRectangle(cornerRadius: Theme.tileRadius)`（22）。
-struct TemplateCard: View {
-    let title: String
-    let systemImage: String
-    let tint: Color
-    let fill: Color
-    let route: TemplateRoute
-
-    var body: some View {
-        NavigationLink(value: route) {
-            VStack(alignment: .leading, spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 46, height: 46)
-                    .background(fill, in: RoundedRectangle(cornerRadius: 12))
-
-                // ★ 2026-10-19（用户）：「红框里的**备注不需要，删除**」
-                //   → 磁贴上只留图标 + 标题，不再显示 subtitle。
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(Color(.secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: Theme.tileRadius))
-        }
-        .buttonStyle(.plain)
-        // ★★★ 2026-10-19（用户）：「排序模式还是会掉帧，**特别厉害**，能否渲染也用苹果第一方工具」
-        //   ➜ `drawingGroup()` = 用 **Metal 把这一层栅格化成位图**（苹果第一方渲染路径）。
-        //     拖动的每一帧只是移动一张现成位图，不再重新走一遍 SwiftUI 的布局/绘制/圆角/文字排版，
-        //     这是 SwiftUI 里最直接的「交给系统 GPU 画」开关。
-        //   ⚠️ 副作用：文字由 Metal 光栅化，极端放大时可能略软（正常 1:1 显示无感）。
-        .drawingGroup()
-    }
-}
 
 #Preview {
     TemplatesTab(path: .constant(NavigationPath()))
