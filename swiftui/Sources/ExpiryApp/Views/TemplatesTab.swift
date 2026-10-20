@@ -473,26 +473,3 @@ struct TemplateCard: View {
 #Preview {
     TemplatesTab(path: .constant(NavigationPath()))
 }
-
-
-// MARK: - 磁贴位置收集（DragGesture 方案）
-
-/// 收集每张磁贴在网格坐标空间里的 frame —— 松手/拖动中用它在算"手指落在哪张磁贴上"。
-struct TileFrameKey: PreferenceKey {
-    static var defaultValue: [TemplateRoute: CGRect] = [:]
-    static func reduce(value: inout [TemplateRoute: CGRect],
-                       nextValue: () -> [TemplateRoute: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
-    }
-}
-
-
-// MARK: - 磁贴位置查询表
-
-/// 用 **class** 持有每张磁贴的位置。
-///
-/// ★ 关键：它是引用类型 —— 在 `onPreferenceChange` 里改 `frames` **不会**触发
-///   SwiftUI 重绘，从而避免「布局→记录→重绘→再布局」的无限循环（拖动越久越卡）。
-final class TileFrameStore {
-    var frames: [TemplateRoute: CGRect] = [:]
-}
