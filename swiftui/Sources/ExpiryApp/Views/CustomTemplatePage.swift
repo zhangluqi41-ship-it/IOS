@@ -274,6 +274,15 @@ struct CustomTemplatePage: View {
                     value = materialName.trimmingCharacters(in: .whitespaces)
                 case .source:
                     value = scannedTitle ?? ""
+                case .sourceLevel1, .sourceLevel2, .sourceLevel3:
+                    // 原标签标题按连接符拆开（扫码页解析出来的标题是「冷冻-猪肉」这种）。
+                    let pieces = (scannedTitle ?? "")
+                        .components(separatedBy: template.titleSeparator)
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
+                    let index: Int = (part == .sourceLevel1 ? 0
+                                      : (part == .sourceLevel2 ? 1 : 2))
+                    value = index < pieces.count ? pieces[index] : ""
                 }
                 if !value.isEmpty { values.append(value) }
             }

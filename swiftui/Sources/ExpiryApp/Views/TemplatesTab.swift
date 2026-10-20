@@ -254,7 +254,11 @@ struct TemplatesTab: View {
                         .drawingGroup()
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 24)
+                // ★★★ 2026-10-20（用户）：「**打印选项和 tabbar 重叠了**」
+                //   ➜ iOS 26 的 TabBar 是浮动玻璃条，不占 ScrollView 的内容安全区，
+                //     原来只留 24pt 底部间距 → 最后一行磁贴被压在 TabBar 底下。
+                //   ➜ 留 96pt（TabBar 高度 + 一点余量）。
+                .padding(.bottom, 96)
             }
             .navigationTitle("效期打印")
             .background(Color(.systemGroupedBackground))

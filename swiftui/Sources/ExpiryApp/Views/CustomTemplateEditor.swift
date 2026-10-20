@@ -93,6 +93,12 @@ struct CustomTemplateEditor: View {
                 // ★ 2026-10-19（用户）：新建模板页加两个功能开关。
                 Section {
                     Toggle("使用制备功能", isOn: $draft.usePrep)
+                        // ★★★ 2026-10-20（用户）：「打开制备开关的时候，**懒人的按钮应该弹回**、
+                        //   变灰，而不是直接变灰」
+                        //   ➜ 打开制备时把 `lazyDays` 清空 → Toggle 自己弹回"关"，再跟着变灰。
+                        .onChange(of: draft.usePrep) { _, isOn in
+                            if isOn { draft.lazyDays = nil }
+                        }
 
                     // ★ 2026-10-19（用户）：「**懒人一键保质期**，然后选择顺延的天数」
                     //   ★ 同日追加：「**有制备功能后就不需要懒人保质期了**，因为打印出来的
@@ -131,13 +137,14 @@ struct CustomTemplateEditor: View {
                         // ★ 2026-10-19（用户）：「这个**绑定模板是可以选到下面的子菜单**的」
                         if let source = otherTemplates.first(where: { $0.id == draft.sourceTemplateID }),
                            !source.allPaths.isEmpty {
-                            Picker("绑定到", selection: $draft.sourceNodePath) {
-                                Text("整个模板").tag([String]())
-                                ForEach(source.allPaths, id: \.self) { path in
-                                    Text(path.joined(separator: " · ")).tag(path)
-                                }
-                            }
-                            .pickerStyle(.menu)
+                            // ★★★ 2026-10-20（用户）：「**绑定是不是没有带原标签等级制度？
+                            //   这个绑定到应该是按等级区分**」+ 手绘树形：
+                            //     绑定到 ─ 冷藏 ─ 猪肉
+                            //            └ 冷冻（整个菜单）
+                            //   ➜ 原来是把所有路径拍平成一个列表（"冷藏 · 猪肉"），看不出层级。
+                            //   ➜ 改成**逐层 Picker**：每层都能选「整个XX」或继续往下钻，
+                            //     `sourceNodePath` 就是选出来的那一串名字。
+                            bindingLevelPickers(source: source)
                         }
                     }
                 } header: {
@@ -285,6 +292,58 @@ struct CustomTemplateEditor: View {
         }
     }
 
+    /// 「绑定到」的逐层选择器（树形展开，每层可选"整个这一层"或继续下钻）。
+    ///
+    /// ★ 2026-10-20（用户）手绘结构：
+    ///   绑定到 ─ 冷藏 ─ 猪肉
+    ///          └ 冷冻（整个菜单）
+    @ViewBuilder
+    private func bindingLevelPickers(source: CustomTemplate) -> some View {
+        // 当前已经选到的节点链
+        let chain: [CustomNode] = {
+            var result: [CustomNode] = []
+            var level = source.nodes
+            for name in draft.sourceNodePath {
+                guard let node = level.first(where: { $0.name == name }) else { break }
+                result.append(node)
+                level = node.children
+            }
+            return result
+        }()
+
+        // 每一层一个 Picker（最多 3 层）
+        ForEach(0..<CustomNode.maxDepth, id: \.self) { level in
+            if level == 0 || chain.count >= level {
+                let options = level == 0 ? source.nodes : chain[level - 1].children
+                if !options.isEmpty {
+                    Picker(level == 0 ? "绑定到" : "└ 第 \(level + 1) 层",
+                           selection: bindingForLevel(level, chain: chain)) {
+                        Text(level == 0 ? "整个模板" : "整个「\(chain[level - 1].name)」")
+                            .tag("")
+                        ForEach(options) { node in
+                            Text(node.name).tag(node.name)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+        }
+    }
+
+    /// 第 `level` 层选中的名字（写到 `sourceNodePath[level]`，同时截断更深的层）。
+    private func bindingForLevel(_ level: Int, chain: [CustomNode]) -> Binding<String> {
+        Binding(
+            get: {
+                level < draft.sourceNodePath.count ? draft.sourceNodePath[level] : ""
+            },
+            set: { newValue in
+                var path = Array(draft.sourceNodePath.prefix(level))
+                if !newValue.isEmpty { path.append(newValue) }
+                draft.sourceNodePath = path
+            }
+        )
+    }
+
     /// ★★★ 2026-10-19（用户）：「**如果设置了几层，就显示出几层**……如果扫二维码二次制备
     ///   绑定了母标签，那么这里面才会有源标签标题……**而不是甩一堆可能是空值的选项出来**」
     ///   ➜ 命名规则里只列**当前模板真的取得到值**的字段：
@@ -303,6 +362,12 @@ struct CustomTemplateEditor: View {
         }
         if draft.useSecondary, draft.sourceTemplateID != nil {
             parts.append(.source)
+            // ★ 2026-10-20（用户）：绑定了母标签时，原标签的**每一层**也能单独取。
+            //   层数 = 绑定路径的深度（绑到「冷冻」时原标签是「冷冻-猪肉」→ 2 层）。
+            let sourceDepth = max(1, draft.sourceNodePath.count + 1)
+            if sourceDepth >= 1 { parts.append(.sourceLevel1) }
+            if sourceDepth >= 2 { parts.append(.sourceLevel2) }
+            if sourceDepth >= 3 { parts.append(.sourceLevel3) }
         }
         return parts
     }

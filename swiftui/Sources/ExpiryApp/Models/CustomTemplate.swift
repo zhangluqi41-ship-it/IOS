@@ -121,6 +121,11 @@ enum TitlePart: String, Codable, CaseIterable, Identifiable {
     case level3 = "第三层"
     case manual = "手输名称"
     case source = "原标签标题"
+    /// ★ 2026-10-20（用户）：「绑定标签后，命名规则里**只有一条原标签标题**，是不是应该
+    /// 读取原标签信息呢，明明下面还有 2 个菜单」→ 把原标签标题按连接符拆开，逐层可取。
+    case sourceLevel1 = "原标签第一层"
+    case sourceLevel2 = "原标签第二层"
+    case sourceLevel3 = "原标签第三层"
 
     var id: String { rawValue }
 }

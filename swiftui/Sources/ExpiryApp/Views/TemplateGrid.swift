@@ -77,21 +77,45 @@ struct TemplateGrid: View {
             // 松手后用系统默认动画把 offset 归零（从手指落点滑到新格）。
             .animation(isDragging ? nil : .default, value: dragOffset)
             .zIndex(isDragging ? 2 : (justDropped == route ? 1 : 0))
+            // ★★★ 2026-10-20（用户）：「**按住就被拖动，导致完全无法下滑**。
+            //   应该：按住保持一段时间才能拖动，保证下滑功能正常」
+            //   ➜ 原来是 `DragGesture(minimumDistance: 6)` 直接抢手势，手指一动就进入拖动，
+            //     ScrollView 永远收不到滚动 → 页面滑不动。
+            //   ➜ 改成 **`LongPressGesture(0.4s).sequenced(before: DragGesture)`**：
+            //     没长按够 0.4 秒时前置手势**失败**，手势让给外层 ScrollView → 正常滚动；
+            //     长按够 0.4 秒才接管后续位移 → 拖动排序。
             .highPriorityGesture(
-                DragGesture(minimumDistance: 6, coordinateSpace: .named("tileGrid"))
+                LongPressGesture(minimumDuration: 0.4)
+                    .sequenced(before: DragGesture(minimumDistance: 0,
+                                                   coordinateSpace: .named("tileGrid")))
                     .onChanged { value in
-                        guard !deletingMode, !editingMode else { return }
-                        if dragging != route { dragging = route }
-                        dragOffset = value.translation
-                        let hit = frameStore.frames.first {
-                            $0.key != route && $0.value.contains(value.location)
-                        }?.key
-                        // 不加 withAnimation：拖动中每帧开动画事务会堆叠、加剧掉帧。
-                        if hit != dropTarget { dropTarget = hit }
+                        // ★★★ 2026-10-20（用户）：「**被固定住的图标就应该移动不了**……
+                        //   固定应该是调整了优先的位置之后就锁定位置了，除非点击解除固定」
+                        guard !deletingMode, !editingMode, !isPinned(route) else { return }
+                        switch value {
+                        case .first(true):
+                            // 长按达成：进入"已抓起"状态（视觉放大），还没开始位移。
+                            if dragging != route { dragging = route }
+                        case .second(true, let drag):
+                            guard let drag else { return }
+                            if dragging != route { dragging = route }
+                            dragOffset = drag.translation
+                            // 固定项不当落点 —— 否则把它挤开就"锁不住位置"了。
+                            let hit = frameStore.frames.first {
+                                $0.key != route
+                                    && !isPinned($0.key)
+                                    && $0.value.contains(drag.location)
+                            }?.key
+                            // 不加 withAnimation：拖动中每帧开动画事务会堆叠、加剧掉帧。
+                            if hit != dropTarget { dropTarget = hit }
+                        default:
+                            break
+                        }
                     }
                     .onEnded { _ in
-                        guard !deletingMode, !editingMode else { return }
-                        finishDrag(from: route)
+                        guard !deletingMode, !editingMode, !isPinned(route) else { return }
+                        // 只是长按没拖动 / 拖完松手，都走同一个收尾。
+                        if dragging == route { finishDrag(from: route) }
                     }
             )
             .simultaneousGesture(
