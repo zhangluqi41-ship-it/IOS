@@ -35,7 +35,7 @@ enum ScanRoute: Hashable {
     ///   完成后弹出来，参考康普茶二发」
     ///   ➜ 扫到某个「开了二次制备」的自定义模板标签 → 直接进它的二次制备页。
     case customSecondary(templateID: UUID, sourceTitle: String,
-                         sourceBest: Date, sourceQR: String)
+                         sourceBest: Date, sourceExpire: Date?, sourceQR: String)
 }
 
 // MARK: - 扫码模型
@@ -569,11 +569,13 @@ struct ScanView: View {
                     KombuchaSecondView(first: first)
                 case .thaw(let meat):
                     MeatThawView(meat: meat)
-                case .customSecondary(let templateID, let sourceTitle, let sourceBest, _):
+                case .customSecondary(let templateID, let sourceTitle, let sourceBest,
+                                      let sourceExpire, _):
                     if let template = CustomTemplateStore.template(id: templateID) {
                         CustomTemplatePage(template: template,
                                            presetSourceTitle: sourceTitle,
-                                           presetSourceBest: sourceBest)
+                                           presetSourceBest: sourceBest,
+                                           presetSourceExpire: sourceExpire)
                     } else {
                         ContentUnavailableView("模板已删除", systemImage: "trash")
                     }
@@ -790,6 +792,7 @@ struct ScanView: View {
                 path.append(ScanRoute.customSecondary(templateID: template.id,
                                                       sourceTitle: parsed.title,
                                                       sourceBest: parsed.bestBefore,
+                                                      sourceExpire: parsed.expireAt,
                                                       sourceQR: code))
                 return
             }
@@ -850,11 +853,14 @@ struct ScanView: View {
             guard let sourceID = candidate.sourceTemplateID,
                   let source = CustomTemplateStore.template(id: sourceID) else { continue }
 
-            // ★ 2026-10-19（用户）：「**绑定模板是可以选到下面的子菜单**的」
-            //   绑到具体路径时只认那一条（含「模板名-」前缀变体），比全树匹配更精确。
+            // ★★★ 2026-10-20（用户）：「比如定位到**冷藏的当前菜单**，它应该是**包含冷藏后面
+            //   所有的每一个子集**，而不是统一一个级别」→ 绑到某个节点时按**前缀**匹配，
+            //   这样「冷藏」能吃掉「冷藏-猪肉」「冷藏-牛肉」「冷藏-猪肉-里脊」……
             if !candidate.sourceNodePath.isEmpty {
                 let pathTitle = candidate.sourceNodePath.joined(separator: "-")
-                if title == pathTitle || title == "\(source.name)-\(pathTitle)" {
+                let withName = "\(source.name)-\(pathTitle)"
+                if title == pathTitle || title.hasPrefix(pathTitle + "-")
+                    || title == withName || title.hasPrefix(withName + "-") {
                     return candidate
                 }
                 continue

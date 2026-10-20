@@ -60,8 +60,11 @@ struct CustomTemplateEditor: View {
                     //   +「开启制备功能后，设原始保质期和无保质期**都变灰色无法点击**」
                     //   +「无保质期和设原始保质期只能二选一，选了其中一个，另一个
                     //      **在任何一个层级都是灰色**」
+                    // ★★★ 2026-10-20（用户）：「扫描二维码功能开启后，**原始保质期应该是扫描上一个
+                    //   标签的延续，不应该发生改变**。所以打开扫描二维码功能后，**所有的原始保质期的
+                    //   输入和开关全部变成灰色，不可按**」
                     Toggle("无保质期", isOn: $draft.noExpiry)
-                        .disabled(draft.usePrep || anyOriginalDays)
+                        .disabled(draft.usePrep || draft.useSecondary || anyOriginalDays)
 
                     Toggle("设原始保质期", isOn: Binding(
                         get: { draft.originalDays != nil },
@@ -69,7 +72,7 @@ struct CustomTemplateEditor: View {
                             draft.originalDays = on ? (draft.originalDays ?? 30) : nil
                         }
                     ))
-                    .disabled(draft.usePrep || anyNoExpiry)
+                    .disabled(draft.usePrep || draft.useSecondary || anyNoExpiry)
 
                     if let days = draft.originalDays {
                         Stepper(value: Binding(
@@ -84,6 +87,7 @@ struct CustomTemplateEditor: View {
                                     .monospacedDigit()
                             }
                         }
+                        .disabled(draft.usePrep || draft.useSecondary)
                     }
                 } header: {
                     Text("模板名称")
@@ -149,6 +153,9 @@ struct CustomTemplateEditor: View {
                     Toggle("扫描二维码二次制备", isOn: $draft.useSecondary)
 
                     if draft.useSecondary {
+                        // ★★★ 2026-10-20（用户）：「他应该出现在**扫描二维码二次制备和绑定模板中间**」
+                        Toggle("是否需要输入模板名", isOn: $draft.needsManualName)
+
                         // ★ 2026-10-19（用户）：「开启扫描功能后这里应该是**选择绑定的模板**」
                         Picker("绑定模板", selection: $draft.sourceTemplateID) {
                             Text("未选择").tag(UUID?.none)
@@ -308,7 +315,7 @@ struct CustomTemplateEditor: View {
                     canAddChild: path.indices.count < CustomNode.maxDepth,
                     anyNoExpiry: anyNoExpiry,
                     anyOriginalDays: anyOriginalDays,
-                    templateUsesPrep: draft.usePrep
+                    templateLocksExpiry: draft.usePrep || draft.useSecondary
                 )
             }
         }
@@ -383,9 +390,13 @@ struct CustomTemplateEditor: View {
             if depth >= 3 { parts.append(.level3) }
         }
         if draft.useSecondary, draft.sourceTemplateID != nil {
-            // ★ 2026-10-20（用户）：删掉「原标签标题」（整体），只保留逐层字段。
-            //   层数 = 绑定路径的深度（绑到「冷冻」时原标签是「冷冻-猪肉」→ 2 层）。
-            let sourceDepth = max(1, draft.sourceNodePath.count + 1)
+            // ★★★ 2026-10-20（用户）：「我选了**冷冻**，冷冻后面是有猪肉，猪肉后面是有里脊的，
+            //   这是**多个层级**，但是现在只显示到了第二层级」→ 层数按**绑定模板的实际深度**算，
+            //   不能按"绑定路径长度 + 1"（那样永远只有 2 层）。
+            let boundDepth = otherTemplates
+                .first { $0.id == draft.sourceTemplateID }
+                .map { maxDepth(of: $0.nodes) } ?? 1
+            let sourceDepth = max(1, boundDepth)
             if sourceDepth >= 1 { parts.append(.sourceLevel1) }
             if sourceDepth >= 2 { parts.append(.sourceLevel2) }
             if sourceDepth >= 3 { parts.append(.sourceLevel3) }
@@ -565,8 +576,8 @@ struct CustomNodeSheet: View {
     ///   这两项**只能二选一**，任一层选了另一个，所有层都灰。
     let anyNoExpiry: Bool
     let anyOriginalDays: Bool
-    /// 模板开了「使用制备功能」→ 所有层级的「设原始保质期」都禁用。
-    let templateUsesPrep: Bool
+    /// 模板开了「使用制备功能」或「扫描二维码二次制备」→ 所有层级的原始保质期相关控件都禁用。
+    let templateLocksExpiry: Bool
 
     @Environment(\.dismiss) private var dismiss
 
@@ -601,13 +612,13 @@ struct CustomNodeSheet: View {
                     // ★★★ 2026-10-20（用户）：「最佳使用时间下面**也增加无保质期和设原始保质期**，
                     //   功能和前面一样」+ 二选一互斥（跨层级生效）。
                     Toggle("无保质期", isOn: $node.noExpiry)
-                        .disabled(anyOriginalDays)
+                        .disabled(anyOriginalDays || templateLocksExpiry)
 
                     Toggle("设原始保质期", isOn: Binding(
                         get: { node.originalDays != nil },
                         set: { on in node.originalDays = on ? (node.originalDays ?? 30) : nil }
                     ))
-                    .disabled(anyNoExpiry || templateUsesPrep)
+                    .disabled(anyNoExpiry || templateLocksExpiry)
 
                     if let days = node.originalDays {
                         Stepper(value: Binding(
@@ -622,6 +633,7 @@ struct CustomNodeSheet: View {
                                     .monospacedDigit()
                             }
                         }
+                        .disabled(templateLocksExpiry)
                     }
                 } header: {
                     Text("时间")

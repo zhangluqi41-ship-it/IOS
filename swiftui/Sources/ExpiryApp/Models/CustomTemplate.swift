@@ -49,6 +49,11 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     ///   此时**所有菜单中的原始保质期设置都应该变成关闭灰色不可选择**」
     ///   → 制备版式的「完成时间 = 制备时间 + prepDays」。
     var prepDays: Int = 3
+    /// ★★★ 2026-10-20（用户）：「点击扫描二维码制备后弹出的这个菜单，**最上面一层增加一个功能，
+    ///   叫是否需要输入模板名**」
+    ///   ➜ true（默认）= 打印页要手输一个名称（如二发的水果）；
+    ///     false = 只承接原标签，不额外输入（如肉类解冻）。
+    var needsManualName: Bool = true
     /// 「扫描二维码二次制备」——开启后可在打印页扫原标签续做（同康普茶二发）。
     var useSecondary: Bool = false
     // ★ 2026-10-19（用户）：「这里面**不需要重复选天数**了啊，上面不是有天数吗」

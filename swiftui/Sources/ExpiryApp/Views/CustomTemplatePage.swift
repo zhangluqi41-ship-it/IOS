@@ -29,8 +29,9 @@ struct CustomTemplatePage: View {
     /// ★ 二次制备：扫到的原标签信息 + sheet 开关。
     @State private var scannedTitle: String?
     @State private var scannedBestBefore: Date?
-    /// ★ 2026-10-19（用户）：「增加**无原始保质期**选项，如果无，自动填写最佳保质期 2099.12.31」
-    @State private var noExpiry = false
+    /// ★ 2026-10-20（用户）：「开启扫码功能的模板**不应该有原始保质期，应该是承接扫到的码的原始信息**」
+    ///   → 二次制备时原始保质期从原标签带过来，不让改。
+    @State private var scannedExpire: Date?
     @FocusState private var focus: AnyHashable?
 
     /// 从**扫码 Tab** 进来时带着原标签信息（二次制备）。
@@ -39,12 +40,13 @@ struct CustomTemplatePage: View {
     ///   - presetSourceBest: 原标签的最佳使用时间
     init(template: CustomTemplate,
          presetSourceTitle: String? = nil,
-         presetSourceBest: Date? = nil) {
+         presetSourceBest: Date? = nil,
+         presetSourceExpire: Date? = nil) {
         self.template = template
         _scannedTitle = State(initialValue: presetSourceTitle)
         _scannedBestBefore = State(initialValue: presetSourceBest)
-        // ★ 模板配了「懒人一键保质期」→ 页面默认就是"无保质期"。
-        _noExpiry = State(initialValue: template.noExpiry)
+        _scannedExpire = State(initialValue: presetSourceExpire)
+        _expireDate = State(initialValue: presetSourceExpire ?? Date())
     }
 
     var body: some View {
@@ -53,7 +55,7 @@ struct CustomTemplatePage: View {
             //   某个二维码**二次制备…… 这个扫描功能应该是在 **tabbar 的扫描里**完成后弹出来的，
             //   参考康普茶二发」+「在效期打印界面，如果不编辑或者删除模板，**他应该是被隐藏起来的**」
             //   ➜ 打印页这里**不再有任何"扫描原标签"入口**；二次制备改由扫码 Tab 触发。
-            if template.nodes.isEmpty {
+            if template.nodes.isEmpty && template.needsManualName {
                 // ★★★ 2026-10-19（用户）：「不添加菜单，就设置成**通用效期那种直接输入物料名称**的模板，
                 //   命名规则为『定义的模板名称』-『直接输入的物料名称』」
                 Section {
@@ -104,11 +106,10 @@ struct CustomTemplatePage: View {
             }
 
             Section {
-                Toggle("无原始保质期", isOn: $noExpiry)
-
+                // ★ 二次制备：原始保质期承接原标签，不让改。
                 LabelDatePicker(title: "原始保质期", date: $expireDate)
-                    .disabled(noExpiry)
-                if !noExpiry {
+                    .disabled(usesSourceExpire)
+                if !usesSourceExpire {
                     QuickDateChips(selection: $expireDate)
                 }
 
@@ -116,7 +117,12 @@ struct CustomTemplatePage: View {
                 QuickDateChips(selection: $bestDate)
 
                 // 只有真的算出天数才显示这一行（没选品类时完全不占位）。
-                if let days = appliedBestDays {
+                if usesSourceExpire {
+                    // ★ 二次制备：原始保质期承接原标签。
+                    Text("二次制备：原始保质期承接原标签，不可修改。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else if let days = appliedBestDays {
                     Text("已按「\(chosenChain().last?.name ?? "")」的建议 \(days) 天自动填写，可手动改。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -136,11 +142,6 @@ struct CustomTemplatePage: View {
         .keyboardDismissible(focus: $focus)
         .modifier(LabelActions(build: buildDraft))
         .onChange(of: selections) { _, _ in syncFromSelection() }
-        .onChange(of: noExpiry) { _, isOn in
-            guard isOn else { return }
-            // 无保质期 → 原始保质期固定填 2099/12/31（最佳使用时间仍按天数算）。
-            withAnimation(.default) { expireDate = Self.farFutureDate }
-        }
         .alert(template.nodes.isEmpty ? "请先输入物料名称" : "请先选择品类",
                isPresented: $showPickerAlert) {
             Button("好", role: .cancel) {}
@@ -242,18 +243,21 @@ struct CustomTemplatePage: View {
                 case .level1:
                     // ★★★ 2026-10-19（用户）：「**第一层有选项则第一层就是选项，
                     //   若无选项，那第一层就应该是打字输入的信息**」
-                    //   ➜ 空菜单模板里「第一层」= 手输物料名（否则标题会空掉、标签没信息）。
+                    //   ★ 2026-10-20：模板设了「不需要输入模板名」时，第一层不再取手输名。
                     if chain.count > 0 {
                         value = chain[0].name
-                    } else {
+                    } else if template.needsManualName {
                         value = materialName.trimmingCharacters(in: .whitespaces)
+                    } else {
+                        value = ""
                     }
                 case .level2:
                     value = chain.count > 1 ? chain[1].name : ""
                 case .level3:
                     value = chain.count > 2 ? chain[2].name : ""
                 case .manual:
-                    value = materialName.trimmingCharacters(in: .whitespaces)
+                    value = template.needsManualName
+                        ? materialName.trimmingCharacters(in: .whitespaces) : ""
                 case .sourceLevel1, .sourceLevel2, .sourceLevel3:
                     // ★ 2026-10-20（用户提问引出的 bug）：原标签是**原模板**用它的连接符拼的，
                     //   拿当前模板的 `titleSeparator` 去拆会拆不开（一个用"·"一个用"-"）。
@@ -270,7 +274,7 @@ struct CustomTemplatePage: View {
             }
             let result = values.joined(separator: template.titleSeparator)
             // ★ 兜底：规则里一个有效字段都没取到时，至少用手输名，别打出空标题。
-            if result.isEmpty {
+            if result.isEmpty, template.needsManualName {
                 return materialName.trimmingCharacters(in: .whitespaces)
             }
             return result
@@ -322,9 +326,16 @@ struct CustomTemplatePage: View {
     }
 
     /// 原始保质期的最终取值：无保质期 → 2099；设了原始天数 → 今天+N；都没设 → 跟最佳一致。
+    /// 二次制备时原始保质期固定承接原标签（扫到的码里有就用它）。
+    private var usesSourceExpire: Bool {
+        template.useSecondary && scannedExpire != nil
+    }
+
     private func resolvedExpireDate(fallback: Date) -> Date {
-        // 页面上的临时开关（@State noExpiry）优先级最高，其次是模板/节点配置。
-        if noExpiry || isNoExpiry { return Self.farFutureDate }
+        if let sourceExpire = scannedExpire, template.useSecondary { return sourceExpire }
+        // ★★★ 2026-10-20（用户）：「这个界面**不应该有"无原始保质期"选项**，删除这个功能，
+        //   因为他是在**创建模板时设定的**」→ 只看模板/节点配置，页面不再有临时开关。
+        if isNoExpiry { return Self.farFutureDate }
         if let orig = appliedOriginalDays, orig > 0 {
             return Calendar.current.date(byAdding: .day, value: orig, to: Date()) ?? fallback
         }
@@ -356,6 +367,8 @@ struct CustomTemplatePage: View {
 
     private func buildDraft() -> LabelDraft? {
         let name = LabelTemplate.clamp(title)
+        // ★ 2026-10-20：模板设了「不需要输入模板名」时，标题完全由命名规则决定，
+        //   不再要求手输（这时 name 为空说明命名规则没配好，仍然拦一下）。
         guard !name.isEmpty else {
             showPickerAlert = true
             return nil

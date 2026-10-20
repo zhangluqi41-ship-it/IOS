@@ -365,13 +365,22 @@ enum LabelTemplate {
     ///
     /// 二维码内容 = 标题 + 各行的「label + value」拼起来，例如：
     ///   `冷冻-猪肉-五花肉开封时间：2026/10/19 10:00原始保质期：2026/10/24 10:00最佳使用时间：2026/10/24 10:00`
-    static func parseCustomQr(_ raw: String) -> (title: String, bestBefore: Date)? {
+    /// ★ 2026-10-20（用户）：「开启扫码功能的模板**不应该有原始保质期，应该是承接扫到的码的原始信息**」
+    ///   ➜ 解析结果加上 `expireAt`（原始保质期）。
+    static func parseCustomQr(_ raw: String) -> (title: String, bestBefore: Date, expireAt: Date?)? {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.utf8.count <= maxQrBytes else { return nil }
 
-        // 标题 = 第一个「XX时间：」之前的所有内容。
-        guard let firstTime = text.range(of: "时间：") else { return nil }
-        let title = String(text[text.startIndex..<firstTime.lowerBound])
+        // ★★★ 2026-10-20（用户报"扫完码打印一堆乱码"）—— 真因：
+        //   原来用 `text.range(of: "时间：")` 找标题边界，但**「最佳使用时间：」本身也含"时间："**，
+        //   于是标题被切成「新冷冻-猪肉-里脊原始保质期：2026/11/20 23:59最佳使用」这种东西。
+        //   ➜ 改成用**完整的时间标签**当锚点，取出现位置最靠前的那个。
+        let anchors = ["开封时间：", "制备时间：", "解冻时间：", "原始保质期：", "完成时间："]
+        let firstAnchor = anchors
+            .compactMap { text.range(of: $0) }
+            .min { $0.lowerBound < $1.lowerBound }
+        guard let firstAnchor else { return nil }
+        let title = String(text[text.startIndex..<firstAnchor.lowerBound])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return nil }
 
@@ -381,7 +390,16 @@ enum LabelTemplate {
         let candidate = tail.split(separator: "：").first.map(String.init) ?? tail
         guard let date = parseDate(candidate) else { return nil }
 
-        return (title, date)
+        // 原始保质期（可能没有这一行 —— 比如制备版式）。
+        var expireAt: Date?
+        if let r = text.range(of: "原始保质期：") {
+            let after = String(text[r.upperBound...])
+            if let seg = after.split(separator: "：").first {
+                expireAt = parseDate(String(seg))
+            }
+        }
+
+        return (title, date, expireAt)
     }
 
     static func buildKombuchaFirst(variety: String, now: Date, maker: String) -> LabelData {
