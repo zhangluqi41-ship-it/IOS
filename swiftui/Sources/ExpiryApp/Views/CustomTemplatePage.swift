@@ -489,16 +489,19 @@ struct CustomTemplatePage: View {
         //   同时显示在**"正在制作中"**里。这个制备现在打印标签没问题，但是**数据后台存的不对**」
         //   真因：不管哪种模式，record 的 `bestBefore` 都取 `min(bestDate, expireDate)` ——
         //   而「制备」的"到期"是**完成时间**（现在 + 制备天数），不是页面上那个"最佳使用时间"。
-        // 制备型：「到期」和「原始保质期」两个字段都指向**完成时间**，
-        // 这样记录详情显示的就是"完成时间"，列表也归到「正在制作中」。
+        // ★★★ 2026-10-21（用户）：「**"完成时间"也算到期了，他不按到期算，"最佳使用时间"才算到期，
+        //   "完成时间"只是完成制备**」
+        //   ➜ 两个字段分工不同，**不要合在一起**：
+        //     · `expireAt`  ← 制备型 = **完成时间**（决定"制作中 / 已完成制作"）
+        //     · `bestBefore`← 始终是**最佳使用时间**（= 到期基准 / 倒计时 / 通知）
         let isPrep = template.usePrep || (template.useSecondary && scannedTitle != nil)
         let completion = Calendar.current.date(
             byAdding: .day,
             value: max(1, template.usePrep ? template.prepDays : (template.defaultDays ?? 3)),
             to: now
         ) ?? now
-        let recordBest = isPrep ? completion : min(bestDate, expireDate)
         let recordExpire = isPrep ? completion : expireDate
+        let recordBest = min(bestDate, expireDate)
         let record = LabelTemplate.makeRecord(kind: .generic, data: data, createdAt: now,
                                               expireAt: recordExpire, bestBefore: recordBest,
                                               maker: makerFinal, isPrepared: isPrep)

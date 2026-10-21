@@ -79,7 +79,61 @@ struct LabelRecord: Identifiable, Codable, Hashable {
     /// ★★★ 2026-10-21（用户）：「打开制备功能后，效期管理里面就应该是**"完成时间"**，
     ///   同时显示在**"正在制作中"**里」。
     ///   自定义模板的制备/二次制备记录 —— 语义等同"有完成时间"，靠这个标记进「制作中」。
+    ///
+    /// ⚠️⚠️ 这个字段是**后加的**，所以必须配下面的手写 `init(from:)`：
+    ///   合成解码要求 JSON 里**必须有这个 key**，而旧 `records.json` 没有 →
+    ///   整份记录解码失败 → `ExpiryStore.load` 判成 `DecodingError` →
+    ///   文件被改名 `.corrupt` + 起空表（2026-10-21 真实发生过）。
     var isPrepared: Bool = false
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, kind, maker, createdAt, printedAt
+        case expireAt, bestBefore, usedAt, qrText, source, isPrepared
+    }
+
+    init(id: UUID = UUID(),
+         title: String,
+         kind: LabelKind,
+         maker: String,
+         createdAt: Date,
+         printedAt: Date?,
+         expireAt: Date,
+         bestBefore: Date,
+         usedAt: Date?,
+         qrText: String,
+         source: RecordSource,
+         isPrepared: Bool = false) {
+        self.id = id
+        self.title = title
+        self.kind = kind
+        self.maker = maker
+        self.createdAt = createdAt
+        self.printedAt = printedAt
+        self.expireAt = expireAt
+        self.bestBefore = bestBefore
+        self.usedAt = usedAt
+        self.qrText = qrText
+        self.source = source
+        self.isPrepared = isPrepared
+    }
+
+    /// 手写解码：**后加的字段一律 `decodeIfPresent` + 默认值**。
+    /// 以后再加字段，也只改这里，旧文件永远能读。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id         = try c.decode(UUID.self, forKey: .id)
+        title      = try c.decode(String.self, forKey: .title)
+        kind       = try c.decode(LabelKind.self, forKey: .kind)
+        maker      = try c.decode(String.self, forKey: .maker)
+        createdAt  = try c.decode(Date.self, forKey: .createdAt)
+        printedAt  = try c.decodeIfPresent(Date.self, forKey: .printedAt)
+        expireAt   = try c.decode(Date.self, forKey: .expireAt)
+        bestBefore = try c.decode(Date.self, forKey: .bestBefore)
+        usedAt     = try c.decodeIfPresent(Date.self, forKey: .usedAt)
+        qrText     = try c.decodeIfPresent(String.self, forKey: .qrText) ?? ""
+        source     = try c.decodeIfPresent(RecordSource.self, forKey: .source) ?? .printed
+        isPrepared = try c.decodeIfPresent(Bool.self, forKey: .isPrepared) ?? false
+    }
 
     /// 「到期日」= 最佳使用时间 —— 列表分组 / 剩余天数 / 通知全部以它为准。
     ///
