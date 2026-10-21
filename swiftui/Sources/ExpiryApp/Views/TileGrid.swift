@@ -68,6 +68,7 @@ struct TileGrid: UIViewRepresentable {
         private var appliedDeleting = false
         private var appliedEditing = false
 
+
         init(_ parent: TileGrid) {
             self.parent = parent
         }
@@ -120,6 +121,7 @@ struct TileGrid: UIViewRepresentable {
             //   外层的曲线和内层的布局对不上，看起来就是"断一下、跳一下"。
             //   ➜ 去掉外层包裹，只留 `apply(animatingDifferences:)`：
             //     整个 diff + 布局在同一套系统事务里，帧是连贯的。
+            // 100% 原生：动画完全交给 DiffableDataSource。
             dataSource.apply(snapshot, animatingDifferences: animated)
             _ = cv
         }
@@ -176,12 +178,14 @@ struct TileGrid: UIViewRepresentable {
                   let key = item.dragItem.localObject as? String,
                   let from = parent.order.firstIndex(where: { $0.key == key }) else { return }
 
-            // ★★★ 2026-10-21（用户）：「**移动完有短暂的卡顿**」——
-            //   原来是这里 `coordinator.drop(...)` 播一次"落回"，紧接着 `onMove` 改数组又触发
-            //   diff 的第二次动画，两套动画叠在一起 → 卡一下。
-            //   ➜ 只更新数据，**收尾动画完全交给 DiffableDataSource 的 apply**。
-            guard let to = coordinator.destinationIndexPath?.item else { return }
-            parent.onMove(from, to)
+            // ★★★ 2026-10-21（用户）：「**100% 原生哈不怕麻烦**」——
+            //   100% 原生 = **不自己插手任何动画**：
+            //     · 不调 `coordinator.drop(...)`（那是"飞落"，会和 diff 动画打架）；
+            //     · 不加任何 suppress 标志；
+            //     · 只更新数据，**全部动画由 `dataSource.apply(animatingDifferences: true)` 播**。
+            //   ⚠️ 代价（用户已接受）：松手时卡片会直接"消失/重排"，没有从手指飞落的过程。
+            guard let dest = coordinator.destinationIndexPath else { return }
+            parent.onMove(from, dest.item)
             _ = cv
         }
 
@@ -219,6 +223,7 @@ final class TileCell: UICollectionViewCell {
     private var route: TemplateRoute?
     private var deletingMode = false
     private var editingMode = false
+    private var isPinned = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -282,6 +287,7 @@ final class TileCell: UICollectionViewCell {
         self.route = route
         self.deletingMode = deletingMode
         self.editingMode = editingMode
+        self.isPinned = pinned
         self.onTapAction = onTapAction
         self.onRemoveAction = onRemoveAction
         self.onEditAction = onEditAction
@@ -308,18 +314,24 @@ final class TileCell: UICollectionViewCell {
             }
         } else {
             actionButton.isHidden = false
-            // ★★★ 2026-10-21（用户）：「**这个很丑很不协调，之前那个圆底的方案非常协调**」
-            //   ➜ 恢复圆底：未固定 = 淡灰圆底 + 灰图钉；固定 = 品牌色**淡底**（15%）+ 品牌色图钉。
-            //     两层都是"圆底"，观感统一，固定态也不会像之前实心蓝那样抢眼。
-            actionButton.setImage(UIImage(systemName: pinned ? "pin.fill" : "pin"), for: .normal)
-            actionButton.tintColor = pinned ? UIColor(Theme.brand) : .secondaryLabel
-            actionButton.backgroundColor = pinned
-                ? UIColor(Theme.brand).withAlphaComponent(0.18)
-                : .tertiarySystemFill
-            actionButton.layer.cornerRadius = 15
+            applyPinAppearance()
         }
 
         contentView.alpha = (deletingMode || editingMode) ? 0.55 : 1
+    }
+
+    /// 图钉外观（圆底 + 11pt 图标），`configure` 和"点击后立即刷新"共用。
+    private func applyPinAppearance() {
+        // 圆底：未固定 = 淡灰；固定 = 品牌色淡底（18%）。两层都是圆底，观感统一。
+        // 图标 11pt bold（和之前 SwiftUI 版一致，不大不小）。
+        let pinConfig = UIImage.SymbolConfiguration(pointSize: 11, weight: .bold)
+        actionButton.setImage(UIImage(systemName: isPinned ? "pin.fill" : "pin",
+                                      withConfiguration: pinConfig), for: .normal)
+        actionButton.tintColor = isPinned ? UIColor(Theme.brand) : .secondaryLabel
+        actionButton.backgroundColor = isPinned
+            ? UIColor(Theme.brand).withAlphaComponent(0.18)
+            : .tertiarySystemFill
+        actionButton.layer.cornerRadius = 15
     }
 
     @objc private func actionTapped() {
@@ -328,6 +340,11 @@ final class TileCell: UICollectionViewCell {
         } else if editingMode {
             onEditAction?()
         } else {
+            // ★ 2026-10-21（用户）：「点击完固定后，**固定按钮的动画不是马上刷新**」
+            //   ➜ 原来是等父状态变 → `apply` → `reconfigureItems` 才更新 cell，中间有延迟。
+            //     这里**先本地翻转外观**（立即生效），再通知父级同步数据。
+            isPinned.toggle()
+            applyPinAppearance()
             onTapAction?()
         }
     }

@@ -400,18 +400,23 @@ struct CustomTemplateEditor: View {
             if depth >= 3 { parts.append(.level3) }
         }
         if draft.useSecondary, draft.sourceTemplateID != nil {
-            // ★★★ 2026-10-21（用户报：「康普茶原标签有两级，**新康普茶、红茶**，但是打印出来
-            //   **只有第一个层级，第二个层级没有**」）——
-            //   真因：原来按「绑定模板的菜单深度」算原标签层数。但**「红茶」是手输的**
-            //   （原模板没开「不需要修改模板名」），它不在菜单树里 → `maxDepth` 只有 1
-            //   → 「原标签第二层」根本不出现在字段列表里。
-            //   ➜ 原标签的段数**运行时才知道**（模板名 + 菜单各层 + 手输名，最多 3 段），
-            //     所以这里**固定给满 3 层**，让用户在编辑器里就能配到。
-            if draft.sourceTemplateID != nil {
-                parts.append(.sourceLevel1)
-                parts.append(.sourceLevel2)
-                parts.append(.sourceLevel3)
-            }
+            // ★★★ 2026-10-21（用户）：「**编辑模板时就要绑定二维码对应的原标签，此时不就能
+            //   访问到源标签有几层了吗**，所以不需要等到扫」——
+            //   对，源模板本身就能推算出它打印出来的标题有几段：
+            //     段数 = 菜单最大深度 +（需要手输名 ? 1 : 0）+（标题含模板名 ? 1 : 0）
+            //   例：康普茶一发 = 菜单 1 层（新康普茶）+ 手输（红茶）= 2 段 ✅
+            //      肉类 = 菜单 3 层（新冷冻/猪肉/里脊）+ 不手输 = 3 段 ✅
+            let sourceDepth: Int = {
+                guard let source = otherTemplates.first(where: { $0.id == draft.sourceTemplateID })
+                else { return 0 }
+                var depth = maxDepth(of: source.nodes)
+                if source.needsManualName { depth += 1 }
+                if source.includeTemplateInTitle { depth += 1 }
+                return depth
+            }()
+            if sourceDepth >= 1 { parts.append(.sourceLevel1) }
+            if sourceDepth >= 2 { parts.append(.sourceLevel2) }
+            if sourceDepth >= 3 { parts.append(.sourceLevel3) }
         }
         return parts
     }
