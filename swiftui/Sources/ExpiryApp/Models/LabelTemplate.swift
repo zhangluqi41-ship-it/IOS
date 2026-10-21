@@ -339,13 +339,16 @@ enum LabelTemplate {
                                            value: max(1, doneDays), to: now) ?? now
         // ★ 用户：「**包括二次扫描之后**」—— 最佳同样不能晚于完成时间。
         let best = min(sourceBestBefore, done)
-        // ★ 2026-10-19：suffix 为空时（比如"肉类解冻"模板没菜单）不要多出一个尾巴横线。
+        // ★★★ 2026-10-21（用户报：「只写了第一层，**没有引用原模板**，但是它**还是加上了原模板的
+        //   "新康普茶红茶"这一块**」）——
+        //   真因：这里把标题拼成了 `原标签标题-当前标题`（`新康普茶-红茶` + `-` + `新康普茶-葡萄`）。
+        //   ➜ 二次制备的标题**完全由命名规则决定**：用户想引用原标签，就在规则里点「原标签第 X 层」。
+        //     这里不再自动加前缀，`sourceTitle` 只作为兜底（规则算不出任何东西时才用）。
         let combined: String
         if suffix.trimmingCharacters(in: .whitespaces).isEmpty {
             combined = clamp(sourceTitle, maxTitleLength)
         } else {
-            combined = clamp("\(clamp(sourceTitle, maxTitleLength))-\(clamp(suffix, maxNameLength))",
-                             maxTitleLength)
+            combined = clamp(suffix, maxTitleLength)
         }
         return LabelData(
             title: combined,

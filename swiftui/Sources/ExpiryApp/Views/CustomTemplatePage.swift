@@ -270,6 +270,20 @@ struct CustomTemplatePage: View {
     ///   · **有菜单** → 默认 `第一层-第二层…`（"猪肉-五花肉"）；
     ///     开了「命名带模板名称」→ `模板名-第一层-第二层…`（"冷冻-猪肉-五花肉"）
     private func makeTitle(chain: [CustomNode]) -> String {
+        let computed = computeTitle(chain: chain)
+        // ★★★ 2026-10-21（用户报：「我选择了不需要修改名称，它就是直接用模板名的，
+        //   但是扫描完之后又要我强制输入名称」）——
+        //   真因：模板**有菜单但没选**时 `computeTitle` 返回空串，`buildDraft` 就弹
+        //   "请先输入物料名称"。二次制备的标题本来就该来自原标签。
+        //   ➜ 统一兜底：算不出就用 `scannedTitle`。
+        if computed.isEmpty, let source = scannedTitle, !source.isEmpty {
+            return source
+        }
+        return computed
+    }
+
+    /// 各分支的标题计算（不负责兜底）。
+    private func computeTitle(chain: [CustomNode]) -> String {
         // ★★★ 2026-10-19（用户）：「还是增加名称自定义吧，**顺序啊、"‑"用哪些名称连接都可以自己来选择**」
         //   ➜ `titleParts` 非空时，严格按用户排的顺序取字段；
         //     为空则走旧的默认规则（兼容老模板）。
