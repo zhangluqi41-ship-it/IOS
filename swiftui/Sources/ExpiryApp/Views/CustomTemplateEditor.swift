@@ -409,10 +409,18 @@ struct CustomTemplateEditor: View {
             let sourceDepth: Int = {
                 guard let source = otherTemplates.first(where: { $0.id == draft.sourceTemplateID })
                 else { return 0 }
-                var depth = maxDepth(of: source.nodes)
-                if source.needsManualName { depth += 1 }
-                if source.includeTemplateInTitle { depth += 1 }
-                return depth
+                let menuDepth = maxDepth(of: source.nodes)
+                let manual = source.needsManualName ? 1 : 0
+                // ★★★ 2026-10-21（用户）：「新康普茶**没输入"菜单"**，所以他是手写输入**第一层**，
+                //   而且他也只能到第一层。那么扫码的时候，源标签应该有**两层**：
+                //   第一层是**模板名称「新康普茶」**，第二层是**手写输入的内容**」
+                //   ➜ **空菜单**时 `makeTitle` 走的是 `"模板名-手输名"`（模板名**恒定在**，
+                //     和 `includeTemplateInTitle` 无关）。所以要单独算。
+                if menuDepth == 0 {
+                    return 1 + manual          // 模板名 +（手输）
+                }
+                return menuDepth + manual
+                     + (source.includeTemplateInTitle ? 1 : 0)
             }()
             if sourceDepth >= 1 { parts.append(.sourceLevel1) }
             if sourceDepth >= 2 { parts.append(.sourceLevel2) }

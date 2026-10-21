@@ -36,10 +36,19 @@ struct TileGrid: UIViewRepresentable {
         cv.backgroundColor = .clear
         cv.alwaysBounceVertical = true
         cv.delegate = context.coordinator
-        cv.dragDelegate = context.coordinator
-        cv.dropDelegate = context.coordinator
-        cv.dragInteractionEnabled = true
         cv.register(TileCell.self, forCellWithReuseIdentifier: TileCell.reuseID)
+
+        // ★★★ 2026-10-21：改用 **`beginInteractiveMovementForItem`**（UICollectionView 自带的
+        //   交互式移动，iOS 9 起就有）。和 DragDelegate 的区别：
+        //     · DragDelegate = 跨 App 拖放 → **生成预览副本 + 源 cell 立即 hidden** → "两个模块"
+        //     · InteractiveMovement = **cell 本身浮起**、原位置留半透明占位、松手自己滑到位
+        //   全程系统动画，**一行手写动画代码都不需要**（连 suppress 标志都不用）。
+        let longPress = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleLongPress(_:))
+        )
+        longPress.minimumPressDuration = 0.4
+        cv.addGestureRecognizer(longPress)
 
         context.coordinator.collectionView = cv
         context.coordinator.makeDataSource()
@@ -56,8 +65,7 @@ struct TileGrid: UIViewRepresentable {
 
     final class Coordinator: NSObject,
                              UICollectionViewDelegateFlowLayout,
-                             UICollectionViewDragDelegate,
-                             UICollectionViewDropDelegate {
+                             UIGestureRecognizerDelegate {
         var parent: TileGrid
         weak var collectionView: UICollectionView?
         private var dataSource: UICollectionViewDiffableDataSource<String, TemplateRoute>!
@@ -67,6 +75,7 @@ struct TileGrid: UIViewRepresentable {
         private var appliedPinned: [String] = []
         private var appliedDeleting = false
         private var appliedEditing = false
+
 
 
         init(_ parent: TileGrid) {
@@ -121,7 +130,7 @@ struct TileGrid: UIViewRepresentable {
             //   外层的曲线和内层的布局对不上，看起来就是"断一下、跳一下"。
             //   ➜ 去掉外层包裹，只留 `apply(animatingDifferences:)`：
             //     整个 diff + 布局在同一套系统事务里，帧是连贯的。
-            // 100% 原生：动画完全交给 DiffableDataSource。
+            // 100% 原生：动画完全交给系统。
             dataSource.apply(snapshot, animatingDifferences: animated)
             _ = cv
         }
@@ -144,65 +153,40 @@ struct TileGrid: UIViewRepresentable {
             parent.onSelect(route)
         }
 
-        // ── 拖：谁能被拖 ──
+        // ── 交互式移动：长按 → 开始 / 跟手 / 结束 ──
 
-        func collectionView(_ cv: UICollectionView,
-                            itemsForBeginning session: UIDragSession,
-                            at indexPath: IndexPath) -> [UIDragItem] {
-            guard !parent.deletingMode, !parent.editingMode,
-                  let route = dataSource.itemIdentifier(for: indexPath),
-                  !parent.pinnedKeys.contains(route.key) else { return [] }
-            let provider = NSItemProvider(object: route.key as NSString)
-            let item = UIDragItem(itemProvider: provider)
-            item.localObject = route.key
-            return [item]
-        }
+        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard let cv = collectionView,
+                  !parent.deletingMode, !parent.editingMode else { return }
+            let location = gesture.location(in: cv)
 
-        // ── 放：拖动中持续告诉系统"插到第几格" → 系统播放实时让位 ──
-
-        func collectionView(_ cv: UICollectionView,
-                            dropSessionDidUpdate session: UIDropSession,
-                            withDestinationIndexPath destinationIndexPath: IndexPath?)
-                            -> UICollectionViewDropProposal {
-            guard session.localDragSession != nil,
-                  !parent.deletingMode, !parent.editingMode else {
-                return UICollectionViewDropProposal(operation: .cancel)
+            switch gesture.state {
+            case .began:
+                guard let indexPath = cv.indexPathForItem(at: location),
+                      let route = dataSource.itemIdentifier(for: indexPath),
+                      !parent.pinnedKeys.contains(route.key) else { return }
+                cv.beginInteractiveMovementForItem(at: indexPath)
+            case .changed:
+                // 固定项不允许被别的项挤开：目标落在固定项上就取消这次移动。
+                if let dest = cv.indexPathForItem(at: location),
+                   let route = dataSource.itemIdentifier(for: dest),
+                   parent.pinnedKeys.contains(route.key) {
+                    cv.cancelInteractiveMovement()
+                } else {
+                    cv.updateInteractiveMovementTargetPosition(location)
+                }
+            case .ended:
+                cv.endInteractiveMovement()
+            default:
+                cv.cancelInteractiveMovement()
             }
-            return UICollectionViewDropProposal(operation: .move,
-                                                 intent: .insertAtDestinationIndexPath)
         }
 
+        /// 系统问"挪到哪" —— 这里只更新数据，动画它自己播。
         func collectionView(_ cv: UICollectionView,
-                            performDropWith coordinator: UICollectionViewDropCoordinator) {
-            guard let item = coordinator.items.first,
-                  let key = item.dragItem.localObject as? String,
-                  let from = parent.order.firstIndex(where: { $0.key == key }) else { return }
-
-            // ★★★ 2026-10-21（用户）：「**100% 原生哈不怕麻烦**」——
-            //   100% 原生 = **不自己插手任何动画**：
-            //     · 不调 `coordinator.drop(...)`（那是"飞落"，会和 diff 动画打架）；
-            //     · 不加任何 suppress 标志；
-            //     · 只更新数据，**全部动画由 `dataSource.apply(animatingDifferences: true)` 播**。
-            //   ⚠️ 代价（用户已接受）：松手时卡片会直接"消失/重排"，没有从手指飞落的过程。
-            guard let dest = coordinator.destinationIndexPath else { return }
-            parent.onMove(from, dest.item)
-            _ = cv
-        }
-
-        // ── 拖动预览：用实际 cell 尺寸，避免裁切/松手变形 ──
-
-        func collectionView(_ cv: UICollectionView,
-                            dragPreviewParametersForItemAt indexPath: IndexPath)
-                            -> UIDragPreviewParameters? {
-            let params = UIDragPreviewParameters()
-            params.backgroundColor = .clear
-            let cell = cv.cellForItem(at: indexPath)
-            let rect = cell?.bounds ?? CGRect(x: 0, y: 0,
-                                              width: (cv.bounds.width - 12) / 2,
-                                              height: 132)
-            params.visiblePath = UIBezierPath(roundedRect: rect,
-                                              cornerRadius: Theme.tileRadius)
-            return params
+                            moveItemAt source: IndexPath,
+                            to destination: IndexPath) {
+            parent.onMove(source.item, destination.item)
         }
     }
 }
