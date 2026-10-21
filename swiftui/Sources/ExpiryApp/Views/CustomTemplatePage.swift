@@ -273,14 +273,22 @@ struct CustomTemplatePage: View {
                 if !value.isEmpty { values.append(value) }
             }
             let result = values.joined(separator: template.titleSeparator)
-            // ★ 兜底：规则里一个有效字段都没取到时，至少用手输名，别打出空标题。
-            if result.isEmpty, template.needsManualName {
-                return materialName.trimmingCharacters(in: .whitespaces)
+            // ★★★ 2026-10-21（用户报："我开启了不需要输入模板名，打印还是弹**请先输入物料名称**"）
+            //   ➜ 关掉手输后，标题要**兜底用扫到的原标签标题**，否则 name 为空 → 被 buildDraft 拦住。
+            if result.isEmpty {
+                if let source = scannedTitle, !source.isEmpty { return source }
+                if template.needsManualName {
+                    return materialName.trimmingCharacters(in: .whitespaces)
+                }
             }
             return result
         }
 
         if template.nodes.isEmpty {
+            // 不需要手输 → 直接用原标签标题。
+            if !template.needsManualName, let source = scannedTitle, !source.isEmpty {
+                return source
+            }
             let name = materialName.trimmingCharacters(in: .whitespaces)
             return name.isEmpty ? "" : "\(template.name)-\(name)"
         }

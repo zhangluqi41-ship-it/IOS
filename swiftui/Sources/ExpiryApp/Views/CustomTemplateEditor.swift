@@ -153,8 +153,14 @@ struct CustomTemplateEditor: View {
                     Toggle("扫描二维码二次制备", isOn: $draft.useSecondary)
 
                     if draft.useSecondary {
-                        // ★★★ 2026-10-20（用户）：「他应该出现在**扫描二维码二次制备和绑定模板中间**」
-                        Toggle("是否需要输入模板名", isOn: $draft.needsManualName)
+                        // ★★★ 2026-10-21（用户）：「开关名称修改"**不需要修改模板名**"。
+                        //   打开这个功能后不需要输入模板名，因为他是开启扫码二次制备才有的规则，
+                        //   所以不会影响到正常模板」
+                        //   ➜ 开关语义反转：**开 = 不需要改**（needsManualName = false）。
+                        Toggle("不需要修改模板名", isOn: Binding(
+                            get: { !draft.needsManualName },
+                            set: { draft.needsManualName = !$0 }
+                        ))
 
                         // ★ 2026-10-19（用户）：「开启扫描功能后这里应该是**选择绑定的模板**」
                         Picker("绑定模板", selection: $draft.sourceTemplateID) {
