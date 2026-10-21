@@ -570,12 +570,13 @@ struct ScanView: View {
                 case .thaw(let meat):
                     MeatThawView(meat: meat)
                 case .customSecondary(let templateID, let sourceTitle, let sourceBest,
-                                      let sourceExpire, _):
+                                      let sourceExpire, let sourceQR):
                     if let template = CustomTemplateStore.template(id: templateID) {
                         CustomTemplatePage(template: template,
                                            presetSourceTitle: sourceTitle,
                                            presetSourceBest: sourceBest,
-                                           presetSourceExpire: sourceExpire)
+                                           presetSourceExpire: sourceExpire,
+                                           presetSourceQR: sourceQR)
                     } else {
                         ContentUnavailableView("模板已删除", systemImage: "trash")
                     }

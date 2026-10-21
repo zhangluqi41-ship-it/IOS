@@ -391,12 +391,18 @@ enum LabelTemplate {
         guard let date = parseDate(candidate) else { return nil }
 
         // 原始保质期（可能没有这一行 —— 比如制备版式）。
+        //
+        // ⚠️ 2026-10-21 修：原来用 `split(separator: "：")` 取第一段，
+        //   但二维码里「原始保质期：2027/01/17 23:59**最佳使用时间**：...」，
+        //   切在"最佳使用时间："的冒号上 → 第一段是 `2027/01/17 23:59最佳使用时间`，
+        //   `parseDate` 解析失败 → `expireAt` 永远是 nil → 页面回退成"今天 + N 天"。
+        //   ➜ 改成：截到「最佳使用时间：」之前。
         var expireAt: Date?
         if let r = text.range(of: "原始保质期：") {
             let after = String(text[r.upperBound...])
-            if let seg = after.split(separator: "：").first {
-                expireAt = parseDate(String(seg))
-            }
+            let end = after.range(of: "最佳使用时间：")?.lowerBound ?? after.endIndex
+            let seg = String(after[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+            expireAt = parseDate(seg)
         }
 
         return (title, date, expireAt)

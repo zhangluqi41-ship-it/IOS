@@ -389,7 +389,11 @@ struct CustomTemplateEditor: View {
         var parts: [TitlePart] = [.template]
         let depth = maxDepth(of: draft.nodes)
         if depth == 0 {
-            parts.append(.level1)          // 空菜单：第一层 = 手输物料名
+            // ★★★ 2026-10-21（用户）：「如果打开了"**不需要修改模板名**"，下方菜单项也没新增，
+            //   **就不应该存在第一层**」→ 手输被关掉后，"第一层"取不到值，直接不出现。
+            if draft.needsManualName {
+                parts.append(.level1)      // 空菜单 + 需要手输：第一层 = 手输物料名
+            }
         } else {
             if depth >= 1 { parts.append(.level1) }
             if depth >= 2 { parts.append(.level2) }

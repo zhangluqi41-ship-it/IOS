@@ -32,6 +32,10 @@ struct CustomTemplatePage: View {
     /// ★ 2026-10-20（用户）：「开启扫码功能的模板**不应该有原始保质期，应该是承接扫到的码的原始信息**」
     ///   → 二次制备时原始保质期从原标签带过来，不让改。
     @State private var scannedExpire: Date?
+    /// 原始二维码（"原材料已用完"要按它去找记录）。
+    @State private var scannedSourceQR: String?
+    /// ★ 2026-10-21（用户）：「还要确认**原材料是否用完**」
+    @State private var markSourceUsed = false
     @FocusState private var focus: AnyHashable?
 
     /// 从**扫码 Tab** 进来时带着原标签信息（二次制备）。
@@ -41,11 +45,13 @@ struct CustomTemplatePage: View {
     init(template: CustomTemplate,
          presetSourceTitle: String? = nil,
          presetSourceBest: Date? = nil,
-         presetSourceExpire: Date? = nil) {
+         presetSourceExpire: Date? = nil,
+         presetSourceQR: String? = nil) {
         self.template = template
         _scannedTitle = State(initialValue: presetSourceTitle)
         _scannedBestBefore = State(initialValue: presetSourceBest)
         _scannedExpire = State(initialValue: presetSourceExpire)
+        _scannedSourceQR = State(initialValue: presetSourceQR)
         _expireDate = State(initialValue: presetSourceExpire ?? Date())
     }
 
@@ -69,7 +75,7 @@ struct CustomTemplatePage: View {
                 } header: {
                     Text("物料名称")
                 }
-            } else {
+            } else if !isSecondaryFlow {
             Section {
                 // ★ 逐层菜单：和「肉类」的「保存类型 / 肉类 / 部位」同一个样子。
                 ForEach(visibleLevels, id: \.self) { level in
@@ -103,6 +109,34 @@ struct CustomTemplatePage: View {
             } header: {
                 Text("品类")
             }
+            }
+
+            // ★★★ 2026-10-21（用户）：「还要确认**原材料是否用完**，不能完全套用新建模板，
+            //   扫二维码模板就应该是这样」→ 顶部一块"原材料已用完" + 扫到的标签信息。
+            if isSecondaryFlow {
+                Section {
+                    Toggle("原材料已用完", isOn: $markSourceUsed)
+                } footer: {
+                    if let source = scannedTitle {
+                        Text("开启并打印后，会把效期管理里「\(source)」这条记录标记为已用完；关闭则不动它。")
+                    }
+                }
+
+                Section {
+                    if let source = scannedTitle {
+                        LabeledContent("品名", value: source)
+                    }
+                    if let sourceExpire = scannedExpire {
+                        LabeledContent("原始保质期", value: Self.dateText(sourceExpire))
+                    }
+                    if let sourceBest = scannedBestBefore {
+                        LabeledContent("原最佳使用时间", value: Self.dateText(sourceBest))
+                    }
+                } header: {
+                    Text("扫到的标签")
+                } footer: {
+                    Text("扫到后即进入续做流程，菜单里不会再出现这一项。")
+                }
             }
 
             Section {
@@ -140,7 +174,13 @@ struct CustomTemplatePage: View {
         .navigationTitle(template.name)
         .navigationBarTitleDisplayMode(.inline)
         .keyboardDismissible(focus: $focus)
-        .modifier(LabelActions(build: buildDraft))
+        .modifier(LabelActions(build: buildDraft, onConfirmed: {
+            // ★ 打印成功后才标记（失败不动记录）。
+            guard markSourceUsed, let qr = scannedSourceQR,
+                  let record = ExpiryStore.shared.records.first(where: { $0.qrText == qr })
+            else { return }
+            ExpiryStore.shared.markUsed(record)
+        }))
         .onChange(of: selections) { _, _ in syncFromSelection() }
         .alert(template.nodes.isEmpty ? "请先输入物料名称" : "请先选择品类",
                isPresented: $showPickerAlert) {
@@ -333,7 +373,20 @@ struct CustomTemplatePage: View {
         return source.titleSeparator
     }
 
+    /// `yyyy/MM/dd HH:mm`，给"扫到的标签"那三行用。
+    static func dateText(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.calendar = AppCalendar.shared
+        f.dateFormat = "yyyy/MM/dd HH:mm"
+        return f.string(from: date)
+    }
+
     /// 原始保质期的最终取值：无保质期 → 2099；设了原始天数 → 今天+N；都没设 → 跟最佳一致。
+    /// 是不是"扫码续做"流程（用户：「扫二维码模板就应该是这样」）。
+    private var isSecondaryFlow: Bool {
+        template.useSecondary && scannedTitle != nil
+    }
+
     /// 二次制备时原始保质期固定承接原标签（扫到的码里有就用它）。
     private var usesSourceExpire: Bool {
         template.useSecondary && scannedExpire != nil
