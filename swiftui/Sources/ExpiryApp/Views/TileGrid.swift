@@ -114,6 +114,12 @@ struct TileGrid: UIViewRepresentable {
             if orderUnchanged, !appliedKeys.isEmpty {
                 snapshot.reconfigureItems(order)
             }
+            // ★★★ 2026-10-21（用户）：「**不是弹性，是动画不连贯**」——
+            //   原来外面套了 `UIView.animate` 包 `apply`：但 `apply` 是**异步布局**，
+            //   下一帧才真正动 cell，而 `UIView.animate` 的时长已经走完 →
+            //   外层的曲线和内层的布局对不上，看起来就是"断一下、跳一下"。
+            //   ➜ 去掉外层包裹，只留 `apply(animatingDifferences:)`：
+            //     整个 diff + 布局在同一套系统事务里，帧是连贯的。
             dataSource.apply(snapshot, animatingDifferences: animated)
             _ = cv
         }
@@ -170,14 +176,13 @@ struct TileGrid: UIViewRepresentable {
                   let key = item.dragItem.localObject as? String,
                   let from = parent.order.firstIndex(where: { $0.key == key }) else { return }
 
-            if let to = coordinator.destinationIndexPath?.item {
-                parent.onMove(from, to)
-            }
-            // 系统 API：把拖动项"落"到目标 cell 上（弹性归位）。
-            if let dest = coordinator.destinationIndexPath,
-               let cell = cv.cellForItem(at: dest) {
-                coordinator.drop(item.dragItem, intoItemAt: dest, rect: cell.bounds)
-            }
+            // ★★★ 2026-10-21（用户）：「**移动完有短暂的卡顿**」——
+            //   原来是这里 `coordinator.drop(...)` 播一次"落回"，紧接着 `onMove` 改数组又触发
+            //   diff 的第二次动画，两套动画叠在一起 → 卡一下。
+            //   ➜ 只更新数据，**收尾动画完全交给 DiffableDataSource 的 apply**。
+            guard let to = coordinator.destinationIndexPath?.item else { return }
+            parent.onMove(from, to)
+            _ = cv
         }
 
         // ── 拖动预览：用实际 cell 尺寸，避免裁切/松手变形 ──

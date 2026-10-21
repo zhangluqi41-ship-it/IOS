@@ -208,14 +208,21 @@ struct TemplatesTab: View {
     /// 拖动换位（UICollectionView 算好 from/to，这里只管数组和持久化）。
     private func move(from: Int, to: Int) {
         guard order.indices.contains(from), order.indices.contains(to), from != to else { return }
-        withAnimation(.default) {
-            let item = order.remove(at: from)
-            order.insert(item, at: to)
-        }
+        // ★★★ 2026-10-21（用户）：「**不要用你自己写的，还是只用苹果原生**」
+        //   SwiftUI 的 `withAnimation` 对 `UIViewRepresentable` 包着的 UICollectionView **不生效**，
+        //   留在这里只会让 `updateUIView` 多跑几次。动画完全交给 `dataSource.apply(animatingDifferences:)`。
+        guard order.indices.contains(from), order.indices.contains(to), from != to else { return }
+        let item = order.remove(at: from)
+        order.insert(item, at: to)
         Prefs.templateOrder = order.map(\.key)
     }
 
     /// 固定 / 取消固定（先固定的排前面）。
+    ///
+    /// ★★★ 2026-10-21（用户）：「**不是弹性，是动画不连贯**」——
+    ///   原来这里调了**两次** `withAnimation`（先改 pinnedKeys、再改 order），
+    ///   两次都会触发 `updateUIView` → 两次 `diff apply` → 卡片先跳一下再跳一下。
+    ///   ➜ **合并成一次状态更新**，只产生一次 diff。
     private func togglePin(_ route: TemplateRoute) {
         var pinned = pinnedKeys
         if let index = pinned.firstIndex(of: route.key) {
@@ -223,23 +230,26 @@ struct TemplatesTab: View {
         } else {
             pinned.append(route.key)
         }
-        withAnimation(.default) { pinnedKeys = pinned }
-        Prefs.pinnedTemplates = pinned
 
         let pinnedRoutes = pinned.compactMap { TemplateRoute.from(key: $0) }
         let rest = order.filter { !pinnedRoutes.contains($0) }
-        withAnimation(.default) { order = pinnedRoutes + rest }
-        Prefs.templateOrder = order.map(\.key)
+        let newOrder = pinnedRoutes + rest
+
+        // 同上：不加任何动画修饰，交给 DiffableDataSource 自己播。
+        pinnedKeys = pinned
+        order = newOrder
+        Prefs.pinnedTemplates = pinned
+        Prefs.templateOrder = newOrder.map(\.key)
     }
 
     private func remove(_ route: TemplateRoute) {
         let remaining = pinnedKeys.filter { $0 != route.key }
-        withAnimation(.default) { pinnedKeys = remaining }
+        pinnedKeys = remaining
         Prefs.pinnedTemplates = remaining
 
         if case .custom(let id) = route {
             // ★ 自定义模板：**真删除**（模板数据一起删），不是像内置那样"隐藏"。
-            withAnimation(.default) {
+            do {
                 CustomTemplateStore.delete(id: id)
                 customTemplates = CustomTemplateStore.all
                 order.removeAll { $0 == route }
@@ -254,9 +264,7 @@ struct TemplatesTab: View {
         if !hidden.contains(route.key) { hidden.append(route.key) }
         withAnimation(.default) { hiddenKeys = hidden }
         Prefs.hiddenTemplates = hidden
-        withAnimation(.default) {
-            order.removeAll { $0 == route }
-        }
+        order.removeAll { $0 == route }
         Prefs.templateOrder = order.map(\.key)
     }
 
