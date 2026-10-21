@@ -308,10 +308,15 @@ final class TileCell: UICollectionViewCell {
             }
         } else {
             actionButton.isHidden = false
-            // 固定态：无底色、只把图钉染成品牌色（实心蓝底太抢眼）。
+            // ★★★ 2026-10-21（用户）：「**这个很丑很不协调，之前那个圆底的方案非常协调**」
+            //   ➜ 恢复圆底：未固定 = 淡灰圆底 + 灰图钉；固定 = 品牌色**淡底**（15%）+ 品牌色图钉。
+            //     两层都是"圆底"，观感统一，固定态也不会像之前实心蓝那样抢眼。
             actionButton.setImage(UIImage(systemName: pinned ? "pin.fill" : "pin"), for: .normal)
-            actionButton.tintColor = pinned ? UIColor(Theme.brand) : .tertiaryLabel
-            actionButton.backgroundColor = .clear
+            actionButton.tintColor = pinned ? UIColor(Theme.brand) : .secondaryLabel
+            actionButton.backgroundColor = pinned
+                ? UIColor(Theme.brand).withAlphaComponent(0.18)
+                : .tertiarySystemFill
+            actionButton.layer.cornerRadius = 15
         }
 
         contentView.alpha = (deletingMode || editingMode) ? 0.55 : 1

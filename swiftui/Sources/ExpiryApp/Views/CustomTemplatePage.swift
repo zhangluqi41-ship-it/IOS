@@ -182,6 +182,13 @@ struct CustomTemplatePage: View {
             ExpiryStore.shared.markUsed(record)
         }))
         .onChange(of: selections) { _, _ in syncFromSelection() }
+        .onAppear {
+            // ★ 二次制备进来时 `title` 还是初始空串（没有选择动作，不会触发 onChange）→
+            //   这里主动算一次，否则点打印会弹"请先输入物料名称"。
+            if title.isEmpty {
+                title = makeTitle(chain: chosenChain())
+            }
+        }
         .alert(template.nodes.isEmpty ? "请先输入物料名称" : "请先选择品类",
                isPresented: $showPickerAlert) {
             Button("好", role: .cancel) {}
@@ -367,7 +374,10 @@ struct CustomTemplatePage: View {
     private func syncFromSelection() {
         let chain = chosenChain()
         guard !chain.isEmpty else {
-            title = ""
+            // ★★★ 2026-10-21（用户报：「我选择了不需要编辑名称，**但还是需要**」）——
+            //   真因：这里原来是 `title = ""` 直接清空，**绕过了 makeTitle 的兜底**
+            //   （二次制备本该用原标签标题）。改成走同一条计算链。
+            title = makeTitle(chain: [])
             return
         }
         title = makeTitle(chain: chain)
