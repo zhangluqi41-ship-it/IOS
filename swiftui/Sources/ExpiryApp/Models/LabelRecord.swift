@@ -76,6 +76,10 @@ struct LabelRecord: Identifiable, Codable, Hashable {
     /// 二维码原文，用于同一条标签去重。
     var qrText: String
     var source: RecordSource
+    /// ★★★ 2026-10-21（用户）：「打开制备功能后，效期管理里面就应该是**"完成时间"**，
+    ///   同时显示在**"正在制作中"**里」。
+    ///   自定义模板的制备/二次制备记录 —— 语义等同"有完成时间"，靠这个标记进「制作中」。
+    var isPrepared: Bool = false
 
     /// 「到期日」= 最佳使用时间 —— 列表分组 / 剩余天数 / 通知全部以它为准。
     ///
@@ -117,6 +121,7 @@ struct LabelRecord: Identifiable, Codable, Hashable {
     ///     在不动已定版式的前提下区分解冻标签的）。
     var usesCompletionTime: Bool {
         if kind == .kombucha { return true }
+        if isPrepared { return true }      // 自定义模板的制备 / 二次制备
         return kind == .meat
             && title.hasPrefix(MeatRule.thawPrefix + MeatRule.titleSeparator)
     }

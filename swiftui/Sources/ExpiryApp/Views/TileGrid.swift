@@ -64,11 +64,10 @@ struct TileGrid: UIViewRepresentable {
     // MARK: - Coordinator
 
     final class Coordinator: NSObject,
-                             UICollectionViewDelegateFlowLayout,
-                             UIGestureRecognizerDelegate {
+                             UICollectionViewDelegateFlowLayout {
         var parent: TileGrid
         weak var collectionView: UICollectionView?
-        private var dataSource: UICollectionViewDiffableDataSource<String, TemplateRoute>!
+        private var dataSource: TileDataSource!
 
         /// 上一次应用的状态（没变就不 apply，避免拖动中反复重建）。
         private var appliedKeys: [String] = []
@@ -76,15 +75,13 @@ struct TileGrid: UIViewRepresentable {
         private var appliedDeleting = false
         private var appliedEditing = false
 
-
-
         init(_ parent: TileGrid) {
             self.parent = parent
         }
 
         func makeDataSource() {
             guard let cv = collectionView else { return }
-            dataSource = UICollectionViewDiffableDataSource<String, TemplateRoute>(
+            let source = TileDataSource(
                 collectionView: cv
             ) { [weak self] cv, indexPath, route in
                 guard let self else { return nil }
@@ -99,6 +96,10 @@ struct TileGrid: UIViewRepresentable {
                                onEditAction: { [weak self] in self?.parent.onEdit(route) })
                 return cell
             }
+            source.onMove = { [weak self] from, to in
+                self?.parent.onMove(from, to)
+            }
+            dataSource = source
         }
 
         /// ★ DiffableDataSource 的核心：给快照，系统自己 diff + 播放动画。
@@ -167,14 +168,10 @@ struct TileGrid: UIViewRepresentable {
                       !parent.pinnedKeys.contains(route.key) else { return }
                 cv.beginInteractiveMovementForItem(at: indexPath)
             case .changed:
-                // 固定项不允许被别的项挤开：目标落在固定项上就取消这次移动。
-                if let dest = cv.indexPathForItem(at: location),
-                   let route = dataSource.itemIdentifier(for: dest),
-                   parent.pinnedKeys.contains(route.key) {
-                    cv.cancelInteractiveMovement()
-                } else {
-                    cv.updateInteractiveMovementTargetPosition(location)
-                }
+                // ★ 2026-10-21 修：原来"手指经过固定项就 cancel"太激进 ——
+                //   只是路过一下整次拖动就被中断、卡片弹回。
+                //   ➜ 允许**越过**固定项继续拖；是否真的落到固定位，交给 moveItemAt 落位时判断。
+                cv.updateInteractiveMovementTargetPosition(location)
             case .ended:
                 cv.endInteractiveMovement()
             default:
@@ -182,12 +179,25 @@ struct TileGrid: UIViewRepresentable {
             }
         }
 
-        /// 系统问"挪到哪" —— 这里只更新数据，动画它自己播。
-        func collectionView(_ cv: UICollectionView,
-                            moveItemAt source: IndexPath,
-                            to destination: IndexPath) {
-            parent.onMove(source.item, destination.item)
-        }
+    }
+}
+
+// MARK: - DataSource（为了接管 moveItemAt）
+//
+// ★★★ 2026-10-21（用户报：「**现在桌面图标不能拖动了**」）——
+//   真因：`beginInteractiveMovement` 落位时会调 **dataSource 的** `collectionView(_:moveItemAt:to:)`，
+//   而 `UICollectionViewDiffableDataSource` **没有实现这个可选方法**，
+//   所以"松手后数据不落地" → 视觉上等于拖动没反应。
+//   （这个方法必须挂在 dataSource 上，挂在 delegate 上永远不会被调用。）
+//   ➜ 子类化，把落位事件转出来。
+
+final class TileDataSource: UICollectionViewDiffableDataSource<String, TemplateRoute> {
+    var onMove: ((Int, Int) -> Void)?
+
+    override func collectionView(_ cv: UICollectionView,
+                                 moveItemAt source: IndexPath,
+                                 to destination: IndexPath) {
+        onMove?(source.item, destination.item)
     }
 }
 

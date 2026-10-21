@@ -199,9 +199,21 @@ struct TemplatesTab: View {
         return final
     }
 
+    /// ★★★ 2026-10-21（用户）：「**"扫描二维码二次制备"开启后的模板，在菜单中应该是隐藏的**，
+    ///   只有点击**编辑和删除**的时候他们才会出现」
+    ///   —— 这类模板不能手动点进去（必须扫码进入），平时藏起来。
+    private var visibleOrder: [TemplateRoute] {
+        guard !deletingMode, !editingMode else { return order }
+        return order.filter { route in
+            guard case .custom(let id) = route,
+                  let template = CustomTemplateStore.template(id: id) else { return true }
+            return !template.useSecondary
+        }
+    }
+
     /// 网格高度：2 列、每格 132 + 行距 12。
     private var gridHeight: CGFloat {
-        let rows = max(1, Int(ceil(Double(order.count) / 2.0)))
+        let rows = max(1, Int(ceil(Double(visibleOrder.count) / 2.0)))
         return CGFloat(rows) * 132 + CGFloat(max(0, rows - 1)) * 12
     }
 
@@ -211,9 +223,16 @@ struct TemplatesTab: View {
         // ★★★ 2026-10-21（用户）：「**不要用你自己写的，还是只用苹果原生**」
         //   SwiftUI 的 `withAnimation` 对 `UIViewRepresentable` 包着的 UICollectionView **不生效**，
         //   留在这里只会让 `updateUIView` 多跑几次。动画完全交给 `dataSource.apply(animatingDifferences:)`。
-        guard order.indices.contains(from), order.indices.contains(to), from != to else { return }
-        let item = order.remove(at: from)
-        order.insert(item, at: to)
+        // Grid 给的是**可见列表**的下标，要映射回 `order` 的真实下标。
+        let visible = visibleOrder
+        guard visible.indices.contains(from), visible.indices.contains(to),
+              from != to,
+              let realFrom = order.firstIndex(of: visible[from]),
+              let realTo = order.firstIndex(of: visible[to]) else { return }
+        // ★ 2026-10-21：固定项锁死在原位 —— 拖到它身上就放弃这次移动（不挤开它）。
+        guard !pinnedKeys.contains(visible[to].key) else { return }
+        let item = order.remove(at: realFrom)
+        order.insert(item, at: realTo)
         Prefs.templateOrder = order.map(\.key)
     }
 
@@ -280,7 +299,7 @@ struct TemplatesTab: View {
                     // ★★★ 2026-10-21：换成 **UICollectionView 版**（SpringBoard 同款骨架）。
                     //   拖动时的"抬起放大 / 其他磁贴实时让开 / 半透明占位 / 弹性归位 /
                     //   边缘自动滚动"全部由系统播放，不再自己算 offset。
-                    TileGrid(order: order,
+                    TileGrid(order: visibleOrder,
                              pinnedKeys: pinnedKeys,
                              deletingMode: deletingMode,
                              editingMode: editingMode,

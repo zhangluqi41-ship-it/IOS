@@ -479,7 +479,8 @@ enum LabelTemplate {
                            expireAt: Date,
                            bestBefore: Date,
                            maker: String,
-                           source: RecordSource = .printed) -> LabelRecord {
+                           source: RecordSource = .printed,
+                           isPrepared: Bool = false) -> LabelRecord {
         LabelRecord(title: data.title,
                     kind: kind,
                     maker: clamp(maker, maxNameLength),
@@ -489,7 +490,8 @@ enum LabelTemplate {
                     bestBefore: bestBefore,
                     usedAt: nil,
                     qrText: data.qrText,
-                    source: source)
+                    source: source,
+                    isPrepared: isPrepared)
     }
 
     // MARK: 重新打印
