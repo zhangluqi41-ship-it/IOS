@@ -312,14 +312,18 @@ enum LabelTemplate {
     static func buildCustomPrep(title: String, now: Date, doneDays: Int,
                                bestBefore: Date, maker: String) -> LabelData {
         let done = AppCalendar.shared.date(byAdding: .day, value: max(1, doneDays), to: now) ?? now
-        // 同上：最佳不晚于完成时间。
-        let best = min(bestBefore, done)
+        // ★★★ 2026-10-22（用户）：「这个标签设置最佳使用时间，**数据 +1 个月是对的，但是打印时间不对**，
+        //   后台数据又是对的」——
+        //   真因：这里原来有一句 `let best = min(bestBefore, done)`，
+        //   **强行把"最佳使用时间"压到不晚于"完成时间"**。
+        //   新康普茶是 完成 +7 天、最佳 +31 天 → 被压成了完成那天（10/29）。
+        //   ➜ **最佳使用时间可以晚于完成时间**，直接用它本身。
+        let best = bestBefore
         return LabelData(
             title: clamp(title),
             rows: [
                 LabelRow(label: "制备时间：", value: fmtDateTime(now)),
                 LabelRow(label: "完成时间：", value: fmtDateTime(done)),
-                // ★ 同上：用算好的 `best`，不用原始 `bestBefore`。
                 LabelRow(label: "最佳使用时间：", value: fmtDateTime(best)),
             ],
             weekdayCn: weekdayCn(now),
