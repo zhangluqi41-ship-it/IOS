@@ -67,13 +67,10 @@ final class QRScannerModel: NSObject, ObservableObject {
     ///   2 倍有两个好处：
     ///     ① 二维码在画面里更大 → 每个模块占更多像素 → 解码更快更稳；
     ///     ② 走的是长焦/裁切，景深与反差更好，对焦判定更干脆。
-    // ★★★ 2026-10-22（用户）：「**摄像头两边没焦**，我和苹果自带相机功能的**两倍变焦比一了，
-    //   你的要更大一些**，你的是两倍变焦吗？」
-    //   ➜ 真因：这里用的是 `builtInWideAngleCamera`（广角）+ `videoZoomFactor = 2.0`，
-    //     在广角上就是**裁切 2 倍**——画幅只有中间一半，两边自然"没焦"（其实是拍不到）。
-    //     苹果相机的 2× 是**物理长焦**，视野完全不同。
-    //   ➜ 改成 **1.0（不裁切）**，视野和苹果相机 1× 一致；双击才放大到 2×。
-    static let preferredZoom: CGFloat = 1.0
+    // ★ 2026-10-22（用户）：「**默认改成 2x**」——按需求把默认档设为 2×。
+    //   ⚠️ 已知代价：主摄上的 2× 是**数字裁切**，画幅只有中间一半（两边拍不到），
+    //     和苹果相机那些"长焦 2×"的视野不同。若想回到不裁切的全幅，把它改回 1.0。
+    static let preferredZoom: CGFloat = 2.0
 
     // MARK: 长焦档（★ 2026-10-18 订正：**只有 2× → 4× 两档**，不做阶梯）
 
@@ -88,8 +85,8 @@ final class QRScannerModel: NSObject, ObservableObject {
     ///     `stringValue == nil`（= 看到码、解不出）。**画面里没码时什么都不做**。
     ///   ➜ 换档必须走 `rampZoom`（线性渐变），不许直接设 `videoZoomFactor = 4`
     ///     —— 那是瞬间跳变（用户嫌「生硬」）。
-    // ★ 2026-10-22：原来是 4×，视野太窄；改成 2× 与"苹果相机 2×"体感接近。
-    static let teleZoom: CGFloat = 2.0
+    // ★ 2026-10-22：默认档已改成 2×，长焦档相应提到 **4×**（否则双击没变化）。
+    static let teleZoom: CGFloat = 4.0
 
     /// 当前是否处于长焦档（4×）—— UI 用它显示当前倍率。
     ///
@@ -756,18 +753,22 @@ struct ScanView: View {
         // ① 康普茶一发标签 → 进二发
         if var first = LabelTemplate.parseKombuchaQr(code) {
             // 扫到的物料同样进「效期管理」；同一条码重复扫会按 qrText 合并
-            ExpiryStore.shared.add(
-                LabelRecord(title: first.title,
-                            kind: .kombucha,
-                            maker: first.maker,
-                            createdAt: Date(),
-                            printedAt: nil,
-                            expireAt: first.finished,
-                            bestBefore: first.bestBefore,
-                            usedAt: nil,
-                            qrText: code,
-                            source: .scanned)
-            )
+            // ★ 同上：库里已有同码记录（比如刚打的一发）就不要 add ——
+            //   `add` 会按 `qrText` 合并并**整体覆盖**，把原来的 `printedAt` / `isPrepared` 冲掉。
+            if !ExpiryStore.shared.records.contains(where: { $0.qrText == code }) {
+                ExpiryStore.shared.add(
+                    LabelRecord(title: first.title,
+                                kind: .kombucha,
+                                maker: first.maker,
+                                createdAt: Date(),
+                                printedAt: nil,
+                                expireAt: first.finished,
+                                bestBefore: first.bestBefore,
+                                usedAt: nil,
+                                qrText: code,
+                                source: .scanned)
+                )
+            }
             // ★ 2026-10-17（用户功能 2）：把**二维码原文**带上 ——
             //   二发页的「原材料是否用完」靠它在效期管理里定位这条一发记录
             //   （上面 add 用的就是同一个 `code`，所以 `qrText == sourceQR`）。
@@ -787,18 +788,28 @@ struct ScanView: View {
             if let parsed = LabelTemplate.parseCustomQr(code),
                let template = matchSecondaryTemplate(title: parsed.title) {
                 // 和康普茶一致：扫到的标签也进「效期管理」。
-                ExpiryStore.shared.add(
-                    LabelRecord(title: parsed.title,
-                                kind: .generic,
-                                maker: "",
-                                createdAt: Date(),
-                                printedAt: nil,
-                                expireAt: parsed.bestBefore,
-                                bestBefore: parsed.bestBefore,
-                                usedAt: nil,
-                                qrText: code,
-                                source: .scanned)
-                )
+                // ★★★ 2026-10-22（用户）：「**有问题的是被扫的那个标签**」——
+                //   真因在 `ExpiryStore.add`：它按 `qrText` **合并**记录 ——
+                //   扫码时如果原材料（之前打印的那条）已经在库里，就会被这条新记录**整体覆盖**：
+                //   `expireAt`（完成时间）→ 变成最佳使用时间、`isPrepared` → false、
+                //   `source` → 已扫码、`printedAt` → nil。用户看到的就是"被扫的标签变了"。
+                //   ➜ 扫码**只做识别**，库里已有同码记录时**不要 add**（不新增也不覆盖）。
+                let alreadyExists = ExpiryStore.shared.records.contains { $0.qrText == code }
+                if !alreadyExists {
+                    ExpiryStore.shared.add(
+                        LabelRecord(title: parsed.title,
+                                    kind: .generic,
+                                    maker: "",
+                                    createdAt: Date(),
+                                    printedAt: nil,
+                                    expireAt: parsed.completedAt ?? parsed.expireAt ?? parsed.bestBefore,
+                                    bestBefore: parsed.bestBefore,
+                                    usedAt: nil,
+                                    qrText: code,
+                                    source: .scanned,
+                                    isPrepared: parsed.completedAt != nil)
+                    )
+                }
                 path.append(ScanRoute.customSecondary(templateID: template.id,
                                                       sourceTitle: parsed.title,
                                                       sourceBest: parsed.bestBefore,

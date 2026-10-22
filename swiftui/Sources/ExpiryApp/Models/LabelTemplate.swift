@@ -390,7 +390,8 @@ enum LabelTemplate {
     ///   `冷冻-猪肉-五花肉开封时间：2026/10/19 10:00原始保质期：2026/10/24 10:00最佳使用时间：2026/10/24 10:00`
     /// ★ 2026-10-20（用户）：「开启扫码功能的模板**不应该有原始保质期，应该是承接扫到的码的原始信息**」
     ///   ➜ 解析结果加上 `expireAt`（原始保质期）。
-    static func parseCustomQr(_ raw: String) -> (title: String, bestBefore: Date, expireAt: Date?)? {
+    static func parseCustomQr(_ raw: String)
+        -> (title: String, bestBefore: Date, expireAt: Date?, completedAt: Date?)? {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.utf8.count <= maxQrBytes else { return nil }
 
@@ -428,7 +429,18 @@ enum LabelTemplate {
             expireAt = parseDate(seg)
         }
 
-        return (title, date, expireAt)
+        // ★★★ 2026-10-22（用户）：「**完成时间被改成原始保质期了**」——
+        //   制备型标签没有「原始保质期」这一行，只有「完成时间」。
+        //   原来只解析原始保质期 → 完成时间丢失 → 记录被当成普通效期（显示"原始保质期"）。
+        //   ➜ 补上「完成时间」的解析。
+        var completedAt: Date?
+        if let r = text.range(of: "完成时间：") {
+            let after = text[r.upperBound...]
+            let seg = after.prefix(while: { !"最制解原开".contains($0) })
+            completedAt = parseDate(seg)
+        }
+
+        return (title, date, expireAt, completedAt)
     }
 
     static func buildKombuchaFirst(variety: String, now: Date, maker: String) -> LabelData {

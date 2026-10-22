@@ -166,7 +166,16 @@ struct TemplatesTab: View {
     private static func loadOrder() -> [TemplateRoute] {
         // 首次启动预置「重写」版模板（和内置并存）。
         CustomTemplateStore.seedPresetsIfNeeded()
-        let hidden = Set(Prefs.hiddenTemplates)
+
+        // ★★★ 2026-10-22（用户）：「我是说系统以前写的，**"通用模板、康普茶、奶制品、肉类"这四个，删除**」
+        //   ➜ 这 4 个内置模板**不再出现在列表里**（代码保留，记录/历史仍能正确解析）。
+        //     首次启动时顺手把它们写进 `hiddenTemplates`，避免旧安装里残留的 key 回来。
+        var hidden = Set(Prefs.hiddenTemplates)
+        let builtinKeys = TemplateRoute.allCases.map(\.key)
+        if !builtinKeys.allSatisfy({ hidden.contains($0) }) {
+            builtinKeys.forEach { hidden.insert($0) }
+            Prefs.hiddenTemplates = Array(hidden)
+        }
         // ★★★ 2026-10-19（用户截图发现）：出现好几个「已删除的模板」磁贴。
         //   根因：模板删掉后 `Prefs.templateOrder` 里还留着 `custom:<uuid>`，
         //   `from(key:)` 又能解析回来 → 变成**幽灵磁贴**（标题兜底成"已删除的模板"）。
@@ -180,9 +189,8 @@ struct TemplatesTab: View {
                 return route
             }
             .filter { !hidden.contains($0.key) }
-        // 内置 4 个里缺的补上。
-        let missingBuiltin = TemplateRoute.allCases
-            .filter { !saved.contains($0) && !hidden.contains($0.key) }
+        // ★ 内置 4 个**不再补回**（用户已要求删除）。
+        let missingBuiltin: [TemplateRoute] = []
         // ★ 自定义模板也要补进来（新建的要出现在末尾，且能和内置一起拖/固定）。
         let customs = CustomTemplateStore.all.map { TemplateRoute.custom($0.id) }
         let missingCustom = customs
