@@ -81,6 +81,8 @@ struct TileGrid: UIViewRepresentable {
         private var appliedPinned: [String] = []
         private var appliedDeleting = false
         private var appliedEditing = false
+        /// 刚刚发生过拖放落位 —— 下一次 `apply` 改走"无 diff 同步"。
+        private var dropJustHappened = false
 
         init(_ parent: TileGrid) {
             self.parent = parent
@@ -109,9 +111,37 @@ struct TileGrid: UIViewRepresentable {
             dataSource = source
         }
 
+        /// ★ 2026-10-22：拖动落位后**只同步数据、不做 diff**。
+        ///   原因：`endInteractiveMovement()` 已经由系统把 cell 移到新位置（视觉定稿），
+        ///   而此刻 `dataSource` 的 snapshot 仍是旧顺序。此时再 `apply` 一个新 snapshot，
+        ///   等于让 diff 去对比"一个已经变过的布局 + 一份旧数据"，结果必然错位。
+        ///   ➜ 用 `applySnapshotUsingReloadData`：刷新数据、**不重算 diff、不播动画**，
+        ///     视觉完全留给系统那次落位动画。
+        func syncAfterDrop(order: [TemplateRoute]) {
+            guard dataSource != nil else { return }
+            appliedKeys = order.map(\.key)
+            appliedPinned = parent.pinnedKeys
+            appliedDeleting = parent.deletingMode
+            appliedEditing = parent.editingMode
+
+            var snapshot = NSDiffableDataSourceSnapshot<String, TemplateRoute>()
+            snapshot.appendSections(["main"])
+            snapshot.appendItems(order, toSection: "main")
+            dataSource.applySnapshotUsingReloadData(snapshot)
+        }
+
         /// ★ DiffableDataSource 的核心：给快照，系统自己 diff + 播放动画。
         func apply(order: [TemplateRoute], animated: Bool) {
             guard let cv = collectionView, dataSource != nil else { return }
+
+            // ★ 拖动刚落位：系统已经把 cell 移好，这里**只同步数据、不做 diff**。
+            if dropJustHappened {
+                dropJustHappened = false
+                DebugLog.drag("apply -> syncAfterDrop(no diff)")
+                syncAfterDrop(order: order)
+                return
+            }
+
             let keys = order.map(\.key)
             let orderUnchanged = appliedKeys == keys
 
@@ -228,6 +258,7 @@ final class TileDataSource: UICollectionViewDiffableDataSource<String, TemplateR
         DebugLog.drag("moveItemAt src=\(source.item) dest=\(destination.item) "
                       + "usedTarget=\(targetIndex.map(String.init) ?? "nil")")
         guard let target = targetIndex else { return }
+        dropJustHappened = true
         onMove?(source.item, target)
     }
 }
