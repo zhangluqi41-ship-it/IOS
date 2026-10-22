@@ -140,19 +140,31 @@ struct CustomTemplatePage: View {
             }
 
             Section {
-                // ★ 二次制备：原始保质期承接原标签，不让改。
-                LabelDatePicker(title: "原始保质期", date: $expireDate)
-                    .disabled(usesSourceExpire)
-                if !usesSourceExpire {
-                    QuickDateChips(selection: $expireDate)
+                // ★★★ 2026-10-22（用户）：「**开启制备功能但是没有完成时间，却有原始保质期**。
+                //   系统存的也有问题，逻辑都是乱的」——
+                //   制备模式的第一栏本来就该是**完成时间**（现在 + 制备天数），
+                //   不是"原始保质期"。而且它由模板天数算出，不该让用户改。
+                if template.usePrep {
+                    LabelDatePicker(title: "完成时间", date: .constant(completionDate))
+                        .disabled(true)
+                } else {
+                    // 二次制备：原始保质期承接原标签，不让改。
+                    LabelDatePicker(title: "原始保质期", date: $expireDate)
+                        .disabled(usesSourceExpire)
+                    if !usesSourceExpire {
+                        QuickDateChips(selection: $expireDate)
+                    }
                 }
 
                 LabelDatePicker(title: "最佳使用时间", date: $bestDate)
                 QuickDateChips(selection: $bestDate)
 
-                // 只有真的算出天数才显示这一行（没选品类时完全不占位）。
-                if usesSourceExpire {
-                    // ★ 二次制备：原始保质期承接原标签。
+                if template.usePrep {
+                    Text("完成时间 = 现在 + \(template.prepDays) 天（制备天数）；"
+                         + "最佳使用时间按「最佳天数」自动填写，可手动改。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else if usesSourceExpire {
                     Text("二次制备：原始保质期承接原标签，不可修改。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -187,6 +199,15 @@ struct CustomTemplatePage: View {
             //   这里主动算一次，否则点打印会弹"请先输入物料名称"。
             if title.isEmpty {
                 title = makeTitle(chain: chosenChain())
+            }
+            // ★★★ 2026-10-22（用户）：「新解冻制备功能开启，**最佳使用时间应该是 +3 天，
+            //   这里只 +1 天**」——
+            //   真因：`bestDate` 的初始值是 `Date()`（此刻），而 `syncFromSelection`
+            //   只在 `onChange(of: selections)` 触发；二次制备从扫码直接进来、**没有选择动作**
+            //   → `bestDate` 一直停在"此刻"，等于 +0 天。
+            //   ➜ 进页面时按「最佳天数」补算一次（制备天数只用于「完成时间」）。
+            if let days = appliedBestDays, days > 0, bestDate <= Date().addingTimeInterval(60) {
+                bestDate = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? bestDate
             }
         }
         .alert(template.nodes.isEmpty ? "请先输入物料名称" : "请先选择品类",
@@ -397,6 +418,13 @@ struct CustomTemplatePage: View {
         return source.titleSeparator
     }
 
+    /// 完成时间 = 现在 + 制备天数（制备模式专用）。
+    private var completionDate: Date {
+        Calendar.current.date(byAdding: .day,
+                              value: max(1, template.prepDays),
+                              to: Date()) ?? Date()
+    }
+
     /// `yyyy/MM/dd HH:mm`，给"扫到的标签"那三行用。
     static func dateText(_ date: Date) -> String {
         let f = DateFormatter()
@@ -469,8 +497,10 @@ struct CustomTemplatePage: View {
             data = LabelTemplate.buildCustomSecondary(sourceTitle: sourceTitle,
                                                       suffix: title,
                                                       now: now,
-                                                      doneDays: template.defaultDays ?? 3,
+                                                      doneDays: template.usePrep ? template.prepDays
+                                                                                 : (template.defaultDays ?? 3),
                                                       sourceBestBefore: sourceBest,
+                                                      bestDays: template.defaultDays ?? 0,
                                                       maker: makerFinal)
         } else if template.usePrep {
             // 完成天数复用模板级「建议天数」（没设就按 3 天）。

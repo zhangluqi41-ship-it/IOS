@@ -107,10 +107,17 @@ struct TileGrid: UIViewRepresentable {
             guard let cv = collectionView, dataSource != nil else { return }
             let keys = order.map(\.key)
             let orderUnchanged = appliedKeys == keys
-            let sameContent = orderUnchanged
-                && appliedPinned == parent.pinnedKeys
-                && appliedDeleting == parent.deletingMode
-                && appliedEditing == parent.editingMode
+
+            // ★★★ 2026-10-22（用户两次报「编辑和删除**依然用不了**」）——
+            //   ⚠️ 上一版把 `modeChanged` 写在**赋值之后**：
+            //     appliedEditing = parent.editingMode   // 先更新
+            //     let modeChanged = appliedEditing != parent.editingMode   // 永远 false ✗
+            //   → `reconfigureItems` 一次都没执行过。**先算，再存。**
+            let modeChanged = appliedDeleting != parent.deletingMode
+                || appliedEditing != parent.editingMode
+                || appliedPinned != parent.pinnedKeys
+
+            let sameContent = orderUnchanged && !modeChanged
             if sameContent && !appliedKeys.isEmpty { return }
 
             appliedKeys = keys
@@ -122,16 +129,8 @@ struct TileGrid: UIViewRepresentable {
             snapshot.appendSections(["main"])
             snapshot.appendItems(order, toSection: "main")
 
-            // ★★★ 2026-10-22（用户报：「编辑模板页面**只能编辑、删除隐藏的模板**，
-            //   正常的普通模板也编辑不了了」）——
-            //   真因：`apply` 只会给**新增/删除/移动**的 item 重跑 cellProvider。
-            //   进入编辑模式时 `order` 没变（只是 `visibleOrder` 多了两个隐藏模板），
-            //   于是**原有磁贴完全不会重新 configure** → 只有新插入的那两个带绿加号，
-            //   其余还停在"图钉"外观。
-            //   ➜ 模式 / 固定状态变了，就**无条件 reconfigure 全部 item**。
-            let modeChanged = appliedDeleting != parent.deletingMode
-                || appliedEditing != parent.editingMode
-                || appliedPinned != parent.pinnedKeys
+            // 模式（编辑 / 删除）或固定状态变了 → **无条件全量重配**，
+            // 否则 Diffable 认为"数据没变"，原有磁贴的按钮不会更新。
             if modeChanged, !order.isEmpty {
                 snapshot.reconfigureItems(order)
             }

@@ -232,14 +232,11 @@ struct TemplatesTab: View {
         // ★ 2026-10-21：固定项锁死在原位 —— 拖到它身上就放弃这次移动（不挤开它）。
         guard !pinnedKeys.contains(visible[to].key) else { return }
 
-        // ★★★ 2026-10-22（用户）：「模板移动了之后，**不是到原位，而是跑到了他后面一位**」
-        //   真因：`beginInteractiveMovement` 给的 `destination` 是"**插到该位置之前**"，
-        //   而我先 `remove(at: from)` 再 `insert(at: to)` —— 当 `from < to` 时，
-        //   移除后目标下标整体前移了 1，等于插到了目标**后面**一位。
-        //   ➜ `from < to` 时目标下标要 **-1**。
-        let item = order.remove(at: realFrom)
-        let insertAt = realFrom < realTo ? realTo - 1 : realTo
-        order.insert(item, at: max(0, min(insertAt, order.count)))
+        // ★★★ 2026-10-22（用户两次报落位不对）：「不是到原位，而是跑到了他后面一位」→「**还是不对**」。
+        //   手算 `to - 1` 太容易错，而且 `visibleOrder` 过滤掉隐藏模板后下标还会错位。
+        //   ➜ 改用 **Swift 标准库 `move(fromOffsets:toOffset:)`**：
+        //     `toOffset` 的语义就是"**移除之前**的目标下标"，偏移由它内部处理，不会再差一格。
+        order.move(fromOffsets: IndexSet(integer: realFrom), toOffset: realTo)
         Prefs.templateOrder = order.map(\.key)
     }
 

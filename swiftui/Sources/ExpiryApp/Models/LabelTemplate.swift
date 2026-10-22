@@ -334,11 +334,20 @@ enum LabelTemplate {
     ///   完成 = **扫描时刻 + `doneDays`**，最佳使用时间**沿用原标签**（和康普茶二发一致）。
     static func buildCustomSecondary(sourceTitle: String, suffix: String, now: Date,
                                      doneDays: Int, sourceBestBefore: Date,
+                                     bestDays: Int = 0,
                                      maker: String) -> LabelData {
         let done = AppCalendar.shared.date(byAdding: .day,
                                            value: max(1, doneDays), to: now) ?? now
-        // ★ 用户：「**包括二次扫描之后**」—— 最佳同样不能晚于完成时间。
-        let best = min(sourceBestBefore, done)
+        // ★★★ 2026-10-22（用户）：「新解冻制备功能开启，**最佳使用时间应该是 +3 天，这里只 +1 天**」
+        //   ➜ 最佳使用时间**按模板的「最佳天数」重新算**（现在 + bestDays），
+        //     不再"承接原标签"（那是"原始保质期"的职责）。
+        //     `bestDays <= 0` 时才退回原来的 min(原标签最佳, 完成时间)。
+        let best: Date
+        if bestDays > 0 {
+            best = AppCalendar.shared.date(byAdding: .day, value: bestDays, to: now) ?? now
+        } else {
+            best = min(sourceBestBefore, done)
+        }
         // ★★★ 2026-10-21（用户报：「只写了第一层，**没有引用原模板**，但是它**还是加上了原模板的
         //   "新康普茶红茶"这一块**」）——
         //   真因：这里把标题拼成了 `原标签标题-当前标题`（`新康普茶-红茶` + `-` + `新康普茶-葡萄`）。
