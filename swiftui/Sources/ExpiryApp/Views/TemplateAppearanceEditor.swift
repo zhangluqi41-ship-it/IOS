@@ -116,10 +116,11 @@ struct TemplateAppearanceEditor: View {
                     in: RoundedRectangle(cornerRadius: 14))
     }
 
-    /// 一排色点（选中的带描边 + 对勾）。
+    /// 一排色点（选中的带描边 + 对勾）+ **系统调色盘**。
     @ViewBuilder
     private func colorRow(selection: Binding<String>) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
+        VStack(spacing: 12) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
             ForEach(CustomTemplate.colorChoices, id: \.self) { name in
                 Button {
                     selection.wrappedValue = name
@@ -144,17 +145,56 @@ struct TemplateAppearanceEditor: View {
                 }
                 .buttonStyle(.plain)
             }
+            }
+
+            // ★★★ 2026-10-22（用户）：「再加一个**调色盘功能**」——
+            //   系统 `ColorPicker` 选任意颜色，存成 `#RRGGBB`（`CustomTemplate.color(named:)` 已支持解析）。
+            ColorPicker("自定义颜色",
+                        selection: Binding(
+                            get: { CustomTemplate.color(named: selection.wrappedValue) },
+                            set: { newValue in
+                                if let hex = Self.hexString(from: newValue) {
+                                    selection.wrappedValue = hex
+                                }
+                            }
+                        ),
+                        supportsOpacity: false)
+                .font(.subheadline)
         }
         .padding(.vertical, 4)
     }
 
-    /// 40 个可选图标（5 行 × 8）。
+    /// `Color` → `#RRGGBB`（用 UIColor 取分量，避免依赖平台差异）。
+    static func hexString(from color: Color) -> String? {
+        let ui = UIColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard ui.getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
+        return String(format: "#%02X%02X%02X",
+                      Int(round(r * 255)), Int(round(g * 255)), Int(round(b * 255)))
+    }
+
+    /// ★★★ 2026-10-22（用户）：「**图标能否增加全一些**」→ 40 → **88 个**（11 行 × 8）。
     static let iconChoices = [
+        // 原有 40
         "square.grid.2x2", "shippingbox", "drop", "leaf", "flame", "snowflake",
         "cup.and.saucer", "carrot", "fish", "birthday.cake", "fork.knife", "barcode",
         "thermometer", "clock", "tag", "bag", "cart", "archivebox", "tray", "cylinder",
         "cube", "square.stack", "mug", "wineglass", "basket", "heart", "star", "bolt",
         "sparkles", "square.grid.3x3", "circle.hexagongrid", "doc.text", "checklist",
         "bookmark", "flag", "paintpalette", "scissors", "wrench", "hammer", "takeoutbag.and.cup.and.straw",
+        // 食物 / 饮品（.fill 变体）
+        "cup.and.saucer.fill", "wineglass.fill", "mug.fill", "carrot.fill",
+        "leaf.fill", "fish.fill", "birthday.cake.fill", "takeoutbag.and.cup.and.straw.fill",
+        // 食材 / 农业
+        "tree", "camera.macro", "tortoise", "bird", "lizard",
+        // 时间 / 计量
+        "timer", "hourglass", "calendar", "alarm", "stopwatch",
+        "gauge", "ruler", "scalemass", "chart.bar", "chart.pie",
+        // 包装 / 工具
+        "box.truck", "shippingbox.fill", "cart.fill", "basket.fill",
+        "printer", "qrcode", "barcode.viewfinder", "doc.viewfinder", "folder",
+        // 标记 / 其他
+        "pin", "mappin", "location", "house", "building.2",
+        "wrench.and.screwdriver", "paintbrush", "highlighter", "pencil", "square.and.pencil",
     ]
 }

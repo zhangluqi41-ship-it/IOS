@@ -99,13 +99,25 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     var leafCount: Int { nodes.reduce(0) { $0 + $1.leafCount } }
 
     /// 可选颜色（名字 → 系统色）。
+    // ★★★ 2026-10-22（用户）：「**颜色能不能多一些，再加一个调色盘功能**」
+    //   ➜ 系统色 15 → **27 个**（补足各色阶）；另外支持 **`#RRGGBB`** 自定义色，
+    //     由编辑页的 `ColorPicker`（系统调色盘）写入。
     static let colorChoices = [
-        "blue", "green", "orange", "red", "purple",
-        "pink", "teal", "indigo", "brown", "gray",
-        "yellow", "mint", "cyan", "white", "black",
+        "blue", "green", "orange", "red", "purple", "pink", "teal", "indigo",
+        "brown", "gray", "yellow", "mint", "cyan", "white", "black",
+        "accentColor", "secondary", "primary",
+        "#FF6B35", "#F7931E", "#FFD23F", "#06D6A0",
+        "#118AB2", "#073B4C", "#7209B7", "#F72585", "#B5179E",
     ]
 
     static func color(named name: String) -> Color {
+        // 自定义色（调色盘写入）：#RRGGBB
+        if name.hasPrefix("#"), name.count == 7,
+           let value = UInt32(name.dropFirst(), radix: 16) {
+            return Color(red: Double((value >> 16) & 0xFF) / 255.0,
+                         green: Double((value >> 8) & 0xFF) / 255.0,
+                         blue: Double(value & 0xFF) / 255.0)
+        }
         switch name {
         case "blue": return .blue
         case "green": return .green
@@ -122,6 +134,9 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
         case "cyan": return .cyan
         case "white": return .white
         case "black": return .black
+        case "accentColor": return .accentColor
+        case "secondary": return .secondary
+        case "primary": return .primary
         default: return .accentColor
         }
     }

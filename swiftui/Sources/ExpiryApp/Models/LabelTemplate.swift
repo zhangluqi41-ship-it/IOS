@@ -436,7 +436,9 @@ enum LabelTemplate {
         var completedAt: Date?
         if let r = text.range(of: "完成时间：") {
             let after = text[r.upperBound...]
-            let seg = after.prefix(while: { !"最制解原开".contains($0) })
+            // ⚠️ `prefix(while:)` 返回 `Substring`，`parseDate` 要 `String`，必须显式转换。
+            let seg = String(after.prefix(while: { !"最制解原开".contains($0) }))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             completedAt = parseDate(seg)
         }
 
