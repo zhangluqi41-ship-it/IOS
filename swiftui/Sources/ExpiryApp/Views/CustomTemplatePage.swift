@@ -148,16 +148,20 @@ struct CustomTemplatePage: View {
                     LabelDatePicker(title: "完成时间", date: .constant(completionDate))
                         .disabled(true)
                 } else {
-                    // 二次制备：原始保质期承接原标签，不让改。
+                    // 二次制备 / 无保质期：原始保质期不允许改。
                     LabelDatePicker(title: "原始保质期", date: $expireDate)
-                        .disabled(usesSourceExpire)
-                    if !usesSourceExpire {
+                        .disabled(usesSourceExpire || isNoExpiry)
+                    if !usesSourceExpire && !isNoExpiry {
                         QuickDateChips(selection: $expireDate)
                     }
                 }
 
+                // ★ 无保质期时，最佳使用时间也固定为 2099/12/31（不可改）。
                 LabelDatePicker(title: "最佳使用时间", date: $bestDate)
-                QuickDateChips(selection: $bestDate)
+                    .disabled(isNoExpiry)
+                if !isNoExpiry {
+                    QuickDateChips(selection: $bestDate)
+                }
 
                 if template.usePrep {
                     Text("完成时间 = 现在 + \(template.prepDays) 天（制备天数）；"
@@ -206,14 +210,28 @@ struct CustomTemplatePage: View {
             //   只在 `onChange(of: selections)` 触发；二次制备从扫码直接进来、**没有选择动作**
             //   → `bestDate` 一直停在"此刻"，等于 +0 天。
             //   ➜ 进页面时按「最佳天数」补算一次（制备天数只用于「完成时间」）。
-            // ★ 二次制备且模板**没设最佳天数** → 承接原标签的最佳使用时间。
-            if template.useSecondary, template.defaultDays == nil,
-               let sourceBest = scannedBestBefore,
-               bestDate <= Date().addingTimeInterval(60) {
+            // ★★★ 2026-10-22（用户）：「这里我选择了**无保质期**，那它保质期**应该是 2099年12月31日**」
+            //   之前 `resolvedExpireDate` 只在点「按推荐填日期」时才调用，
+            //   直接进页面（没点按钮）两个日期都停在"此刻" → 显示成今天。
+            //   ➜ 进页面就按模板配置补算：无保质期 → 两个日期都置为 2099/12/31。
+            if isNoExpiry {
+                let far = Self.farFutureDate
+                if bestDate <= Date().addingTimeInterval(60) { bestDate = far }
+                expireDate = far
+            } else if template.useSecondary, template.defaultDays == nil,
+                      let sourceBest = scannedBestBefore,
+                      bestDate <= Date().addingTimeInterval(60) {
+                // 二次制备且模板**没设最佳天数** → 承接原标签。
                 bestDate = sourceBest
+                expireDate = resolvedExpireDate(fallback: sourceBest)
             } else if let days = appliedBestDays, days > 0,
                       bestDate <= Date().addingTimeInterval(60) {
-                bestDate = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? bestDate
+                let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? bestDate
+                bestDate = due
+                expireDate = resolvedExpireDate(fallback: due)
+            } else if bestDate <= Date().addingTimeInterval(60) {
+                // 什么都不设（既不设最佳、也无原始保质期）→ 原始保质期跟着最佳走。
+                expireDate = resolvedExpireDate(fallback: bestDate)
             }
         }
         .alert(template.nodes.isEmpty ? "请先输入物料名称" : "请先选择品类",

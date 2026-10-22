@@ -114,11 +114,13 @@ struct TileGrid: UIViewRepresentable {
             dataSource = source
         }
 
-        /// ★★★ 2026-10-22（用户）：「移动后松手，**瞬间落在位置上，没有动画了**。用第一方工具」——
-        ///   上一版用 `applySnapshotUsingReloadData`（reloadData）确实**没有动画**，
-        ///   它会直接把所有 cell 摆到最终位置、覆盖掉系统那次落位动画。
-        ///   ➜ 改回第一方的 `apply(_:animatingDifferences: true)`：
-        ///     由 `UICollectionViewDiffableDataSource` 自己播移动动画。
+        /// ★ 2026-10-22 三次实测后的最终结论：
+        ///   · `applySnapshotUsingReloadData`（reloadData）→ 落位**对**，但**打断系统动画**（瞬间落下）；
+        ///   · `apply(animatingDifferences: true)` → 有动画，但会在系统已移过的布局上**再移一次**
+        ///     → 落位**跑到后一位**（用户本次反馈）。
+        ///   ➜ 正解：`apply(animatingDifferences: **false**)`。
+        ///     它**只更新数据、不重置布局、不播自己的动画** ——
+        ///     视觉完全由 `endInteractiveMovement()` 那次系统动画负责，两者不再打架。
         func syncAfterDrop(order: [TemplateRoute]) {
             guard dataSource != nil else { return }
             appliedKeys = order.map(\.key)
@@ -129,7 +131,7 @@ struct TileGrid: UIViewRepresentable {
             var snapshot = NSDiffableDataSourceSnapshot<String, TemplateRoute>()
             snapshot.appendSections(["main"])
             snapshot.appendItems(order, toSection: "main")
-            dataSource.apply(snapshot, animatingDifferences: true)
+            dataSource.apply(snapshot, animatingDifferences: false)
         }
 
         /// ★ DiffableDataSource 的核心：给快照，系统自己 diff + 播放动画。
