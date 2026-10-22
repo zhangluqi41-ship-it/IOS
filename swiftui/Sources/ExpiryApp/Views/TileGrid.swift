@@ -108,6 +108,9 @@ struct TileGrid: UIViewRepresentable {
             source.onMove = { [weak self] from, to in
                 self?.parent.onMove(from, to)
             }
+            source.onDropLanded = { [weak self] in
+                self?.dropJustHappened = true
+            }
             dataSource = source
         }
 
@@ -249,6 +252,8 @@ final class TileDataSource: UICollectionViewDiffableDataSource<String, TemplateR
     var onMove: ((Int, Int) -> Void)?
     /// 由 Coordinator 写入：手指最终压到的格子下标。
     var targetIndex: Int?
+    /// 由 Coordinator 写入：落位即将发生 → 通知它下一次 apply 走"无 diff 同步"。
+    var onDropLanded: (() -> Void)?
 
     override func collectionView(_ cv: UICollectionView,
                                  moveItemAt source: IndexPath,
@@ -258,7 +263,7 @@ final class TileDataSource: UICollectionViewDiffableDataSource<String, TemplateR
         DebugLog.drag("moveItemAt src=\(source.item) dest=\(destination.item) "
                       + "usedTarget=\(targetIndex.map(String.init) ?? "nil")")
         guard let target = targetIndex else { return }
-        dropJustHappened = true
+        onDropLanded?()
         onMove?(source.item, target)
     }
 }
