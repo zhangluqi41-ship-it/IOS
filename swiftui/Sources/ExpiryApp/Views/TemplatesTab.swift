@@ -237,16 +237,13 @@ struct TemplatesTab: View {
         // ★ 2026-10-21：固定项锁死在原位 —— 拖到它身上就放弃这次移动（不挤开它）。
         guard !pinnedKeys.contains(visible[to].key) else { return }
 
-        // ★★★ 2026-10-22 深层排查结论（对照官方文档 + 用户三次实测）：
-        //   官方说 `destinationIndexPath` 是 "The new index path of the item"（移动后的位置），
-        //   但用户实测「**跑到了他后面一位**」→ 系统实际给的是**被落到那个格子的下标**，
-        //   两者在"往后拖"时差 1。
-        //   推导：`[A,B,C,D]` 把 A 拖到 C 上
-        //     · 系统给 destination = 2（C 的位置）
-        //     · 期望结果 [B,A,C,D]（A 占 C 的原位，C 后移）→ A 最终 index = 1
-        //     · `move(fromOffsets:[0], toOffset: 1)` 才能得到 [B,A,C,D]
-        //   ➜ 往后拖：`toOffset = realTo - 1`；往前拖：`toOffset = realTo`。
-        let toOffset = realFrom < realTo ? realTo - 1 : realTo
+        // ★★★ 2026-10-22 最终定论（**用手机实测日志反推出来的**，不是猜的）：
+        //   日志案例 `from=0, to=3`（往后拖）：
+        //     期望  [2099, 00E0, **dairy**, generic, ...]
+        //     实际  [2099, **dairy**, 00E0, generic, ...]   ← 少走一格
+        //   ➜ **`toOffset` 直接等于 `targetIndex`，不需要 ±1**。
+        //   反例 `from=5, to=3`（往前拖）用同样的值正好对。
+        let toOffset = realTo
         order.move(fromOffsets: IndexSet(integer: realFrom), toOffset: toOffset)
         DebugLog.drag("  realFrom=\(realFrom) realTo=\(realTo) toOffset=\(toOffset) "
                       + "after=\(order.map(\.key))")
