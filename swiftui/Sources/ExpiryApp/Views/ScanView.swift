@@ -67,7 +67,13 @@ final class QRScannerModel: NSObject, ObservableObject {
     ///   2 倍有两个好处：
     ///     ① 二维码在画面里更大 → 每个模块占更多像素 → 解码更快更稳；
     ///     ② 走的是长焦/裁切，景深与反差更好，对焦判定更干脆。
-    static let preferredZoom: CGFloat = 2.0
+    // ★★★ 2026-10-22（用户）：「**摄像头两边没焦**，我和苹果自带相机功能的**两倍变焦比一了，
+    //   你的要更大一些**，你的是两倍变焦吗？」
+    //   ➜ 真因：这里用的是 `builtInWideAngleCamera`（广角）+ `videoZoomFactor = 2.0`，
+    //     在广角上就是**裁切 2 倍**——画幅只有中间一半，两边自然"没焦"（其实是拍不到）。
+    //     苹果相机的 2× 是**物理长焦**，视野完全不同。
+    //   ➜ 改成 **1.0（不裁切）**，视野和苹果相机 1× 一致；双击才放大到 2×。
+    static let preferredZoom: CGFloat = 1.0
 
     // MARK: 长焦档（★ 2026-10-18 订正：**只有 2× → 4× 两档**，不做阶梯）
 
@@ -82,7 +88,8 @@ final class QRScannerModel: NSObject, ObservableObject {
     ///     `stringValue == nil`（= 看到码、解不出）。**画面里没码时什么都不做**。
     ///   ➜ 换档必须走 `rampZoom`（线性渐变），不许直接设 `videoZoomFactor = 4`
     ///     —— 那是瞬间跳变（用户嫌「生硬」）。
-    static let teleZoom: CGFloat = 4.0
+    // ★ 2026-10-22：原来是 4×，视野太窄；改成 2× 与"苹果相机 2×"体感接近。
+    static let teleZoom: CGFloat = 2.0
 
     /// 当前是否处于长焦档（4×）—— UI 用它显示当前倍率。
     ///
@@ -587,12 +594,12 @@ struct ScanView: View {
                 scanner.resume()
             }
             .onDisappear {
-                // ★★★ 2026-10-19（用户）：「摄像头还是要卡顿一下是怎么回事呢？」
-                //   ➜ 根因不是启动配置，而是**每次切走这个 tab 都会 `stop()` 关掉会话**，
-                //     切回来再 `startRunning()` —— 重启摄像头本身要 0.3~0.5 秒，就是那"一下"。
-                //   ➜ 改成：**切 tab 不停相机**（只关手电筒）；只在 App 进后台时停（见下面的 scenePhase）。
-                //     代价是不在扫码页时相机仍在采集（耗电略增），换来无卡顿。
+                // ★★★ 2026-10-22（用户）：「**点击他的页面的选项，会仍然是关注的，你的摄像头
+                //   是一直开启的，因为绿灯一直亮**」——
+                //   之前为了"切回来不卡顿"故意不停相机，代价是离开后绿灯常亮、耗电。
+                //   用户明确要求"**只有点击扫码功能之后才会启动**"→ 切走就停。
                 scanner.turnTorchOff()
+                scanner.stop()
             }
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
@@ -605,7 +612,9 @@ struct ScanView: View {
                 }
             }
             .onChange(of: path.count) { _, count in
-                if count == 0 { scanner.resume() }
+                // ★ 2026-10-22（用户）：「点击他的页面的选项，会仍然是关注的」——
+                //   进二级页（模板/详情）时也要关相机，绿灯才灭。
+                if count == 0 { scanner.resume() } else { scanner.stop() }
             }
             .onChange(of: scanner.lastCode) { _, code in
                 handle(code)

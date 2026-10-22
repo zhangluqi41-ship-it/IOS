@@ -121,8 +121,18 @@ struct TileGrid: UIViewRepresentable {
             var snapshot = NSDiffableDataSourceSnapshot<String, TemplateRoute>()
             snapshot.appendSections(["main"])
             snapshot.appendItems(order, toSection: "main")
-            // 顺序没变、只是固定/编辑/删除状态变了 → reconfigure 即可（不重建 cell、不闪）。
-            if orderUnchanged, !appliedKeys.isEmpty {
+
+            // ★★★ 2026-10-22（用户报：「编辑模板页面**只能编辑、删除隐藏的模板**，
+            //   正常的普通模板也编辑不了了」）——
+            //   真因：`apply` 只会给**新增/删除/移动**的 item 重跑 cellProvider。
+            //   进入编辑模式时 `order` 没变（只是 `visibleOrder` 多了两个隐藏模板），
+            //   于是**原有磁贴完全不会重新 configure** → 只有新插入的那两个带绿加号，
+            //   其余还停在"图钉"外观。
+            //   ➜ 模式 / 固定状态变了，就**无条件 reconfigure 全部 item**。
+            let modeChanged = appliedDeleting != parent.deletingMode
+                || appliedEditing != parent.editingMode
+                || appliedPinned != parent.pinnedKeys
+            if modeChanged, !order.isEmpty {
                 snapshot.reconfigureItems(order)
             }
             // ★★★ 2026-10-21（用户）：「**不是弹性，是动画不连贯**」——
