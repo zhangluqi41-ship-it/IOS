@@ -319,7 +319,8 @@ enum LabelTemplate {
             rows: [
                 LabelRow(label: "制备时间：", value: fmtDateTime(now)),
                 LabelRow(label: "完成时间：", value: fmtDateTime(done)),
-                LabelRow(label: "最佳使用时间：", value: fmtDateTime(bestBefore)),
+                // ★ 同上：用算好的 `best`，不用原始 `bestBefore`。
+                LabelRow(label: "最佳使用时间：", value: fmtDateTime(best)),
             ],
             weekdayCn: weekdayCn(now),
             weekdayEn: weekdayEn(now),
@@ -364,7 +365,10 @@ enum LabelTemplate {
             rows: [
                 LabelRow(label: "制备时间：", value: fmtDateTime(now)),
                 LabelRow(label: "完成时间：", value: fmtDateTime(done)),
-                LabelRow(label: "最佳使用时间：", value: fmtDateTime(sourceBestBefore)),
+                // ★★★ 2026-10-22（用户）：「**打印的时候最佳使用时间保留了前标签，这个是不对的**」
+                //   真因：上面刚算好的 `best`（按「最佳天数」重算）**没被用**，
+                //   这里写的是 `sourceBestBefore`（原标签的 11/21）→ 打印出来就是旧的。
+                LabelRow(label: "最佳使用时间：", value: fmtDateTime(best)),
             ],
             weekdayCn: weekdayCn(now),
             weekdayEn: weekdayEn(now),

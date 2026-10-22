@@ -69,6 +69,13 @@ struct TileGrid: UIViewRepresentable {
         weak var collectionView: UICollectionView?
         private var dataSource: TileDataSource!
 
+        /// ★ 2026-10-22：拖动中最后一帧的手指位置，以及据此算出的**目标格子下标**。
+        ///   为什么不用系统给的 `destination`：它到底是"最终位置"还是"被落到的格子"
+        ///   在 `beginInteractiveMovement` + `DiffableDataSource` 下前后对不上（实测差 1），
+        ///   而 `indexPathForItem(at:)` 的语义是**明确的**（这个点落在哪一格）。
+        private var lastDragLocation: CGPoint = .zero
+        private var pendingTarget: Int?
+
         /// 上一次应用的状态（没变就不 apply，避免拖动中反复重建）。
         private var appliedKeys: [String] = []
         private var appliedPinned: [String] = []
@@ -172,18 +179,26 @@ struct TileGrid: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
+                pendingTarget = nil
                 guard let indexPath = cv.indexPathForItem(at: location),
                       let route = dataSource.itemIdentifier(for: indexPath),
                       !parent.pinnedKeys.contains(route.key) else { return }
                 cv.beginInteractiveMovementForItem(at: indexPath)
             case .changed:
-                // ★ 2026-10-21 修：原来"手指经过固定项就 cancel"太激进 ——
-                //   只是路过一下整次拖动就被中断、卡片弹回。
-                //   ➜ 允许**越过**固定项继续拖；是否真的落到固定位，交给 moveItemAt 落位时判断。
+                lastDragLocation = location
+                // 顺手记下"手指现在压在哪一格"—— 这是**唯一语义明确**的目标位置来源。
+                if let idx = cv.indexPathForItem(at: location) {
+                    pendingTarget = idx.item
+                }
                 cv.updateInteractiveMovementTargetPosition(location)
             case .ended:
+                DebugLog.drag("ended: pendingTarget=\(pendingTarget.map(String.init) ?? "nil")")
+                // 交给 dataSource —— `moveItemAt` 会紧接着被调用（同一次 runloop）。
+                dataSource.targetIndex = pendingTarget
                 cv.endInteractiveMovement()
             default:
+                pendingTarget = nil
+                dataSource.targetIndex = nil
                 cv.cancelInteractiveMovement()
             }
         }
@@ -202,11 +217,18 @@ struct TileGrid: UIViewRepresentable {
 
 final class TileDataSource: UICollectionViewDiffableDataSource<String, TemplateRoute> {
     var onMove: ((Int, Int) -> Void)?
+    /// 由 Coordinator 写入：手指最终压到的格子下标。
+    var targetIndex: Int?
 
     override func collectionView(_ cv: UICollectionView,
                                  moveItemAt source: IndexPath,
                                  to destination: IndexPath) {
-        onMove?(source.item, destination.item)
+        // ★ 2026-10-22：**忽略 `destination`**（语义不可靠，见上），
+        //   用 Coordinator 在 `.ended` 前记录的 `targetIndex`（手指压到的格子）。
+        DebugLog.drag("moveItemAt src=\(source.item) dest=\(destination.item) "
+                      + "usedTarget=\(targetIndex.map(String.init) ?? "nil")")
+        guard let target = targetIndex else { return }
+        onMove?(source.item, target)
     }
 }
 

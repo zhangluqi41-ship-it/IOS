@@ -223,6 +223,11 @@ struct TemplatesTab: View {
         // ★★★ 2026-10-21（用户）：「**不要用你自己写的，还是只用苹果原生**」
         //   SwiftUI 的 `withAnimation` 对 `UIViewRepresentable` 包着的 UICollectionView **不生效**，
         //   留在这里只会让 `updateUIView` 多跑几次。动画完全交给 `dataSource.apply(animatingDifferences:)`。
+        // ★★★ 2026-10-22（用户：「移动的落位还是错的，**深层检查**」）——
+        //   不再猜 `beginInteractiveMovement` 的 `destination` 语义，**把实测数据写日志**。
+        //   复现一次后把 `/Documents/drag_debug.txt` 拉下来即可定位。
+        DebugLog.drag("move(from: \(from), to: \(to), visible=\(visibleOrder.map(\.key))")
+
         // Grid 给的是**可见列表**的下标，要映射回 `order` 的真实下标。
         let visible = visibleOrder
         guard visible.indices.contains(from), visible.indices.contains(to),
@@ -232,11 +237,19 @@ struct TemplatesTab: View {
         // ★ 2026-10-21：固定项锁死在原位 —— 拖到它身上就放弃这次移动（不挤开它）。
         guard !pinnedKeys.contains(visible[to].key) else { return }
 
-        // ★★★ 2026-10-22（用户两次报落位不对）：「不是到原位，而是跑到了他后面一位」→「**还是不对**」。
-        //   手算 `to - 1` 太容易错，而且 `visibleOrder` 过滤掉隐藏模板后下标还会错位。
-        //   ➜ 改用 **Swift 标准库 `move(fromOffsets:toOffset:)`**：
-        //     `toOffset` 的语义就是"**移除之前**的目标下标"，偏移由它内部处理，不会再差一格。
-        order.move(fromOffsets: IndexSet(integer: realFrom), toOffset: realTo)
+        // ★★★ 2026-10-22 深层排查结论（对照官方文档 + 用户三次实测）：
+        //   官方说 `destinationIndexPath` 是 "The new index path of the item"（移动后的位置），
+        //   但用户实测「**跑到了他后面一位**」→ 系统实际给的是**被落到那个格子的下标**，
+        //   两者在"往后拖"时差 1。
+        //   推导：`[A,B,C,D]` 把 A 拖到 C 上
+        //     · 系统给 destination = 2（C 的位置）
+        //     · 期望结果 [B,A,C,D]（A 占 C 的原位，C 后移）→ A 最终 index = 1
+        //     · `move(fromOffsets:[0], toOffset: 1)` 才能得到 [B,A,C,D]
+        //   ➜ 往后拖：`toOffset = realTo - 1`；往前拖：`toOffset = realTo`。
+        let toOffset = realFrom < realTo ? realTo - 1 : realTo
+        order.move(fromOffsets: IndexSet(integer: realFrom), toOffset: toOffset)
+        DebugLog.drag("  realFrom=\(realFrom) realTo=\(realTo) toOffset=\(toOffset) "
+                      + "after=\(order.map(\.key))")
         Prefs.templateOrder = order.map(\.key)
     }
 
