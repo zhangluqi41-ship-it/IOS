@@ -206,7 +206,13 @@ struct CustomTemplatePage: View {
             //   只在 `onChange(of: selections)` 触发；二次制备从扫码直接进来、**没有选择动作**
             //   → `bestDate` 一直停在"此刻"，等于 +0 天。
             //   ➜ 进页面时按「最佳天数」补算一次（制备天数只用于「完成时间」）。
-            if let days = appliedBestDays, days > 0, bestDate <= Date().addingTimeInterval(60) {
+            // ★ 二次制备且模板**没设最佳天数** → 承接原标签的最佳使用时间。
+            if template.useSecondary, template.defaultDays == nil,
+               let sourceBest = scannedBestBefore,
+               bestDate <= Date().addingTimeInterval(60) {
+                bestDate = sourceBest
+            } else if let days = appliedBestDays, days > 0,
+                      bestDate <= Date().addingTimeInterval(60) {
                 bestDate = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? bestDate
             }
         }
@@ -531,7 +537,11 @@ struct CustomTemplatePage: View {
             to: now
         ) ?? now
         let recordExpire = isPrep ? completion : expireDate
-        let recordBest = min(bestDate, expireDate)
+        // ★★★ 2026-10-22（用户截图：康普茶二发记录显示「今天到期」）——
+        //   制备型的「最佳使用时间」**可以晚于完成时间**（完成 +3 天、最佳 +31 天），
+        //   这里再套 `min` 会把它压回完成时间 → 记录被判成"今天到期"。
+        //   ➜ 制备型直接用 `bestDate` 本身；非制备型才取 min。
+        let recordBest = isPrep ? bestDate : min(bestDate, expireDate)
         let record = LabelTemplate.makeRecord(kind: .generic, data: data, createdAt: now,
                                               expireAt: recordExpire, bestBefore: recordBest,
                                               maker: makerFinal, isPrepared: isPrep)

@@ -351,7 +351,10 @@ enum LabelTemplate {
         if bestDays > 0 {
             best = AppCalendar.shared.date(byAdding: .day, value: bestDays, to: now) ?? now
         } else {
-            best = min(sourceBestBefore, done)
+            // ★★★ 2026-10-22（用户截图）：康普茶二发**没设最佳天数**时，
+            //   原来 `min(源最佳, 完成)` 把 11/22 压成 10/25（完成那天）→ 打印错。
+            //   ➜ 没设天数 = **完全承接原标签的最佳使用时间**，不做任何压缩。
+            best = sourceBestBefore
         }
         // ★★★ 2026-10-21（用户报：「只写了第一层，**没有引用原模板**，但是它**还是加上了原模板的
         //   "新康普茶红茶"这一块**」）——
