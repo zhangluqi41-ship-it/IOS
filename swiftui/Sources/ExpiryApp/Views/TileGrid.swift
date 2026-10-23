@@ -170,9 +170,13 @@ struct TileGrid: UIViewRepresentable {
             snapshot.appendSections(["main"])
             snapshot.appendItems(order, toSection: "main")
 
-            // 模式（编辑 / 删除）或固定状态变了 → **无条件全量重配**，
-            // 否则 Diffable 认为"数据没变"，原有磁贴的按钮不会更新。
-            if modeChanged, !order.isEmpty {
+            // ★★★ 2026-10-23（用户）：「点击编辑和删除，**只能编辑那两个需要扫码的标签了，
+            //   其他的都动不了了**」——
+            //   说明 `reconfigureItems` 只对「新插入」的那两个生效，原有磁贴没重配。
+            //   与其继续靠 `modeChanged` 猜时机（SwiftUI 的 `updateUIView` 可能在某些
+            //   中间状态下先跑一次、把 `appliedEditing` 提前置位），
+            //   ➜ **磁贴数量本来就很少（<20），每次 apply 都全量重配**，彻底绕开时机问题。
+            if !order.isEmpty {
                 snapshot.reconfigureItems(order)
             }
             // ★★★ 2026-10-21（用户）：「**不是弹性，是动画不连贯**」——

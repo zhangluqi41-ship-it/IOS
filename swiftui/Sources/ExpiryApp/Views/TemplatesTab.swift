@@ -227,34 +227,43 @@ struct TemplatesTab: View {
 
     /// 拖动换位（UICollectionView 算好 from/to，这里只管数组和持久化）。
     private func move(from: Int, to: Int) {
-        guard order.indices.contains(from), order.indices.contains(to), from != to else { return }
-        // ★★★ 2026-10-21（用户）：「**不要用你自己写的，还是只用苹果原生**」
-        //   SwiftUI 的 `withAnimation` 对 `UIViewRepresentable` 包着的 UICollectionView **不生效**，
-        //   留在这里只会让 `updateUIView` 多跑几次。动画完全交给 `dataSource.apply(animatingDifferences:)`。
-        // ★★★ 2026-10-22（用户：「移动的落位还是错的，**深层检查**」）——
-        //   不再猜 `beginInteractiveMovement` 的 `destination` 语义，**把实测数据写日志**。
-        //   复现一次后把 `/Documents/drag_debug.txt` 拉下来即可定位。
-        DebugLog.drag("move(from: \(from), to: \(to), visible=\(visibleOrder.map(\.key))")
+        // ★★★ 2026-10-22/23（用户）：「**落位问题是不是因为你隐藏了需要扫码激活的磁贴导致的？
+        //   隐藏逻辑是不是有问题？**」——**完全正确**。
+        //   真因：拖拽给的是 `visibleOrder`（屏幕上的，已过滤掉 `useSecondary` 模板）的下标，
+        //   而我直接在 `order`（含隐藏项）上做 move —— 两套下标**不是一一对应**，
+        //   凡是隐藏项夹在中间，换算就会错一格。
+        //   ➜ 换成"**先在 visible 上移，再把新顺序写回 order 的可见槽位**"：
+        //     全程只用一个数组的下标，隐藏项原地不动，不存在跨数组换算。
 
-        // Grid 给的是**可见列表**的下标，要映射回 `order` 的真实下标。
-        let visible = visibleOrder
-        guard visible.indices.contains(from), visible.indices.contains(to),
-              from != to,
-              let realFrom = order.firstIndex(of: visible[from]),
-              let realTo = order.firstIndex(of: visible[to]) else { return }
-        // ★ 2026-10-21：固定项锁死在原位 —— 拖到它身上就放弃这次移动（不挤开它）。
+        var visible = visibleOrder
+        guard visible.indices.contains(from), visible.indices.contains(to), from != to else { return }
+        // 固定项锁死在原位 —— 拖到它身上就放弃这次移动。
         guard !pinnedKeys.contains(visible[to].key) else { return }
 
-        // ★★★ 2026-10-22 最终定论（**用手机实测日志反推出来的**，不是猜的）：
-        //   日志案例 `from=0, to=3`（往后拖）：
-        //     期望  [2099, 00E0, **dairy**, generic, ...]
-        //     实际  [2099, **dairy**, 00E0, generic, ...]   ← 少走一格
-        //   ➜ **`toOffset` 直接等于 `targetIndex`，不需要 ±1**。
-        //   反例 `from=5, to=3`（往前拖）用同样的值正好对。
-        let toOffset = realTo
-        order.move(fromOffsets: IndexSet(integer: realFrom), toOffset: toOffset)
-        DebugLog.drag("  realFrom=\(realFrom) realTo=\(realTo) toOffset=\(toOffset) "
-                      + "after=\(order.map(\.key))")
+        DebugLog.drag("move(from: \(from), to: \(to), visible=\(visible.map(\.key))")
+
+        // ① 在 visible 上移动。
+        //    `move(fromOffsets:toOffset:)` 的 `toOffset` 是"插到该位置**之前**"，
+        //    而 `to` 是**目标格子本身**（手指压到的那格）→ 往后拖要 +1。
+        let toOffset = to > from ? to + 1 : to
+        visible.move(fromOffsets: IndexSet(integer: from), toOffset: toOffset)
+
+        // ② 把 visible 的新顺序填回 order 的可见槽位；隐藏项保持原位。
+        let visibleSet = Set(visibleOrder)          // 移动**前**的可见集合
+        var index = 0
+        var rebuilt: [TemplateRoute] = []
+        rebuilt.reserveCapacity(order.count)
+        for route in order {
+            if visibleSet.contains(route), index < visible.count {
+                rebuilt.append(visible[index])
+                index += 1
+            } else {
+                rebuilt.append(route)
+            }
+        }
+
+        DebugLog.drag("  after=\(rebuilt.map(\.key))")
+        order = rebuilt
         Prefs.templateOrder = order.map(\.key)
     }
 
