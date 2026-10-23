@@ -1,0 +1,150 @@
+//
+//  MeatThawView.swift
+//  肉类 · 解冻 —— 扫「冷冻」标签的二维码后进入，直接生成一张解冻标签。
+//
+//  ★ 用户要求（清单「一、模板二级菜单」第 4 条；2026-10-10 第十五轮更新）：
+//      「解冻后的菜单中开封时间改成解冻时间，时间为扫码时的时间，
+//        原始保质期改成完成时间（解冻时间 + 1 天），
+//        最佳使用时间改为当前时间 + 3 天」
+//    最初版本是「原始保质期保持原保不变」，本轮改成「完成时间 = 解冻时间 + 1 天」。
+//
+//  ★ 这个页面**只有扫码能进来**：它没有模板卡片、也不在 `TemplateRoute` 里 ——
+//    用户明确要求「不作为可选模板，只有扫描二维码才能出来」。
+//
+//  ★ 顶部「扫到的冷冻标签」区块显示的是**原冷冻标签**上的信息
+//    （`meat.expireRaw` = 那张标签印的原始保质期），
+//    与「解冻后要打印的内容」是两回事 —— 别把它也一起改了。
+//
+
+import SwiftUI
+
+struct MeatThawView: View {
+    let meat: MeatLabelInfo
+
+    @State private var maker = Prefs.lastMaker
+    @State private var flash: String?
+    /// ★★★ 2026-10-17（用户功能 2）：**原材料（这块冷冻肉）是否已用完**。
+    ///
+    ///   用户原话：「扫描二维码后再加工的标签，在确认打印前，增加一个
+    ///   『原材料是否用完』的选项，可以放在扫描后页面的最上面，如果确认
+    ///   原材料已用完，从效期管理系统里选择已用完。（比如扫描冷冻的肉，
+    ///   进行解冻，会确认原冷冻肉是否用完，未用完不处理，已用完就在
+    ///   效期管理系统里选择已用完）」
+    ///   ➜ 默认**关**（未用完不动）；开启且打印成功后 →
+    ///     `consumeSourceRecord()` 把那条冷冻记录标为已用完。
+    @State private var consumeSource = false
+    /// ★ 第一方焦点（第十九轮）：收键盘走 `focused = nil`，键盘才有系统动画。
+    @FocusState private var focus: AnyHashable?
+
+    private var now: Date { Date() }
+    /// 完成时间 = 解冻时间 + 1 天。
+    private var thawComplete: Date { MeatRule.thawedComplete(from: now) }
+    /// 最佳使用时间 = 解冻时间 + 3 天。
+    private var thawBest: Date { MeatRule.thawedBest(from: now) }
+
+    var body: some View {
+        List {
+            // ★★★ 2026-10-17（功能 2）：**放在页面最上面**（用户明确要求）。
+            Section {
+                Toggle(isOn: $consumeSource) {
+                    Label("原材料已用完", systemImage: "checkmark.circle")
+                }
+            } footer: {
+                Text("开启并打印后，会把效期管理里「\(meat.title)」这条记录标记为已用完；"
+                     + "关闭则不动它。")
+            }
+
+            Section {
+                LabeledContent("品名", value: meat.baseName)
+                LabeledContent("保存类型", value: meat.storage.label)
+                LabeledContent("原始保质期", value: meat.expireRaw)
+                LabeledContent("原最佳使用时间", value: LabelTemplate.fmtDateTime(meat.bestBefore))
+            } header: {
+                Text("扫到的冷冻标签")
+            } footer: {
+                Text("冷冻标签扫一次即进入解冻流程，这一页不会出现在模板菜单里。")
+            }
+
+            Section {
+                LabeledContent("解冻时间", value: LabelTemplate.fmtDateTime(now))
+                LabeledContent("完成时间", value: LabelTemplate.fmtDateByThreshold(now, thawComplete))
+                LabeledContent("最佳使用时间", value: LabelTemplate.fmtDateByThreshold(now, thawBest))
+            } header: {
+                Text("解冻后要打印的内容")
+            } footer: {
+                Text("解冻时间 = 扫码这一刻；完成时间 = 解冻时间 + \(MeatRule.thawCompleteDays) 天；"
+                     + "最佳使用时间 = 解冻时间 + \(MeatRule.thawedBestDays) 天。")
+            }
+
+            Section {
+                MakerField(maker: $maker, focused: $focus)
+            } footer: {
+                Text("会记住上次填写的操作人")
+            }
+
+            Section {
+                Label("解冻标签的标题为「\(MeatRule.thawPrefix)-\(meat.baseName)」",
+                      systemImage: "tag")
+                Label("再扫这张解冻标签不会再触发解冻", systemImage: "checkmark.seal")
+            } header: {
+                Text("说明")
+            }
+        }
+        .navigationTitle("肉类 · 解冻")
+        .navigationBarTitleDisplayMode(.inline)
+        .keyboardDismissible(focus: $focus)
+        // ★ 功能 2：打印成功后再消耗原材料（失败不处理）。
+        .modifier(LabelActions(build: buildDraft, onConfirmed: consumeSourceRecord))
+    }
+
+    /// ★★★ 2026-10-17（功能 2）：把「这块冷冻肉」在效期管理里标为已用完。
+    ///
+    ///   定位方式：扫码时 `ScanView.handleMeat` 用**同一个二维码原文**
+    ///   `add()` 入库（按 `qrText` 去重），所以 `qrText == meat.sourceQR`
+    ///   就是那条冷冻记录。
+    ///   ⚠️ 只在 `consumeSource == true` 时执行；未开启「原材料已用完」不动任何数据。
+    private func consumeSourceRecord() {
+        guard consumeSource, !meat.sourceQR.isEmpty else { return }
+        guard let record = ExpiryStore.shared.records.first(where: {
+            $0.qrText == meat.sourceQR
+        }) else { return }
+        ExpiryStore.shared.markUsed(record)
+    }
+
+    private func buildDraft() -> LabelDraft? {
+        let makerFinal = MakerField.finalize(maker)
+
+        let stamp = Date()
+        // 完成时间 = 解冻时间 + 1 天（与标签第二行同源，同一个 `stamp`）。
+        let complete = MeatRule.thawedComplete(from: stamp)
+        let best = MeatRule.thawedBest(from: stamp)
+        let data = LabelTemplate.buildMeatThaw(baseName: meat.baseName,
+                                               now: stamp,
+                                               maker: makerFinal)
+        // ★★★ 2026-10-13（用户第 6 条）：`expireAt` 存**完成时间**（= 解冻 + 1 天），
+        //   不再是冷冻标签的原保 —— 解冻后冷冻原保不再适用，而且：
+        //     · 详情页对「使用完成时间」的记录会把这一栏显示成「完成时间」；
+        //     · 提醒里程碑「完成时间」直接读这个槽位；
+        //     · 重打（`rebuild`）第二行的取值也来自它。
+        //   ⚠️ 这与扫码路径完全同构（扫解冻标签时，二维码里的「完成时间」
+        //     也是落进 `expireAt`，见 `ScanView.handleMeat`）—— 两条路径终于一致。
+        let record = LabelTemplate.makeRecord(kind: .meat, data: data, createdAt: stamp,
+                                              expireAt: complete, bestBefore: best,
+                                              maker: makerFinal)
+        return LabelDraft(data: data, record: record)
+    }
+}
+
+#Preview {
+    NavigationStack {
+        MeatThawView(meat: MeatLabelInfo(
+            baseName: "牛肉-眼肉",
+            title: "冷冻-牛肉-眼肉",
+            storage: .frozen,
+            alreadyThawed: false,
+            expireAt: Date(),
+            bestBefore: Date(),
+            expireRaw: "2027/01/09 23:59"
+        ))
+    }
+}
