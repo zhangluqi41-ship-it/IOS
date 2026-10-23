@@ -243,10 +243,12 @@ struct TemplatesTab: View {
         DebugLog.drag("move(from: \(from), to: \(to), visible=\(visible.map(\.key))")
 
         // ① 在 visible 上移动。
-        //    `move(fromOffsets:toOffset:)` 的 `toOffset` 是"插到该位置**之前**"，
-        //    而 `to` 是**目标格子本身**（手指压到的那格）→ 往后拖要 +1。
-        let toOffset = to > from ? to + 1 : to
-        visible.move(fromOffsets: IndexSet(integer: from), toOffset: toOffset)
+        // ★★★ 2026-10-23（用户）：「这回是**反过来跑前一位**了，是不是以前那些逻辑没调回来？」
+        //   **就是这个问题** —— 之前所有的 `±1` 都是为了补偿"隐藏项导致的下标错位"，
+        //   现在改成"只在 visible 上移动 + 按槽位回填"后，错位的根因没了，
+        //   那些补偿反而变成新的偏差。
+        //   ➜ `toOffset` 就取 `to` 本身（`to` = 手指压到的目标格，= 最终 index）。
+        visible.move(fromOffsets: IndexSet(integer: from), toOffset: to)
 
         // ② 把 visible 的新顺序填回 order 的可见槽位；隐藏项保持原位。
         let visibleSet = Set(visibleOrder)          // 移动**前**的可见集合

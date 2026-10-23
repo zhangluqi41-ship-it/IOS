@@ -750,40 +750,11 @@ struct ScanView: View {
     private func handle(_ code: String?) {
         guard let code, !code.isEmpty else { return }
 
-        // ① 康普茶一发标签 → 进二发
-        if var first = LabelTemplate.parseKombuchaQr(code) {
-            // 扫到的物料同样进「效期管理」；同一条码重复扫会按 qrText 合并
-            // ★ 同上：库里已有同码记录（比如刚打的一发）就不要 add ——
-            //   `add` 会按 `qrText` 合并并**整体覆盖**，把原来的 `printedAt` / `isPrepared` 冲掉。
-            if !ExpiryStore.shared.records.contains(where: { $0.qrText == code }) {
-                ExpiryStore.shared.add(
-                    LabelRecord(title: first.title,
-                                kind: .kombucha,
-                                maker: first.maker,
-                                createdAt: Date(),
-                                printedAt: nil,
-                                expireAt: first.finished,
-                                bestBefore: first.bestBefore,
-                                usedAt: nil,
-                                qrText: code,
-                                source: .scanned)
-                )
-            }
-            // ★ 2026-10-17（用户功能 2）：把**二维码原文**带上 ——
-            //   二发页的「原材料是否用完」靠它在效期管理里定位这条一发记录
-            //   （上面 add 用的就是同一个 `code`，所以 `qrText == sourceQR`）。
-            first.sourceQR = code
-            path.append(ScanRoute.secondFermentation(first))
-            return
-        }
+        // ★★★ 2026-10-23（用户）：「**我扫码还是能扫到以前的**」——
+        //   内置「康普茶一发 / 肉类」的扫码分支已移除。
+        //   所有标签统一走下面的**自定义模板二次制备**匹配（按名字最长优先）。
 
-        // ② 肉类标签
-        if let meat = LabelTemplate.parseMeatQr(code) {
-            handleMeat(meat, code: code)
-            return
-        }
-
-        // ③ ★ 自定义模板二次制备（必须放在康普茶/肉类之后 —— 那些标签也带「时间：」字样）
+        // ★ 自定义模板二次制备（必须放在康普茶/肉类之后 —— 那些标签也带「时间：」字样）
         if template_hasSecondary {
             if let parsed = LabelTemplate.parseCustomQr(code),
                let template = matchSecondaryTemplate(title: parsed.title) {
@@ -921,43 +892,6 @@ struct ScanView: View {
         return paths.contains(title)
     }
 
-    private func handleMeat(_ meat: MeatLabelInfo, code: String) {
-        ExpiryStore.shared.add(
-            LabelRecord(title: meat.title,
-                        kind: .meat,
-                        // 二维码里没有制作人（`LabelData.qrText` 只含后两组时间），
-                        // 所以扫回来的记录 maker 为空 —— 列表会显示占位。
-                        maker: "",
-                        createdAt: Date(),
-                        printedAt: nil,
-                        expireAt: meat.expireAt,
-                        bestBefore: meat.bestBefore,
-                        usedAt: nil,
-                        qrText: code,
-                        source: .scanned)
-        )
-
-        if meat.alreadyThawed {
-            showAlert(title: "这是解冻标签",
-                      message: "「\(meat.title)」已经解冻过一次了，已加入效期管理，"
-                             + "不会再触发解冻。")
-            return
-        }
-        guard meat.storage.isFrozen else {
-            showAlert(title: "冷藏肉类标签",
-                      message: "「\(meat.title)」是冷藏肉类，不需要解冻。"
-                             + "已加入效期管理。")
-            return
-        }
-
-        // 冷冻 + 未解冻 → 进解冻页
-        // ★ 2026-10-17（用户功能 2）：把二维码原文带上 —— 解冻页的
-        //   「原材料是否用完」靠它在效期管理里定位这条冷冻记录
-        //   （上面 add 用的就是同一个 `code`，所以 `qrText == sourceQR`）。
-        var info = meat
-        info.sourceQR = code
-        path.append(ScanRoute.thaw(info))
-    }
 
     private func showAlert(title: String, message: String) {
         alertTitle = title
