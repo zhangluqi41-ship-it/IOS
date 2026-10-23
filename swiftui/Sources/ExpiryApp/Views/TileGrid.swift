@@ -114,35 +114,21 @@ struct TileGrid: UIViewRepresentable {
             dataSource = source
         }
 
-        /// ★ 2026-10-22 三次实测后的最终结论：
-        ///   · `applySnapshotUsingReloadData`（reloadData）→ 落位**对**，但**打断系统动画**（瞬间落下）；
-        ///   · `apply(animatingDifferences: true)` → 有动画，但会在系统已移过的布局上**再移一次**
-        ///     → 落位**跑到后一位**（用户本次反馈）。
-        ///   ➜ 正解：`apply(animatingDifferences: **false**)`。
-        ///     它**只更新数据、不重置布局、不播自己的动画** ——
-        ///     视觉完全由 `endInteractiveMovement()` 那次系统动画负责，两者不再打架。
-        func syncAfterDrop(order: [TemplateRoute]) {
-            guard dataSource != nil else { return }
-            appliedKeys = order.map(\.key)
-            appliedPinned = parent.pinnedKeys
-            appliedDeleting = parent.deletingMode
-            appliedEditing = parent.editingMode
-
-            var snapshot = NSDiffableDataSourceSnapshot<String, TemplateRoute>()
-            snapshot.appendSections(["main"])
-            snapshot.appendItems(order, toSection: "main")
-            dataSource.apply(snapshot, animatingDifferences: false)
-        }
-
         /// ★ DiffableDataSource 的核心：给快照，系统自己 diff + 播放动画。
         func apply(order: [TemplateRoute], animated: Bool) {
             guard let cv = collectionView, dataSource != nil else { return }
 
-            // ★ 拖动刚落位：系统已经把 cell 移好，这里**只同步数据、不做 diff**。
+            // ★★★ 2026-10-23（用户）：「**彻底解决**」（拖动落位反复不对，日志已证明数据层完全正确）——
+            //   数据是对的、系统的落位动画也是对的，唯一在捣乱的是"落位之后再 apply 一次"：
+            //   `UICollectionViewDiffableDataSource.apply` 无论带不带动画，都会
+            //   **按快照重新计算所有 cell 的 index path**，而此刻系统动画刚把 cell 摆到
+            //   手指松开的位置 —— 两套坐标一比较，就必然错位一格。
+            //   ➜ 落位后**什么都不做**：不动 snapshot、不 apply、不重配。
+            //     快照暂时停留在旧顺序没关系 —— 下次真正的数据变更（切编辑模式 / 增删模板）
+            //     会按最新 `order` 重建，结果依然正确；而这次拖动只由系统动画负责。
             if dropJustHappened {
                 dropJustHappened = false
-                DebugLog.drag("apply -> syncAfterDrop(no diff)")
-                syncAfterDrop(order: order)
+                DebugLog.drag("apply -> SKIP (system animation owns the drop)")
                 return
             }
 

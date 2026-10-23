@@ -180,12 +180,17 @@ struct TemplatesTab: View {
         //   根因：模板删掉后 `Prefs.templateOrder` 里还留着 `custom:<uuid>`，
         //   `from(key:)` 又能解析回来 → 变成**幽灵磁贴**（标题兜底成"已删除的模板"）。
         //   ➜ 过滤掉「模板已不存在」的 key。
+        // ★★★ 2026-10-23（用户）：「**重大 bug，我点击康普茶，进的是通用模板！**」——
+        //   截图里 4 个内置模板又冒出来了（上次回滚时把"写 hidden"那段一起删了）。
+        //   它们和自定义模板混在同一个 `order` 里之后，`snapshot` 的 item 与 cell 显示错位
+        //   → 点"康普茶"拿到的是别的 route。
+        //   ➜ **内置模板一律不进列表**（代码保留，历史记录照常解析）：
+        //     任何非 `.custom` 的 key 直接丢弃。
         let saved = Prefs.templateOrder
             .compactMap { key -> TemplateRoute? in
                 guard let route = TemplateRoute.from(key: key) else { return nil }
-                if case .custom(let id) = route, CustomTemplateStore.template(id: id) == nil {
-                    return nil
-                }
+                guard case .custom(let id) = route else { return nil }   // ← 内置一律不要
+                guard CustomTemplateStore.template(id: id) != nil else { return nil }
                 return route
             }
             .filter { !hidden.contains($0.key) }
