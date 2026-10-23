@@ -189,9 +189,19 @@ struct TileGrid: UIViewRepresentable {
 
         func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {
             cv.deselectItem(at: indexPath, animated: false)
-            guard !parent.deletingMode, !parent.editingMode,
-                  let route = dataSource.itemIdentifier(for: indexPath) else { return }
-            parent.onSelect(route)
+            guard !parent.deletingMode, !parent.editingMode else { return }
+
+            // ★★★ 2026-10-23（用户）：「**点击后并不是对应磁贴**」——
+            //   这是"落位后不 apply"的直接副作用：拖动结束后 `dataSource` 的 snapshot
+            //   仍停留在**旧顺序**，而 `indexPath` 反映的是**视觉（新）顺序** →
+            //   `itemIdentifier(for:)` 反查出来的就是别的模板。
+            //   ➜ 点击一律按**视觉位置**映射 `parent.order`（它已经是拖动后的最新顺序），
+            //     两种状态（拖过 / 没拖过）下都正确：
+            //       · 没拖过：snapshot == order，结果一样；
+            //       · 拖过：snapshot 旧、order 新，视觉与 order 一致 → 取 order 才对。
+            let index = indexPath.item
+            guard parent.order.indices.contains(index) else { return }
+            parent.onSelect(parent.order[index])
         }
 
         // ── 交互式移动：长按 → 开始 / 跟手 / 结束 ──
@@ -205,8 +215,10 @@ struct TileGrid: UIViewRepresentable {
             case .began:
                 pendingTarget = nil
                 guard let indexPath = cv.indexPathForItem(at: location),
-                      let route = dataSource.itemIdentifier(for: indexPath),
-                      !parent.pinnedKeys.contains(route.key) else { return }
+                      parent.order.indices.contains(indexPath.item) else { return }
+                // ★ 同样按**视觉位置**取 route（snapshot 可能在拖动后仍是旧顺序）。
+                let route = parent.order[indexPath.item]
+                guard !parent.pinnedKeys.contains(route.key) else { return }
                 cv.beginInteractiveMovementForItem(at: indexPath)
             case .changed:
                 lastDragLocation = location
