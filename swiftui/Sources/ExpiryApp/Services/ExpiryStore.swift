@@ -149,10 +149,6 @@ final class ExpiryStore: ObservableObject {
     /// ★ 2026-10-24：通知重排的合并令牌（见 `rescheduleReminders`）。
     private var pendingReschedule: DispatchWorkItem?
 
-    /// ★ 2026-10-24：编解码器复用（都在 `io` 串行队列上使用，线程安全）。
-    private static let encoder = JSONEncoder()
-    private static let decoder = JSONDecoder()
-
     private let io = DispatchQueue(label: "com.xiaoqi.expiry.store", qos: .utility)
     private let fileURL: URL
 
@@ -667,9 +663,10 @@ final class ExpiryStore: ObservableObject {
         let url = fileURL
         io.async {
             do {
-                // ★ 2026-10-24：复用同一个 encoder（`io` 是串行队列，线程安全），
-                //   避免每次写盘都重新构造 —— 编码器构造本身有可见开销。
-                let data = try Self.encoder.encode(list)
+                // ⚠️ 曾尝试复用 static JSONEncoder，但 Swift 6 严格并发下
+                //   `JSONEncoder` 不是 Sendable，`static let` 会报并发安全错误 →
+                //   保持每次新建（写盘本身在后台串行队列，这点开销可忽略）。
+                let data = try JSONEncoder().encode(list)
                 // ★★★ 2026-10-15：写入保护等级从 `.completeFileProtection`
                 //   降为 `.completeFileProtectionUntilFirstUserAuthentication` ——
                 //   后者「重启后首次解锁起，锁屏状态下也可读」；
@@ -704,7 +701,7 @@ final class ExpiryStore: ObservableObject {
         }
         do {
             let data = try Data(contentsOf: fileURL)
-            records = try Self.decoder.decode([LabelRecord].self, from: data)
+            records = try JSONDecoder().decode([LabelRecord].self, from: data)
             loadSucceeded = true
         } catch let error as DecodingError {
             // 真·解析失败（文件内容确实坏了）：留证据、起空表。
