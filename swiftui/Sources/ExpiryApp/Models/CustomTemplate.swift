@@ -323,3 +323,50 @@ enum CustomTemplateStore {
 }
 
 // MARK: - 选中的路径（打印时用）
+
+// MARK: - 宽容解码（放在 extension 里，避免让 struct 丢掉自动生成的 memberwise init）
+//
+// ★★★ 2026-10-24（数据事故：「我的图标全变成重写了」）——
+//   Swift 自动合成的 `init(from:)` **要求每个非可选字段的 key 都存在**
+//   （属性默认值只在 `init()` 里生效，不参与解码）。后来陆续加了
+//   `noExpiry` / `originalDays` / `useSecondary` / `sourceNodePath` / `titleParts` 等字段，
+//   旧数据缺这些 key → **整个数组解码失败** → `all` 返回 `[]` →
+//   `seedPresetsIfNeeded` 以为空库 → 播种覆盖。
+//   ➜ 全部改成 `decodeIfPresent` + 默认值，以后再加字段也不会读不出来。
+
+extension CustomTemplate {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "未命名模板"
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "square.grid.2x2"
+        tintName = try c.decodeIfPresent(String.self, forKey: .tintName) ?? "blue"
+        iconColorName = try c.decodeIfPresent(String.self, forKey: .iconColorName) ?? "white"
+        nodes = try c.decodeIfPresent([CustomNode].self, forKey: .nodes) ?? []
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        defaultDays = try c.decodeIfPresent(Int.self, forKey: .defaultDays)
+        usePrep = try c.decodeIfPresent(Bool.self, forKey: .usePrep) ?? false
+        prepDays = try c.decodeIfPresent(Int.self, forKey: .prepDays) ?? 3
+        needsManualName = try c.decodeIfPresent(Bool.self, forKey: .needsManualName) ?? true
+        useSecondary = try c.decodeIfPresent(Bool.self, forKey: .useSecondary) ?? false
+        sourceTemplateID = try c.decodeIfPresent(UUID.self, forKey: .sourceTemplateID)
+        includeTemplateInTitle = try c.decodeIfPresent(Bool.self, forKey: .includeTemplateInTitle) ?? false
+        noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
+        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
+        sourceNodePath = try c.decodeIfPresent([String].self, forKey: .sourceNodePath) ?? []
+        titleParts = try c.decodeIfPresent([TitlePart].self, forKey: .titleParts) ?? []
+        titleSeparator = try c.decodeIfPresent(String.self, forKey: .titleSeparator) ?? "-"
+    }
+}
+
+extension CustomNode {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        days = try c.decodeIfPresent(Int.self, forKey: .days)
+        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
+        noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
+        children = try c.decodeIfPresent([CustomNode].self, forKey: .children) ?? []
+    }
+}
