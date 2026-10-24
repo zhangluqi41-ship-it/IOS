@@ -989,6 +989,13 @@ final class ExpiryActivityManager {
     ///     id=XXXX state=active startedAt=... milestone=... rec=...
     /// ```
     nonisolated static func dumpActivityDiagnostics(stage: String) {
+        // ★★★ 2026-10-24（「**耗电发热有些严重**」）——
+        //   这个诊断在**每次 sync 进入时**都整读+整写 `activity_debug.txt`，
+        //   是纯粹的排查工具。Release 一律跳过，Debug 才落盘。
+        #if !DEBUG
+        _ = stage
+        return
+        #else
         let fm = FileManager.default
         guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
         let url = docs.appendingPathComponent("activity_debug.txt")
@@ -1028,6 +1035,7 @@ final class ExpiryActivityManager {
         } else {
             try? block.write(to: url, atomically: true, encoding: .utf8)
         }
+        #endif
     }
 
     // MARK: - 辅助（第十三轮新增）

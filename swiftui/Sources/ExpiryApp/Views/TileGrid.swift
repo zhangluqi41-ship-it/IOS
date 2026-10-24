@@ -219,6 +219,11 @@ struct TileGrid: UIViewRepresentable {
                 // ★ 同样按**视觉位置**取 route（snapshot 可能在拖动后仍是旧顺序）。
                 let route = parent.order[indexPath.item]
                 guard !parent.pinnedKeys.contains(route.key) else { return }
+                // ★ 2026-10-24（用户）：「**磁贴抓起来的一瞬间会有卡顿**」——
+                //   `beginInteractiveMovementForItem` 内部会对 cell 做一次屏幕快照 + 抬起动画，
+                //   如果此刻还有未提交的布局/绘制，就会在这一帧集中开销 → 掉帧。
+                //   ➜ 先把待处理的布局和绘制全部落地，再开始交互式移动。
+                cv.layoutIfNeeded()
                 cv.beginInteractiveMovementForItem(at: indexPath)
             case .changed:
                 lastDragLocation = location
@@ -293,11 +298,11 @@ final class TileCell: UICollectionViewCell {
         super.init(frame: frame)
 
         contentView.layer.cornerRadius = Theme.tileRadius
-        contentView.layer.cornerCurve = .continuous
+        contentView.layer.cornerCurve = .circular   // ★ 抬起更跟手：.continuous 会走离屏
         contentView.backgroundColor = .secondarySystemGroupedBackground
 
         iconContainer.layer.cornerRadius = 12
-        iconContainer.layer.cornerCurve = .continuous
+        iconContainer.layer.cornerCurve = .circular
         iconContainer.translatesAutoresizingMaskIntoConstraints = false
 
         iconView.contentMode = .scaleAspectFit
@@ -341,6 +346,15 @@ final class TileCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// ★ 2026-10-24：SF Symbol 图片缓存。
+    ///   `reconfigureItems` 每次都会调 `configure`，而 `UIImage(systemName:)`
+    ///   每次都要走一遍符号渲染 —— 磁贴图标就那几十个，缓存起来即可。
+    private static let iconCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 128
+        return cache
+    }()
+
     func configure(route: TemplateRoute,
                    pinned: Bool,
                    deletingMode: Bool,
@@ -357,8 +371,16 @@ final class TileCell: UICollectionViewCell {
         self.onEditAction = onEditAction
 
         titleLabel.text = route.title
-        iconView.image = UIImage(systemName: route.systemImage)?
-            .withConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
+        let symbolName = route.systemImage
+        if let cached = Self.iconCache.object(forKey: symbolName as NSString) {
+            iconView.image = cached
+        } else if let image = UIImage(systemName: symbolName)?
+            .withConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold)) {
+            Self.iconCache.setObject(image, forKey: symbolName as NSString)
+            iconView.image = image
+        } else {
+            iconView.image = nil
+        }
         iconView.tintColor = UIColor(route.tint)
         iconContainer.backgroundColor = UIColor(route.fill)
 

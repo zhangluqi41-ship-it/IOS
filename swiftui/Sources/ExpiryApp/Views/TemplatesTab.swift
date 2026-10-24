@@ -122,8 +122,6 @@ struct TemplatesTab: View {
     ///   而"固定的磁贴本来就在第一位"时 `order` 不变 → 不重绘 → 图钉图标不更新。
     ///   ➜ 用 `@State` 镜像一份，任何固定操作都改它（必定触发重绘），再同步进 Prefs。
     @State private var pinnedKeys: [String] = Prefs.pinnedTemplates
-    /// 同理：删除的磁贴也要响应式（toolbar 的「恢复全部」按钮靠它决定显示与否）。
-    @State private var hiddenKeys: [String] = Prefs.hiddenTemplates
     // MARK: 拖动（★ 2026-10-19 回到系统第一方拖放）
 
     // ★ 之前"不跟手"的真因**不是** API 不行，而是我把**整张卡片**（GroupBox +
@@ -170,12 +168,6 @@ struct TemplatesTab: View {
         // ★★★ 2026-10-22（用户）：「我是说系统以前写的，**"通用模板、康普茶、奶制品、肉类"这四个，删除**」
         //   ➜ 这 4 个内置模板**不再出现在列表里**（代码保留，记录/历史仍能正确解析）。
         //     首次启动时顺手把它们写进 `hiddenTemplates`，避免旧安装里残留的 key 回来。
-        var hidden = Set(Prefs.hiddenTemplates)
-        let builtinKeys = TemplateRoute.allCases.map(\.key)
-        if !builtinKeys.allSatisfy({ hidden.contains($0) }) {
-            builtinKeys.forEach { hidden.insert($0) }
-            Prefs.hiddenTemplates = Array(hidden)
-        }
         // ★★★ 2026-10-19（用户截图发现）：出现好几个「已删除的模板」磁贴。
         //   根因：模板删掉后 `Prefs.templateOrder` 里还留着 `custom:<uuid>`，
         //   `from(key:)` 又能解析回来 → 变成**幽灵磁贴**（标题兜底成"已删除的模板"）。
@@ -193,13 +185,12 @@ struct TemplatesTab: View {
                 guard CustomTemplateStore.template(id: id) != nil else { return nil }
                 return route
             }
-            .filter { !hidden.contains($0.key) }
         // ★ 内置 4 个**不再补回**（用户已要求删除）。
         let missingBuiltin: [TemplateRoute] = []
         // ★ 自定义模板也要补进来（新建的要出现在末尾，且能和内置一起拖/固定）。
         let customs = CustomTemplateStore.all.map { TemplateRoute.custom($0.id) }
         let missingCustom = customs
-            .filter { !saved.contains($0) && !hidden.contains($0.key) }
+            .filter { !saved.contains($0) }
         let base = saved + missingBuiltin + missingCustom
         // ★ 固定的排最前，按**固定先后**（用户：「每个都可以固定，按固定顺序排先后」）。
         let pinned = Prefs.pinnedTemplates
@@ -304,24 +295,12 @@ struct TemplatesTab: View {
         pinnedKeys = remaining
         Prefs.pinnedTemplates = remaining
 
+        // ★ 现在只剩自定义模板 → 删除就是**真删除**（模板数据一起删）。
         if case .custom(let id) = route {
-            // ★ 自定义模板：**真删除**（模板数据一起删），不是像内置那样"隐藏"。
-            do {
-                CustomTemplateStore.delete(id: id)
-                customTemplates = CustomTemplateStore.all
-                order.removeAll { $0 == route }
-                hiddenKeys.removeAll { $0 == route.key }
-            }
-            Prefs.hiddenTemplates = hiddenKeys
-            Prefs.templateOrder = order.map(\.key)
-            return
+            CustomTemplateStore.delete(id: id)
+            customTemplates = CustomTemplateStore.all
         }
-
-        var hidden = hiddenKeys
-        if !hidden.contains(route.key) { hidden.append(route.key) }
-        withAnimation(.default) { hiddenKeys = hidden }
-        Prefs.hiddenTemplates = hidden
-        order.removeAll { $0 == route }
+        withAnimation(.default) { order.removeAll { $0 == route } }
         Prefs.templateOrder = order.map(\.key)
     }
 
@@ -374,18 +353,6 @@ struct TemplatesTab: View {
             .navigationTitle("效期打印")
             .background(Color(.systemGroupedBackground))
             .toolbar {
-                if !hiddenKeys.isEmpty && !deletingMode {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("恢复全部") {
-                            withAnimation(.default) {
-                                hiddenKeys = []
-                                Prefs.hiddenTemplates = []
-                                order = Self.loadOrder()
-                            }
-                        }
-                        .font(.footnote)
-                    }
-                }
                 // ★★★ 2026-10-19（用户）：「B-2 删除磁贴入口放在『效期打印』界面的右上角，
                 //   和这张图片一致的功能；同时**自定义模板**可以做了，入口也在这里」
                 //   ➜ 右上角 `⋯`（和「效期管理」页同款 `ellipsis.circle`），

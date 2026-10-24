@@ -227,11 +227,26 @@ final class PrinterService: NSObject, ObservableObject {
         refreshBluetooth()
         autoConnectIfNeeded()
         guard lifecycleTimer == nil else { return }
-        lifecycleTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+        // ★★★ 2026-10-24（用户：「这个 app **耗电发热有些严重**」）——
+        //   原来是 **1.5 秒**一次、从 App 启动跑到退出（`RootView.onAppear` 拉起，没有停止路径），
+        //   开机一天就是 5.7 万次定时器唤醒。而这里要的只是"蓝牙状态变了能反映到界面"
+        //   和"就绪后自动连一次"，根本不需要这么高的频率。
+        //   ➜ ① 降到 **8 秒**；② 新增 `stopMonitoring()`，App 进后台就停（见 `RootView`）。
+        //     前台 8 秒对"蓝牙开关"这种低频事件完全够用，后台不跑则彻底不耗电。
+        lifecycleTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.refreshBluetooth()
             self.autoConnectIfNeeded()
         }
+        // 允许系统在低电量 / 低优先级时合并唤醒，进一步省电。
+        lifecycleTimer?.tolerance = 2.0
+        RunLoop.main.add(lifecycleTimer!, forMode: .common)
+    }
+
+    /// 停止轮询（进后台 / 退出时调）。计时器不释放会一直唤醒 CPU。
+    func stopMonitoring() {
+        lifecycleTimer?.invalidate()
+        lifecycleTimer = nil
     }
 
     /// 跳系统设置（蓝牙/隐私）。

@@ -165,6 +165,15 @@ struct RootView: View {
             store.retryLoadIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
+            // ★★★ 2026-10-24（用户：「**耗电发热有些严重**」）——
+            //   蓝牙轮询原来从 App 启动跑到底、进后台也不停。
+            //   ➜ 后台立即停，回前台再起（`startMonitoring` 内部幂等，重复调不会叠加计时器）。
+            if phase == .active {
+                PrinterService.shared.startMonitoring()
+            } else {
+                PrinterService.shared.stopMonitoring()
+            }
+
             // ★ 回到前台时重算一次：
             //   · 把窗口内（最后 5 分钟）会到期的那个里程碑挂成**倒计时**活动；
             //   · 并把「下一条里程碑」预定成两条系统托管活动 ——

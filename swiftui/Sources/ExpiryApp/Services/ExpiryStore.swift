@@ -146,6 +146,13 @@ final class ExpiryStore: ObservableObject {
         UNUserNotificationCenter.current().setNotificationCategories([due, dueComplete])
     }
 
+    /// ★ 2026-10-24：通知重排的合并令牌（见 `rescheduleReminders`）。
+    private var pendingReschedule: DispatchWorkItem?
+
+    /// ★ 2026-10-24：编解码器复用（都在 `io` 串行队列上使用，线程安全）。
+    private static let encoder = JSONEncoder()
+    private static let decoder = JSONDecoder()
+
     private let io = DispatchQueue(label: "com.xiaoqi.expiry.store", qos: .utility)
     private let fileURL: URL
 
@@ -295,6 +302,20 @@ final class ExpiryStore: ObservableObject {
     ///   也顺手清掉旧版本（≤1.1.17）排下的「提前 5 分钟」残留通知，
     ///   以及上一轮的「稍后提醒」重复通知。
     func rescheduleReminders() {
+        // ★★★ 2026-10-24（用户：「**耗电发热有些严重**」）——
+        //   `commit` 每次都调它：`removeAllPendingNotificationRequests()` +
+        //   重排 14 天 × 每天 1 条 + `syncActivity`（含灵动岛 purge/update），
+        //   一次打印会连着触发好几次（add → 改记录 → 标记已完成…）。
+        //   ➜ 合并到 **0.4 秒**内只跑最后一次；界面上的反馈由 `records` 驱动，不受影响。
+        pendingReschedule?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.performReschedule()
+        }
+        pendingReschedule = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func performReschedule() {
         let center = UNUserNotificationCenter.current()
         // 本 App 是这些通知的唯一来源，整批清掉最干净 ——
         // ★ 也顺手清掉旧版本用别的 identifier 排下的残留通知（否则它们还会照常弹），
@@ -646,7 +667,9 @@ final class ExpiryStore: ObservableObject {
         let url = fileURL
         io.async {
             do {
-                let data = try JSONEncoder().encode(list)
+                // ★ 2026-10-24：复用同一个 encoder（`io` 是串行队列，线程安全），
+                //   避免每次写盘都重新构造 —— 编码器构造本身有可见开销。
+                let data = try Self.encoder.encode(list)
                 // ★★★ 2026-10-15：写入保护等级从 `.completeFileProtection`
                 //   降为 `.completeFileProtectionUntilFirstUserAuthentication` ——
                 //   后者「重启后首次解锁起，锁屏状态下也可读」；
@@ -681,7 +704,7 @@ final class ExpiryStore: ObservableObject {
         }
         do {
             let data = try Data(contentsOf: fileURL)
-            records = try JSONDecoder().decode([LabelRecord].self, from: data)
+            records = try Self.decoder.decode([LabelRecord].self, from: data)
             loadSucceeded = true
         } catch let error as DecodingError {
             // 真·解析失败（文件内容确实坏了）：留证据、起空表。

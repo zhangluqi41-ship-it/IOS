@@ -263,7 +263,12 @@ final class QRScannerModel: NSObject, ObservableObject {
         }
 
         session.beginConfiguration()
-        session.sessionPreset = .high
+        // ★ 2026-10-24（用户：「这个 app **耗电发热有些严重**」）——
+        //   原来是 `.high`（1920×1080）+ 默认 30fps。二维码解码远用不着这个规格：
+        //   · 1280×720 对 50×30mm 标签上的二维码已经绰绰有余（模块尺寸仍 > 8px）；
+        //   · 15fps 对静态标签完全够（人手抖动不会快过这个）。
+        //   ➜ 像素量降到 1/2.25、帧率降到 1/2 —— 传感器和 ISP 功耗都随之下降。
+        session.sessionPreset = .hd1280x720
         session.addInput(input)
 
         let output = AVCaptureMetadataOutput()
@@ -285,6 +290,23 @@ final class QRScannerModel: NSObject, ObservableObject {
             session.commitConfiguration()
             DispatchQueue.main.async { self.state = .failed("摄像头初始化失败") }
             return
+        }
+
+        // ★ 同上限帧：把采集帧率压到 15fps（部分格式不支持则保持系统默认）。
+        if let device = device {
+            do {
+                try device.lockForConfiguration()
+                let fps = CMTime(value: 1, timescale: 15)
+                if device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
+                    $0.minFrameRate <= 15 && 15 <= $0.maxFrameRate
+                }) {
+                    device.activeVideoMinFrameDuration = fps
+                    device.activeVideoMaxFrameDuration = fps
+                }
+                device.unlockForConfiguration()
+            } catch {
+                // 拿不到锁就沿用默认帧率，不影响功能。
+            }
         }
 
         session.commitConfiguration()

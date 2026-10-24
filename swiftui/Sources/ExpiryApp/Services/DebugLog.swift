@@ -7,8 +7,15 @@ import Foundation
 enum DebugLog {
     private static let queue = DispatchQueue(label: "debuglog")
 
+    /// ★★★ 2026-10-24（用户：「**耗电发热有些严重**」）——
+    ///   这个日志每拖一次就给 `Documents/drag_debug.txt` **整读+整写**一遍
+    ///   （200 行 × 每次全量写盘），属于纯诊断开销，正式版必须关掉。
+    ///   ➜ Release 构建里 `drag(_:)` 直接返回，不做任何 I/O；
+    ///     需要排查时用 Debug 配置装包即可（`#if DEBUG`）。
     static func drag(_ message: String) {
+        #if DEBUG
         append(to: "drag_debug.txt", message)
+        #endif
     }
 
     private static func append(to fileName: String, _ message: String) {

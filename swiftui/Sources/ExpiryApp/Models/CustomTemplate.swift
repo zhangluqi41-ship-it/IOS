@@ -24,8 +24,41 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     var tintName: String = "blue"
     /// **图标本身的颜色**。
     var iconColorName: String = "white"
+
+    // ★★★ 2026-10-24（用户：「**我的图标全变成重写了**」）——
+    //   真因：这里原来是 Swift 自动合成的 `Codable`。合成的 `init(from:)` 对
+    //   **每个非可选字段都要求 key 存在**（默认值只在 `init()` 里生效，不参与解码）。
+    //   我后来加了 `noExpiry` / `originalDays` / `useSecondary` 等字段，
+    //   旧数据没有这些 key → **解码整体失败** → `all` 返回 `[]` →
+    //   `seedPresetsIfNeeded` 以为"空库"→ 播种 → **用户的模板被覆盖**。
+    //   ➜ 手写解码：**每个字段都用 `decodeIfPresent` + 各自的默认值**，
+    //     以后再加字段也不会让旧数据读不出来。
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "未命名模板"
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "square.grid.2x2"
+        tintName = try c.decodeIfPresent(String.self, forKey: .tintName) ?? "blue"
+        iconColorName = try c.decodeIfPresent(String.self, forKey: .iconColorName) ?? "white"
+        nodes = try c.decodeIfPresent([CustomNode].self, forKey: .nodes) ?? []
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        defaultDays = try c.decodeIfPresent(Int.self, forKey: .defaultDays)
+        usePrep = try c.decodeIfPresent(Bool.self, forKey: .usePrep) ?? false
+        prepDays = try c.decodeIfPresent(Int.self, forKey: .prepDays) ?? 3
+        needsManualName = try c.decodeIfPresent(Bool.self, forKey: .needsManualName) ?? true
+        useSecondary = try c.decodeIfPresent(Bool.self, forKey: .useSecondary) ?? false
+        sourceTemplateID = try c.decodeIfPresent(UUID.self, forKey: .sourceTemplateID)
+        includeTemplateInTitle = try c.decodeIfPresent(Bool.self, forKey: .includeTemplateInTitle) ?? false
+        noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
+        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
+        sourceNodePath = try c.decodeIfPresent([String].self, forKey: .sourceNodePath) ?? []
+        titleParts = try c.decodeIfPresent([TitlePart].self, forKey: .titleParts) ?? []
+        titleSeparator = try c.decodeIfPresent(String.self, forKey: .titleSeparator) ?? "-"
+    }
+
     /// 第一级菜单。
-    var nodes: [CustomNode] = []
     /// 创建时间（用于排序）。
     var createdAt: Date = Date()
     /// ★★★ 2026-10-19（用户）：「时间的设定**只会存在一个树级**……
@@ -181,6 +214,28 @@ struct CustomNode: Codable, Identifiable, Equatable {
     var noExpiry: Bool = false
     var children: [CustomNode] = []
 
+    // ★ 同 `CustomTemplate`：手写宽容解码，旧数据缺 `noExpiry` / `originalDays` 也能读出来。
+    init() {}
+
+    init(name: String, days: Int? = nil, originalDays: Int? = nil,
+         noExpiry: Bool = false, children: [CustomNode] = []) {
+        self.name = name
+        self.days = days
+        self.originalDays = originalDays
+        self.noExpiry = noExpiry
+        self.children = children
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        days = try c.decodeIfPresent(Int.self, forKey: .days)
+        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
+        noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
+        children = try c.decodeIfPresent([CustomNode].self, forKey: .children) ?? []
+    }
+
     /// 该节点及其所有后代的数量（含自己）。
     var leafCount: Int { 1 + children.reduce(0) { $0 + $1.leafCount } }
 
@@ -215,9 +270,12 @@ enum CustomTemplateStore {
         }
         set {
             cache = newValue
-            if let data = try? JSONEncoder().encode(newValue) {
-                store.set(data, forKey: key)
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            // ★ 覆盖前把**上一版原始字节**留一份备份（只留最近一次），事故后可人工恢复。
+            if let old = store.data(forKey: key) {
+                store.set(old, forKey: key + ".backup")
             }
+            store.set(data, forKey: key)
         }
     }
 
@@ -244,7 +302,18 @@ enum CustomTemplateStore {
     /// ★ 2026-10-19（用户）：「能否用现有的新建模板功能**全部重写一遍原有功能**呢？
     ///   可以写完后在他们的后面**标出（重写）**，保留原有的先实验一下」
     static func seedPresetsIfNeeded() {
-        let key = "customTemplates.seeded.v2"
+        let key = "customTemplates.seeded.v3"
+
+        // ★★★ 2026-10-24（数据事故）：「**我的图标全变成重写了**」——
+        //   之前只要 `seeded.v2` 标记读不到就会重新播种，而播种用的是 `all + [...]`；
+        //   一旦 `all` 因解码失败返回空，就变成"用 6 个预设覆盖用户全部模板"。
+        //   ➜ **双保险**：
+        //     ① 库里**只要还有一条模板**，就绝不播种（并顺手把标记补上）；
+        //     ② 标记只升一次，且换成 v3（旧标记失效也没关系）。
+        guard all.isEmpty else {
+            store.set(true, forKey: key)
+            return
+        }
         guard !store.bool(forKey: key) else { return }
         store.set(true, forKey: key)
 
