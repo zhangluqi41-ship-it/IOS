@@ -146,9 +146,6 @@ final class ExpiryStore: ObservableObject {
         UNUserNotificationCenter.current().setNotificationCategories([due, dueComplete])
     }
 
-    /// ★ 2026-10-24：通知重排的合并令牌（见 `rescheduleReminders`）。
-    private var pendingReschedule: DispatchWorkItem?
-
     private let io = DispatchQueue(label: "com.xiaoqi.expiry.store", qos: .utility)
     private let fileURL: URL
 
@@ -298,20 +295,6 @@ final class ExpiryStore: ObservableObject {
     ///   也顺手清掉旧版本（≤1.1.17）排下的「提前 5 分钟」残留通知，
     ///   以及上一轮的「稍后提醒」重复通知。
     func rescheduleReminders() {
-        // ★★★ 2026-10-24（用户：「**耗电发热有些严重**」）——
-        //   `commit` 每次都调它：`removeAllPendingNotificationRequests()` +
-        //   重排 14 天 × 每天 1 条 + `syncActivity`（含灵动岛 purge/update），
-        //   一次打印会连着触发好几次（add → 改记录 → 标记已完成…）。
-        //   ➜ 合并到 **0.4 秒**内只跑最后一次；界面上的反馈由 `records` 驱动，不受影响。
-        pendingReschedule?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.performReschedule()
-        }
-        pendingReschedule = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
-    }
-
-    private func performReschedule() {
         let center = UNUserNotificationCenter.current()
         // 本 App 是这些通知的唯一来源，整批清掉最干净 ——
         // ★ 也顺手清掉旧版本用别的 identifier 排下的残留通知（否则它们还会照常弹），
@@ -663,9 +646,6 @@ final class ExpiryStore: ObservableObject {
         let url = fileURL
         io.async {
             do {
-                // ⚠️ 曾尝试复用 static JSONEncoder，但 Swift 6 严格并发下
-                //   `JSONEncoder` 不是 Sendable，`static let` 会报并发安全错误 →
-                //   保持每次新建（写盘本身在后台串行队列，这点开销可忽略）。
                 let data = try JSONEncoder().encode(list)
                 // ★★★ 2026-10-15：写入保护等级从 `.completeFileProtection`
                 //   降为 `.completeFileProtectionUntilFirstUserAuthentication` ——
