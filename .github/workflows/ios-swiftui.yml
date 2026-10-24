@@ -67,6 +67,7 @@ jobs:
       - name: Build iOS (release, no codesign)
         working-directory: swiftui
         run: |
+          set -o pipefail
           xcodebuild build \
             -project ExpiryManager.xcodeproj \
             -scheme ExpiryManager \
@@ -74,7 +75,26 @@ jobs:
             -sdk iphoneos \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO 2>&1 | tee /tmp/build.log
+          status=$?
+
+          # ★ 把编译错误写进 Job Summary —— 这样在没有 actions:read 权限的情况下，
+          #   打开 Actions 页面就能直接看到「哪个文件第几行报了什么错」。
+          {
+            echo "## 编译结果"
+            echo ""
+            if [ "$status" -eq 0 ]; then
+              echo "✅ 成功"
+            else
+              echo "❌ 失败（exit $status）"
+              echo ""
+              echo '```'
+              grep -E "error: " /tmp/build.log | sed 's|.*/Sources/|Sources/|' | sort -u | head -80
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$status"
 
       - name: Patch Info.plist (scene manifest + 本地化 + 字体 + 缺失键)
         working-directory: swiftui
