@@ -33,7 +33,10 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     //   `seedPresetsIfNeeded` 以为"空库"→ 播种 → **用户的模板被覆盖**。
     //   ➜ 手写解码：**每个字段都用 `decodeIfPresent` + 各自的默认值**，
     //     以后再加字段也不会让旧数据读不出来。
-    init() {}
+    init() {
+        // ⚠️ `name` 没有默认值，空初始化必须显式赋值，否则编译报"未初始化所有存储属性"。
+        name = ""
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -215,7 +218,9 @@ struct CustomNode: Codable, Identifiable, Equatable {
     var children: [CustomNode] = []
 
     // ★ 同 `CustomTemplate`：手写宽容解码，旧数据缺 `noExpiry` / `originalDays` 也能读出来。
-    init() {}
+    init() {
+        name = ""
+    }
 
     init(name: String, days: Int? = nil, originalDays: Int? = nil,
          noExpiry: Bool = false, children: [CustomNode] = []) {
