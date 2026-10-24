@@ -47,6 +47,12 @@ static dispatch_queue_t SFPrinterLogQueue(void) {
 }
 
 void SFPrinterLog(NSString *message) {
+  // Release 构建不写盘：这是排查用的诊断日志，正式版留着白占空间。
+  // 需要抓打印机日志时用 Debug 配置装包。
+#if !DEBUG
+  (void)message;
+  return;
+#else
   if (message.length == 0) return;
 
   // 1) 系统日志 —— 便于 `ip_tool.py log` 实时抓
@@ -80,6 +86,7 @@ void SFPrinterLog(NSString *message) {
       NSLog(@"[Printer] 写日志文件失败: %@", e.reason);
     }
   });
+#endif
 }
 
 void SFPrinterLogClear(void) {

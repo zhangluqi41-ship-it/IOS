@@ -38,3 +38,28 @@ enum DebugLog {
         }
     }
 }
+
+// MARK: - 清理历史诊断文件
+
+extension DebugLog {
+    /// 删掉旧版本在 `Documents/` 里留下的诊断文件。
+    ///
+    /// 这些文件只在排查时有用（`activity_debug.txt` 曾长到 1.2 MB），
+    /// 现在 Release 已经不再写它们，但**用户设备上还留着旧文件**，占空间也碍眼。
+    /// ⚠️ 只删日志类，**`records_backup_*.json` 是数据备份，一律不动**。
+    static func cleanupLegacyDiagnostics() {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        guard let docs else { return }
+        let names = [
+            "activity_debug.txt",
+            "drag_debug.txt",
+            "printer_log.txt",
+            "_probe",
+        ]
+        for name in names {
+            let url = docs.appendingPathComponent(name)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+}

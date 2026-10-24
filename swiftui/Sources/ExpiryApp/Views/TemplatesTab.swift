@@ -13,85 +13,51 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// 模板二级页路由。
+///
+/// 模板页只有**自定义模板**一种：内置的通用/康普茶/奶制品/肉类已整体移除
+/// （连同它们的页面文件）。`LabelKind` 保留不变，历史记录照常解析。
 enum TemplateRoute: Hashable {
-    case generic
-    case kombucha
-    case dairy
-    case meat
-    /// ★★★ 2026-10-19（用户）：「为什么自定义磁贴不能拖不能固定？之后他和现有磁贴
-    ///   **应该是同一套东西**啊」
-    ///   ➜ 正解就是让它也成为一种 `route` —— 拖动、固定、排序、隐藏全部自动复用同一套代码。
-    ///   `id` 指向 `CustomTemplateStore` 里的模板（名字/图标都从那里取）。
     case custom(UUID)
 
-    /// 内置的 4 个（不含自定义）。
-    /// ⚠️ 有关联值后 `CaseIterable` 无法自动合成，这里手写。
-    static var allCases: [TemplateRoute] { [.generic, .kombucha, .dairy, .meat] }
+    static var allCases: [TemplateRoute] { [] }
+    var isCustom: Bool { true }
 
-    /// 是不是自定义模板。
-    var isCustom: Bool {
-        if case .custom = self { return true }
-        return false
-    }
-
-    /// 持久化用的稳定 key（拖动排序 / 固定 / 隐藏都用它）。
     var key: String {
         switch self {
-        case .generic: return "generic"
-        case .kombucha: return "kombucha"
-        case .dairy: return "dairy"
-        case .meat: return "meat"
-        case .custom(let id): return "custom:\(id.uuidString)"
+        case .custom(let id): return "custom://(id.uuidString)"
         }
     }
 
+    /// 旧版本遗留的 "generic" / "kombucha" / "dairy" / "meat" 一律解析失败 → 自动过滤。
     static func from(key: String) -> TemplateRoute? {
         if key.hasPrefix("custom:"),
            let id = UUID(uuidString: String(key.dropFirst("custom:".count))) {
             return .custom(id)
         }
-        return allCases.first { $0.key == key }
+        return nil
     }
 
     var title: String {
         switch self {
-        case .generic: return "通用效期"
-        case .kombucha: return "康普茶"
-        case .dairy: return "奶制品"
-        case .meat: return "肉类"
         case .custom(let id): return CustomTemplateStore.template(id: id)?.name ?? "已删除的模板"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .generic: return "自定标题与两个日期"
-        case .kombucha: return "自动算一发二发日期"
-        case .dairy: return "按品类套保质期"
-        case .meat: return "冷藏 / 冷冻自动算"
-        case .custom:
-            return "自定义模板"
+        case .custom: return "自定义模板"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .generic: return "clock"
-        case .kombucha: return "drop.fill"
-        case .dairy: return "flask.fill"
-        case .meat: return "fork.knife"
         case .custom(let id): return CustomTemplateStore.template(id: id)?.icon ?? "square.grid.2x2"
         }
     }
 
     var tint: Color {
         switch self {
-        case .generic: return Theme.tplGenericTint
-        case .kombucha: return Theme.tplKombuchaTint
-        case .dairy: return Theme.tplDairyTint
-        case .meat: return Theme.tplMeatTint
         case .custom(let id):
-            // 图标颜色（自定义模板可调）。
             let template = CustomTemplateStore.template(id: id)
             return CustomTemplate.color(named: template?.iconColorName ?? "white")
         }
@@ -99,12 +65,7 @@ enum TemplateRoute: Hashable {
 
     var fill: Color {
         switch self {
-        case .generic: return Theme.tplGenericFill
-        case .kombucha: return Theme.tplKombuchaFill
-        case .dairy: return Theme.tplDairyFill
-        case .meat: return Theme.tplMeatFill
         case .custom(let id):
-            // 图标块背景色（自定义模板可调）。
             let template = CustomTemplateStore.template(id: id)
             return CustomTemplate.color(named: template?.tintName ?? "blue")
         }
@@ -430,21 +391,11 @@ struct TemplatesTab: View {
             .navigationDestination(for: TemplateRoute.self) { route in
                 switch route {
                 case .custom(let id):
-                    // ★ 2026-10-19（用户）：「点开后**就是**『肉类』那种页面，不要多层」
-                    //   → 直接进打印页，品类用下拉菜单选；标题 = 模板名。
                     if let template = CustomTemplateStore.template(id: id) {
                         CustomTemplatePage(template: template)
                     } else {
                         ContentUnavailableView("模板已删除", systemImage: "trash")
                     }
-                case .generic:
-                    GenericTemplateView()
-                case .kombucha:
-                    KombuchaTemplateView()
-                case .dairy:
-                    DairyTemplateView()
-                case .meat:
-                    MeatTemplateView()
                 }
             }
         }

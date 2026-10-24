@@ -140,6 +140,8 @@ struct RootView: View {
             scheduleResetFlush()
         }
         .onAppear {
+            // 清掉旧版本留在 Documents/ 里的诊断文件（数据备份不动）。
+            DebugLog.cleanupLegacyDiagnostics()
             // 冷启动时四个栈本来就是空的；这一句是防状态恢复后残留二级页。
             resetInactiveTabs(current: nav.selection)
             // ★ 蓝牙随 App 启动：预启 CoreBluetooth + 起常驻轮询 +

@@ -182,11 +182,21 @@ struct ExpiryListView: View {
         }
     }
 
+    /// 记录的图标颜色：有模板配色就用模板的，否则用品牌色。
+    private func iconTint(for record: LabelRecord) -> AnyShapeStyle {
+        if let name = record.iconColorName {
+            return AnyShapeStyle(CustomTemplate.color(named: name))
+        }
+        return AnyShapeStyle(Theme.brand)
+    }
+
     private func row(_ record: LabelRecord) -> some View {
         let status = ExpiryStatus.of(record, now: now)
         return HStack(spacing: 12) {
-            Image(systemName: record.kind.systemImage)
-                .foregroundStyle(record.usedAt == nil ? Theme.brand : .secondary)
+            // 记录自带模板图标时优先用它；老记录没有则回退到 `kind`。
+            Image(systemName: record.iconName ?? record.kind.systemImage)
+                .foregroundStyle(record.usedAt == nil
+                                 ? iconTint(for: record) : AnyShapeStyle(.secondary))
                 .frame(width: 26)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -197,7 +207,8 @@ struct ExpiryListView: View {
                     .lineLimit(1)
 
                 HStack(spacing: 5) {
-                    Text(record.kind.label)
+                    // 优先显示来源模板名；老记录回退到类别名。
+                    Text(record.templateName ?? record.kind.label)
                     Text("·")
                     // ★ 写清楚倒计时是数到**哪个日期** —— 用户反馈「看不出剩余天数是到保质期还是到最佳使用」。
                     Text("\(record.dueLabel) \(LabelTemplate.fmtDate(record.dueDate))")

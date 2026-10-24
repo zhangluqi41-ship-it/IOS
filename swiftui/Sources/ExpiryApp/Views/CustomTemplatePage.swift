@@ -560,9 +560,15 @@ struct CustomTemplatePage: View {
         //   这里再套 `min` 会把它压回完成时间 → 记录被判成"今天到期"。
         //   ➜ 制备型直接用 `bestDate` 本身；非制备型才取 min。
         let recordBest = isPrep ? bestDate : min(bestDate, expireDate)
+        // 把来源模板的外观写进记录，列表才能画出这个模板自己的图标与文案，
+        // 而不是一律回退到 `.generic`。
         let record = LabelTemplate.makeRecord(kind: .generic, data: data, createdAt: now,
                                               expireAt: recordExpire, bestBefore: recordBest,
-                                              maker: makerFinal, isPrepared: isPrep)
+                                              maker: makerFinal, isPrepared: isPrep,
+                                              templateName: template.name,
+                                              iconName: template.icon,
+                                              tintName: template.tintName,
+                                              iconColorName: template.iconColorName)
         return LabelDraft(data: data, record: record)
     }
 }

@@ -134,6 +134,14 @@ struct TileGrid: UIViewRepresentable {
 
             let keys = order.map(\.key)
             let orderUnchanged = appliedKeys == keys
+            // ★ 2026-10-24（用户：「磁贴移动后，**进入这个模式，磁贴又要在画面里重复动一下**」）——
+            //   拖动落位时我们**故意不 apply**（见上面的 SKIP 分支），于是 `snapshot` 里
+            //   还是旧顺序、屏幕上已经是新顺序。等到切编辑/删除模式触发这次 `apply` 时，
+            //   diff 会把"旧 → 新"当成一次真实的重排，把磁贴再动一遍。
+            //   ➜ 只要发现 **target 顺序和上次 apply 的不一致**（= snapshot 落后），
+            //     就用 `applySnapshotUsingReloadData`：**瞬间对齐、不播任何动画**。
+            //     （这里要的正是"无声"，和拖落位那次相反。）
+            let snapshotIsStale = !orderUnchanged
 
             // ★★★ 2026-10-22（用户两次报「编辑和删除**依然用不了**」）——
             //   ⚠️ 上一版把 `modeChanged` 写在**赋值之后**：
@@ -172,7 +180,12 @@ struct TileGrid: UIViewRepresentable {
             //   ➜ 去掉外层包裹，只留 `apply(animatingDifferences:)`：
             //     整个 diff + 布局在同一套系统事务里，帧是连贯的。
             // 100% 原生：动画完全交给系统。
-            dataSource.apply(snapshot, animatingDifferences: animated)
+            if snapshotIsStale {
+                // 快照落后于视觉 → 直接替换数据源（无动画），避免磁贴"重复动一下"。
+                dataSource.applySnapshotUsingReloadData(snapshot)
+            } else {
+                dataSource.apply(snapshot, animatingDifferences: animated)
+            }
             _ = cv
         }
 
@@ -341,6 +354,16 @@ final class TileCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// SF Symbol 图片缓存。`reconfigureItems` 每次都会调 `configure`，
+    /// 而 `UIImage(systemName:)` 每次都要走一遍符号渲染 —— 图标就那几十个，缓存即可。
+    /// ⚠️ `NSCache` 不是 `Sendable`，用 `nonisolated(unsafe)` 显式放行
+    ///   （只在主线程的 `configure` 里访问，实际安全）。
+    nonisolated(unsafe) private static let iconCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 128
+        return cache
+    }()
+
     func configure(route: TemplateRoute,
                    pinned: Bool,
                    deletingMode: Bool,
@@ -357,8 +380,16 @@ final class TileCell: UICollectionViewCell {
         self.onEditAction = onEditAction
 
         titleLabel.text = route.title
-        iconView.image = UIImage(systemName: route.systemImage)?
-            .withConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
+        let symbolName = route.systemImage
+        if let cached = Self.iconCache.object(forKey: symbolName as NSString) {
+            iconView.image = cached
+        } else if let image = UIImage(systemName: symbolName)?
+            .withConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold)) {
+            Self.iconCache.setObject(image, forKey: symbolName as NSString)
+            iconView.image = image
+        } else {
+            iconView.image = nil
+        }
         iconView.tintColor = UIColor(route.tint)
         iconContainer.backgroundColor = UIColor(route.fill)
 

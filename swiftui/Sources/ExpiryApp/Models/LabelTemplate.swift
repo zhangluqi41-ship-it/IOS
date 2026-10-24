@@ -514,7 +514,11 @@ enum LabelTemplate {
                            bestBefore: Date,
                            maker: String,
                            source: RecordSource = .printed,
-                           isPrepared: Bool = false) -> LabelRecord {
+                           isPrepared: Bool = false,
+                           templateName: String? = nil,
+                           iconName: String? = nil,
+                           tintName: String? = nil,
+                           iconColorName: String? = nil) -> LabelRecord {
         LabelRecord(title: data.title,
                     kind: kind,
                     maker: clamp(maker, maxNameLength),
@@ -525,7 +529,11 @@ enum LabelTemplate {
                     usedAt: nil,
                     qrText: data.qrText,
                     source: source,
-                    isPrepared: isPrepared)
+                    isPrepared: isPrepared,
+                    templateName: templateName,
+                    iconName: iconName,
+                    tintName: tintName,
+                    iconColorName: iconColorName)
     }
 
     // MARK: 重新打印

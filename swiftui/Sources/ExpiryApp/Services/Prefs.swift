@@ -25,11 +25,6 @@ enum Prefs {
 
     /// ★ 2026-10-18（用户第 1 条）：**长按菜单里「删除」掉的磁贴**（存 key）。
     /// 不记这个就没法区分「删掉的」和「新版本新增的」—— 删除的会被补回来。
-    static var hiddenTemplates: [String] {
-        get { d.stringArray(forKey: "hiddenTemplates") ?? [] }
-        set { d.set(newValue, forKey: "hiddenTemplates") }
-    }
-
     /// ★ 2026-10-18（用户订正）：**固定的磁贴可以有多个**，按固定先后排在前面。
     ///   （原来只允许 1 个，用户明确说「每个都可以固定，按固定顺序排先后」）
     static var pinnedTemplates: [String] {

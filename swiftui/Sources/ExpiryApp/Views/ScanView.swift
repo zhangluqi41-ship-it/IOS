@@ -28,9 +28,6 @@ import UIKit
 
 /// 扫码 Tab 的二级页路由。
 enum ScanRoute: Hashable {
-    case secondFermentation(KombuchaFirstLabel)
-    /// 扫到**冷冻的肉类**标签 → 解冻页（冷藏 / 已解冻的标签不会走到这里）。
-    case thaw(MeatLabelInfo)
     /// ★ 2026-10-19（用户）：「扫描已经打印出来的某个二维码**二次制备**……在 tabbar 的扫描里
     ///   完成后弹出来，参考康普茶二发」
     ///   ➜ 扫到某个「开了二次制备」的自定义模板标签 → 直接进它的二次制备页。
@@ -591,10 +588,6 @@ struct ScanView: View {
             .toolbarBackground(.hidden, for: .navigationBar)
             .navigationDestination(for: ScanRoute.self) { route in
                 switch route {
-                case .secondFermentation(let first):
-                    KombuchaSecondView(first: first)
-                case .thaw(let meat):
-                    MeatThawView(meat: meat)
                 case .customSecondary(let templateID, let sourceTitle, let sourceBest,
                                       let sourceExpire, let sourceQR):
                     if let template = CustomTemplateStore.template(id: templateID) {

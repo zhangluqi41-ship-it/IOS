@@ -86,9 +86,23 @@ struct LabelRecord: Identifiable, Codable, Hashable {
     ///   文件被改名 `.corrupt` + 起空表（2026-10-21 真实发生过）。
     var isPrepared: Bool = false
 
+    // 记录原来只存 `kind`（4 个内置类别），所有自定义模板都被归成 `.generic`，
+    // 于是列表里一律显示通用效期的图标与文案。
+    // ➜ 打印时把来源模板的外观一起存下来，列表优先用记录自己的。
+    // ⚠️ 老记录没有这些字段 → nil → 回退到 `kind` 的样子，不影响旧数据解析。
+    /// 来源模板名（列表副标题用）。
+    var templateName: String?
+    /// 来源模板的 SF Symbol 名。
+    var iconName: String?
+    /// 来源模板的图标块背景色名。
+    var tintName: String?
+    /// 来源模板的图标颜色名。
+    var iconColorName: String?
+
     private enum CodingKeys: String, CodingKey {
         case id, title, kind, maker, createdAt, printedAt
         case expireAt, bestBefore, usedAt, qrText, source, isPrepared
+        case templateName, iconName, tintName, iconColorName
     }
 
     init(id: UUID = UUID(),
@@ -102,7 +116,11 @@ struct LabelRecord: Identifiable, Codable, Hashable {
          usedAt: Date?,
          qrText: String,
          source: RecordSource,
-         isPrepared: Bool = false) {
+         isPrepared: Bool = false,
+         templateName: String? = nil,
+         iconName: String? = nil,
+         tintName: String? = nil,
+         iconColorName: String? = nil) {
         self.id = id
         self.title = title
         self.kind = kind
@@ -115,6 +133,10 @@ struct LabelRecord: Identifiable, Codable, Hashable {
         self.qrText = qrText
         self.source = source
         self.isPrepared = isPrepared
+        self.templateName = templateName
+        self.iconName = iconName
+        self.tintName = tintName
+        self.iconColorName = iconColorName
     }
 
     /// 手写解码：**后加的字段一律 `decodeIfPresent` + 默认值**。
@@ -133,6 +155,10 @@ struct LabelRecord: Identifiable, Codable, Hashable {
         qrText     = try c.decodeIfPresent(String.self, forKey: .qrText) ?? ""
         source     = try c.decodeIfPresent(RecordSource.self, forKey: .source) ?? .printed
         isPrepared = try c.decodeIfPresent(Bool.self, forKey: .isPrepared) ?? false
+        templateName = try c.decodeIfPresent(String.self, forKey: .templateName)
+        iconName = try c.decodeIfPresent(String.self, forKey: .iconName)
+        tintName = try c.decodeIfPresent(String.self, forKey: .tintName)
+        iconColorName = try c.decodeIfPresent(String.self, forKey: .iconColorName)
     }
 
     /// 「到期日」= 最佳使用时间 —— 列表分组 / 剩余天数 / 通知全部以它为准。
