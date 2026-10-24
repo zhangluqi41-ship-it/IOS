@@ -203,12 +203,23 @@ final class ExpiryStore: ObservableObject {
         onMain { [weak self] in
             guard let self else { return }
             var list = self.records
+            // ★★★ 2026-10-24（用户）：「打印标签的时候**如果后台中已用完是有数据的话，
+            //   打印完的标签数据就不会被写进系统里**」——
+            //   真因：这里的二维码去重会**跨"已用完"合并**。同名物料再打一张，
+            //   二维码与那条已完成的历史记录完全一致 → 命中 `firstIndex` →
+            //   把 `usedAt` 从旧记录搬过来 → 新记录**一进列表就是"已用完"**，
+            //   「正在使用」里当然看不到它。
+            //   ➜ 只与**仍在用**的记录合并；旧的那条已用完就**新建一条**（历史保留）。
             if let index = list.firstIndex(where: {
-                !$0.qrText.isEmpty && $0.qrText == record.qrText
+                !$0.qrText.isEmpty && $0.qrText == record.qrText && $0.usedAt == nil
             }) {
                 var merged = record
                 merged.id = list[index].id
-                merged.usedAt = list[index].usedAt
+                merged.usedAt = nil          // 命中就说明是"还在用"的那条
+                merged.templateName = record.templateName ?? list[index].templateName
+                merged.iconName = record.iconName ?? list[index].iconName
+                merged.tintName = record.tintName ?? list[index].tintName
+                merged.iconColorName = record.iconColorName ?? list[index].iconColorName
                 list[index] = merged
             } else {
                 list.insert(record, at: 0)
