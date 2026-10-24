@@ -33,33 +33,7 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     //   `seedPresetsIfNeeded` 以为"空库"→ 播种 → **用户的模板被覆盖**。
     //   ➜ 手写解码：**每个字段都用 `decodeIfPresent` + 各自的默认值**，
     //     以后再加字段也不会让旧数据读不出来。
-    init() {
-        // ⚠️ `name` 没有默认值，空初始化必须显式赋值，否则编译报"未初始化所有存储属性"。
-        name = ""
-    }
 
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "未命名模板"
-        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "square.grid.2x2"
-        tintName = try c.decodeIfPresent(String.self, forKey: .tintName) ?? "blue"
-        iconColorName = try c.decodeIfPresent(String.self, forKey: .iconColorName) ?? "white"
-        nodes = try c.decodeIfPresent([CustomNode].self, forKey: .nodes) ?? []
-        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-        defaultDays = try c.decodeIfPresent(Int.self, forKey: .defaultDays)
-        usePrep = try c.decodeIfPresent(Bool.self, forKey: .usePrep) ?? false
-        prepDays = try c.decodeIfPresent(Int.self, forKey: .prepDays) ?? 3
-        needsManualName = try c.decodeIfPresent(Bool.self, forKey: .needsManualName) ?? true
-        useSecondary = try c.decodeIfPresent(Bool.self, forKey: .useSecondary) ?? false
-        sourceTemplateID = try c.decodeIfPresent(UUID.self, forKey: .sourceTemplateID)
-        includeTemplateInTitle = try c.decodeIfPresent(Bool.self, forKey: .includeTemplateInTitle) ?? false
-        noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
-        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
-        sourceNodePath = try c.decodeIfPresent([String].self, forKey: .sourceNodePath) ?? []
-        titleParts = try c.decodeIfPresent([TitlePart].self, forKey: .titleParts) ?? []
-        titleSeparator = try c.decodeIfPresent(String.self, forKey: .titleSeparator) ?? "-"
-    }
 
     /// 第一级菜单。
     /// 创建时间（用于排序）。
@@ -218,10 +192,6 @@ struct CustomNode: Codable, Identifiable, Equatable {
     var children: [CustomNode] = []
 
     // ★ 同 `CustomTemplate`：手写宽容解码，旧数据缺 `noExpiry` / `originalDays` 也能读出来。
-    init() {
-        name = ""
-    }
-
     init(name: String, days: Int? = nil, originalDays: Int? = nil,
          noExpiry: Bool = false, children: [CustomNode] = []) {
         self.name = name
@@ -386,3 +356,32 @@ enum CustomTemplateStore {
 }
 
 // MARK: - 选中的路径（打印时用）
+
+// MARK: - 宽容解码（放在 extension 里，避免让 struct 丢掉自动生成的 memberwise init）
+
+/// ⚠️ 必须写在 `extension` 里：如果写在 `struct CustomTemplate { ... }` 本体，
+///   Swift **不再自动生成 memberwise init**，`CustomTemplate(name:icon:)` 全部调用点会编译失败。
+extension CustomTemplate {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "未命名模板"
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "square.grid.2x2"
+        tintName = try c.decodeIfPresent(String.self, forKey: .tintName) ?? "blue"
+        iconColorName = try c.decodeIfPresent(String.self, forKey: .iconColorName) ?? "white"
+        nodes = try c.decodeIfPresent([CustomNode].self, forKey: .nodes) ?? []
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        defaultDays = try c.decodeIfPresent(Int.self, forKey: .defaultDays)
+        usePrep = try c.decodeIfPresent(Bool.self, forKey: .usePrep) ?? false
+        prepDays = try c.decodeIfPresent(Int.self, forKey: .prepDays) ?? 3
+        needsManualName = try c.decodeIfPresent(Bool.self, forKey: .needsManualName) ?? true
+        useSecondary = try c.decodeIfPresent(Bool.self, forKey: .useSecondary) ?? false
+        sourceTemplateID = try c.decodeIfPresent(UUID.self, forKey: .sourceTemplateID)
+        includeTemplateInTitle = try c.decodeIfPresent(Bool.self, forKey: .includeTemplateInTitle) ?? false
+        noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
+        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
+        sourceNodePath = try c.decodeIfPresent([String].self, forKey: .sourceNodePath) ?? []
+        titleParts = try c.decodeIfPresent([TitlePart].self, forKey: .titleParts) ?? []
+        titleSeparator = try c.decodeIfPresent(String.self, forKey: .titleSeparator) ?? "-"
+    }
+}
