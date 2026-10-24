@@ -295,18 +295,6 @@ final class ExpiryStore: ObservableObject {
     ///   也顺手清掉旧版本（≤1.1.17）排下的「提前 5 分钟」残留通知，
     ///   以及上一轮的「稍后提醒」重复通知。
     func rescheduleReminders() {
-        // `commit` 每次都调它：清空全部待发通知 + 重排 14 天 + 同步灵动岛，
-        // 一次打印会连触发好几次（add → 改记录 → 标记已完成…）。
-        // ➜ 合并到 0.4 秒内只跑最后一次；界面反馈由 `records` 驱动，不受影响。
-        pendingReschedule?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.performReschedule()
-        }
-        pendingReschedule = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
-    }
-
-    private func performReschedule() {
         let center = UNUserNotificationCenter.current()
         // 本 App 是这些通知的唯一来源，整批清掉最干净 ——
         // ★ 也顺手清掉旧版本用别的 identifier 排下的残留通知（否则它们还会照常弹），
