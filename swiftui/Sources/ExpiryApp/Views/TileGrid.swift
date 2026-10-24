@@ -84,6 +84,7 @@ struct TileGrid: UIViewRepresentable {
         /// 刚刚发生过拖放落位 —— 下一次 `apply` 改走"无 diff 同步"。
         private var dropJustHappened = false
 
+
         init(_ parent: TileGrid) {
             self.parent = parent
         }
@@ -115,6 +116,26 @@ struct TileGrid: UIViewRepresentable {
         }
 
         /// ★ DiffableDataSource 的核心：给快照，系统自己 diff + 播放动画。
+        /// 落位动画播完后，把 `dataSource` 的快照静默追平到最新顺序。
+        ///
+        /// ⚠️ 不持有 `DispatchWorkItem`（Swift 6 下非 Sendable）：改成延迟回调里
+        /// **再校验一次 `parent.order`**，不一致就说明用户又拖了，直接放弃这次追平。
+        private func scheduleSnapshotRealign(order: [TemplateRoute]) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self, let dataSource = self.dataSource else { return }
+                guard self.parent.order == order else { return }   // 期间又变了 → 让新的一次负责
+                var snapshot = NSDiffableDataSourceSnapshot<String, TemplateRoute>()
+                snapshot.appendSections(["main"])
+                snapshot.appendItems(order, toSection: "main")
+                if !order.isEmpty { snapshot.reconfigureItems(order) }
+                self.appliedKeys = order.map(\.key)
+                self.appliedPinned = self.parent.pinnedKeys
+                self.appliedDeleting = self.parent.deletingMode
+                self.appliedEditing = self.parent.editingMode
+                dataSource.applySnapshotUsingReloadData(snapshot)
+            }
+        }
+
         func apply(order: [TemplateRoute], animated: Bool) {
             guard let cv = collectionView, dataSource != nil else { return }
 
@@ -128,19 +149,20 @@ struct TileGrid: UIViewRepresentable {
             //     会按最新 `order` 重建，结果依然正确；而这次拖动只由系统动画负责。
             if dropJustHappened {
                 dropJustHappened = false
-                DebugLog.drag("apply -> SKIP (system animation owns the drop)")
+                DebugLog.drag("apply -> defer realign (system animation owns the drop)")
+                // ★★★ 2026-10-24（用户）：「**就从逻辑上修，不要固定画面**」——
+                //   之前这里是直接 return：落位动画是对的，但 **dataSource 的快照没跟着更新**，
+                //   于是"屏幕是新顺序、账本是旧顺序"。
+                //   等系统落位动画播完（约 0.3s），把快照**静默**追平到最新顺序：
+                //   · 用 `applySnapshotUsingReloadData`（数据层替换，不播 diff 动画）；
+                //   · 此时屏幕已经停在目标位置，reload 后布局算出来也是同一处 → 视觉不动。
+                //   ➜ 从此屏幕与快照一致，进多任务界面窗口缩小重排时也不会再"动一次"。
+                scheduleSnapshotRealign(order: order)
                 return
             }
 
             let keys = order.map(\.key)
             let orderUnchanged = appliedKeys == keys
-            // ★★★ 2026-10-24（用户）：「磁贴移动完**进入这个界面，还是会重复动一遍**」——
-            //   拖动落位时我们**故意不 apply**（见上面的 SKIP 分支），于是 snapshot 里
-            //   还是旧顺序、屏幕上已经是新顺序。等到切编辑/删除模式触发这次 `apply` 时，
-            //   diff 会把"旧 → 新"当成一次真实重排，把磁贴再动一遍。
-            //   ➜ 只要发现 target 顺序与上次 apply 的不一致（= 快照落后），
-            //     就用 `applySnapshotUsingReloadData` **瞬间对齐、不播任何动画**。
-            let snapshotIsStale = !orderUnchanged
 
             // ★★★ 2026-10-22（用户两次报「编辑和删除**依然用不了**」）——
             //   ⚠️ 上一版把 `modeChanged` 写在**赋值之后**：
@@ -179,12 +201,7 @@ struct TileGrid: UIViewRepresentable {
             //   ➜ 去掉外层包裹，只留 `apply(animatingDifferences:)`：
             //     整个 diff + 布局在同一套系统事务里，帧是连贯的。
             // 100% 原生：动画完全交给系统。
-            if snapshotIsStale {
-                // 快照落后于视觉 → 直接替换数据源（无动画），避免磁贴重复动一遍。
-                dataSource.applySnapshotUsingReloadData(snapshot)
-            } else {
-                dataSource.apply(snapshot, animatingDifferences: animated)
-            }
+            dataSource.apply(snapshot, animatingDifferences: animated)
             _ = cv
         }
 
