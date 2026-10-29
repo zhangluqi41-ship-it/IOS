@@ -81,24 +81,40 @@ jobs:
           # ★ 把编译错误写进 Job Summary —— 这样在没有 actions:read 权限的情况下，
           #   打开 Actions 页面就能直接看到「哪个文件第几行报了什么错」。
           if [ "$status" -ne 0 ]; then
-            # 用 ::error:: 注解把每条编译错误暴露到 check-run annotations，
-            # 这样不需要 actions:read 权限也能通过 API 读到具体文件和行号。
-            grep -E "error: " /tmp/build.log | sort -u | head -60 | while IFS= read -r line; do
-              clean=$(echo "$line" | sed 's|.*/Sources/|Sources/|')
-              echo "::error::$clean"
-            done
-            # 同时写进 Job Summary（网页可见）。
+            # ① 把错误行落成仓库里的文件 —— 这是唯一「无需任何额外权限就能读到」的通道：
+            #    构建失败时把自己 push 回去，本地 git pull 即可看到真实的文件:行:错误。
             {
-              echo "## 编译失败（exit $status）"
-              echo '```'
-              grep -E "error: " /tmp/build.log | sed 's|.*/Sources/|Sources/|' | sort -u | head -60
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
+              echo "# 构建失败（$(date -u '+%Y-%m-%d %H:%M:%SZ')）"
+              echo "exit=$status"
+              echo
+              grep -E "error: " /tmp/build.log | sed 's|.*/Sources/|Sources/|' | sort -u | head -120
+              echo
+              echo "---- 原始尾部 ----"
+              tail -60 /tmp/build.log
+            } > "$GITHUB_WORKSPACE/.ci-error.log" 2>/dev/null || true
+
+            echo "## 编译失败（exit $status）" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            head -80 "$GITHUB_WORKSPACE/.ci-error.log" 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "## 编译成功" >> "$GITHUB_STEP_SUMMARY"
+            rm -f "$GITHUB_WORKSPACE/.ci-error.log"
           fi
 
           exit "$status"
+
+      # ★ 失败时把错误日志提交回仓库（[skip ci] 避免递归触发）。
+      - name: Publish error log
+        if: failure()
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          if [ ! -s .ci-error.log ]; then echo "无错误日志"; exit 0; fi
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git add -f .ci-error.log
+          git commit -m "ci: build error log [skip ci]" || exit 0
+          git push origin HEAD:main || echo "push 失败（可能无写权限）"
 
       - name: Patch Info.plist (scene manifest + 本地化 + 字体 + 缺失键)
         working-directory: swiftui
