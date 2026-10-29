@@ -163,9 +163,9 @@ struct LabelDatePicker: View {
     let title: String
     @Binding var date: Date
     /// ★ 2026-10-29（用户）：「在现有日期上增加右边的时间」——
-    ///   `false`（默认）只选日期、值压到当天 0 点（原有行为，不动）；
-    ///   `true` 额外给一个时/分选择器（官方 `DatePicker(.hourAndMinute)` 滚轮），
-    ///   日期部分仍按天，时间部分保留。
+    ///   `false`（默认）= 只选日期、值压到当天 0 点（原行为不变）；
+    ///   `true`  = 额外给一个时/分滚轮（官方 `DatePicker(.hourAndMinute)`），
+    ///             日期仍按天选，时分单独保留。
     var showsTime: Bool = false
 
     /// 日历浮层是否展开。
@@ -181,22 +181,34 @@ struct LabelDatePicker: View {
     /// 统一压到 0 点后：比较稳定、写入语义干净、`onChange` 的「值变了」判据才准确。
     private var day: Binding<Date> {
         Binding(
-            get: {
-                // 只有「纯日期」模式才把值压到 0 点；带时分时原样保留。
-                showsTime ? date : AppCalendar.shared.startOfDay(for: date)
-            },
+            get: { showsTime ? date : AppCalendar.shared.startOfDay(for: date) },
             set: { newValue in
                 if showsTime {
-                    // 日期网格改动时，保留原有的时/分（否则每次点日期都会把时间归零）。
+                    // 改日期时保留原有 时:分，否则每点一次日期时间就被清零。
                     let cal = AppCalendar.shared
-                    let time = cal.dateComponents([.hour, .minute], from: date)
-                    date = cal.date(bySettingHour: time.hour ?? 0,
-                                    minute: time.minute ?? 0,
+                    let t = cal.dateComponents([.hour, .minute], from: date)
+                    date = cal.date(bySettingHour: t.hour ?? 0,
+                                    minute: t.minute ?? 0,
                                     second: 0,
                                     of: newValue) ?? newValue
                 } else {
                     date = newValue
                 }
+            }
+        )
+    }
+
+    /// 只改「时:分」，日期部分不动。
+    private var timeOfDay: Binding<Date> {
+        Binding(
+            get: { date },
+            set: { picked in
+                let cal = AppCalendar.shared
+                let t = cal.dateComponents([.hour, .minute], from: picked)
+                date = cal.date(bySettingHour: t.hour ?? 0,
+                                minute: t.minute ?? 0,
+                                second: 0,
+                                of: date) ?? picked
             }
         )
     }
@@ -210,8 +222,8 @@ struct LabelDatePicker: View {
     private static let slashy = Date.FormatStyle(date: .numeric, time: .omitted)
         .year().month().day()
 
-    /// `2026/10/30 14:30`（带时分的行用它）。
-    private static let slashyTime = Date.FormatStyle(date: .numeric, time: .shortened)
+    /// `2026/10/30 14:30` —— 带时分的那几行用它。
+    private static let slashyTime = Date.FormatStyle(date: .numeric, time: .omitted)
         .year().month().day().hour().minute()
 
     var body: some View {
@@ -264,27 +276,14 @@ struct LabelDatePicker: View {
                 DatePicker(title, selection: day, displayedComponents: .date)
                     .datePickerStyle(.graphical)
                     .labelsHidden()
+                    .frame(width: 320)
 
-                // ★ 2026-10-29（用户要「右边的时间」）：同一个 popover 里再放一个
-                //   官方时/分滚轮。`hourAndMinute` 在 iOS 上就是那个滚轮外观。
-                //   ⚠️ 只改 `date` 的时/分，不动日期部分。
                 if showsTime {
-                    DatePicker("时间",
-                               selection: Binding(
-                                get: { date },
-                                set: { picked in
-                                    let cal = AppCalendar.shared
-                                    let t = cal.dateComponents([.hour, .minute], from: picked)
-                                    date = cal.date(bySettingHour: t.hour ?? 0,
-                                                    minute: t.minute ?? 0,
-                                                    second: 0,
-                                                    of: date) ?? picked
-                                }
-                               ),
+                    // 官方时/分滚轮（`hourAndMinute` 在 iOS 上就是滚轮外观）。
+                    DatePicker("时间", selection: timeOfDay,
                                displayedComponents: .hourAndMinute)
                         .labelsHidden()
-                        .frame(width: 320)
-                        .frame(height: 120)
+                        .frame(width: 320, height: 120)
                         .clipped()
                 }
             }

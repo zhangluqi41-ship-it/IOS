@@ -40,8 +40,7 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     /// ★ 2026-10-19（用户）：「这一项（模板名称）**也可以设置一个建议时间**」
     ///     下属各层不再设时间；打印时没选到具体天数就用它兜底。
     /// 模板级统一的**最佳使用时间**天数（没建菜单时用；建了菜单就按各级的 `days`）。
-    /// 天数。**单位「天」，允许小数**（0.5 = 12 小时；5 分钟 = 5/1440 天）。
-    var defaultDays: Double? = nil
+    var defaultDays: Int? = nil
     /// ★ 2026-10-19（用户）：「使用制备功能」——
     ///   开启后标签改用「制备时间 / 完成时间 / 最佳使用时间」三行（同康普茶一发）。
     var usePrep: Bool = false
@@ -49,8 +48,7 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     ///   而且开启制备天数后，**就不会在标签中保存"原始保质期"的信息**，
     ///   此时**所有菜单中的原始保质期设置都应该变成关闭灰色不可选择**」
     ///   → 制备版式的「完成时间 = 制备时间 + prepDays」。
-    /// 制备耗时（天，允许小数）。0 = 立即完成。
-    var prepDays: Double = 3
+    var prepDays: Int = 3
     /// ★★★ 2026-10-20（用户）：「点击扫描二维码制备后弹出的这个菜单，**最上面一层增加一个功能，
     ///   叫是否需要输入模板名**」
     ///   ➜ true（默认）= 打印页要手输一个名称（如二发的水果）；
@@ -74,8 +72,7 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     ///   ➜ 开启 = 没有保质期，原始保质期记 2099/12/31。
     var noExpiry: Bool = false
     /// 模板级的**原始保质期**天数（和 `noExpiry` 全局二选一）。
-    /// 原始保质期天数（天，允许小数）。
-    var originalDays: Double? = nil
+    var originalDays: Int? = nil
     /// ★ 绑定模板可以精确到**某个菜单路径**（如「康普茶一发 → 桃味」）。
     ///   空数组 = 绑整个模板。
     var sourceNodePath: [String] = []
@@ -177,10 +174,9 @@ struct CustomNode: Codable, Identifiable, Equatable {
     ///     · `noExpiry` = **无保质期**（原始保质期记 2099/12/31）
     ///   ★ 2026-10-20（用户）：「**无保质期**和**设原始保质期**可以都不选……或者只能二选一，
     ///     选择了其中一个，另外一个**在任何一个层级都是灰色**」→ 由编辑器全局判定。
-    /// 最佳使用时间天数（天，允许小数）。
-    var days: Double?
-    /// 原始保质期天数（天，允许小数；nil = 跟随最佳）
-    var originalDays: Double?
+    var days: Int?
+    /// 原始保质期天数（nil = 跟随最佳）
+    var originalDays: Int?
     /// 无保质期（原始保质期 = 2099/12/31）
     var noExpiry: Bool = false
     var children: [CustomNode] = []
@@ -348,15 +344,15 @@ extension CustomTemplate {
         iconColorName = try c.decodeIfPresent(String.self, forKey: .iconColorName) ?? "white"
         nodes = try c.decodeIfPresent([CustomNode].self, forKey: .nodes) ?? []
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-        defaultDays = try c.decodeIfPresent(Double.self, forKey: .defaultDays)
+        defaultDays = try c.decodeIfPresent(Int.self, forKey: .defaultDays)
         usePrep = try c.decodeIfPresent(Bool.self, forKey: .usePrep) ?? false
-        prepDays = try c.decodeIfPresent(Double.self, forKey: .prepDays) ?? 3
+        prepDays = try c.decodeIfPresent(Int.self, forKey: .prepDays) ?? 3
         needsManualName = try c.decodeIfPresent(Bool.self, forKey: .needsManualName) ?? true
         useSecondary = try c.decodeIfPresent(Bool.self, forKey: .useSecondary) ?? false
         sourceTemplateID = try c.decodeIfPresent(UUID.self, forKey: .sourceTemplateID)
         includeTemplateInTitle = try c.decodeIfPresent(Bool.self, forKey: .includeTemplateInTitle) ?? false
         noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
-        originalDays = try c.decodeIfPresent(Double.self, forKey: .originalDays)
+        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
         sourceNodePath = try c.decodeIfPresent([String].self, forKey: .sourceNodePath) ?? []
         titleParts = try c.decodeIfPresent([TitlePart].self, forKey: .titleParts) ?? []
         titleSeparator = try c.decodeIfPresent(String.self, forKey: .titleSeparator) ?? "-"
@@ -368,8 +364,8 @@ extension CustomNode {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
-        days = try c.decodeIfPresent(Double.self, forKey: .days)
-        originalDays = try c.decodeIfPresent(Double.self, forKey: .originalDays)
+        days = try c.decodeIfPresent(Int.self, forKey: .days)
+        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
         noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
         children = try c.decodeIfPresent([CustomNode].self, forKey: .children) ?? []
     }
