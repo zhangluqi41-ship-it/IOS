@@ -164,7 +164,7 @@ struct CustomTemplatePage: View {
                 }
 
                 if template.usePrep {
-                    Text("完成时间 = 现在 + \(template.prepDays) 天（制备天数）；"
+                    Text("完成时间 = 现在 + \(DurationFormat.short(days: template.prepDays, extraMinutes: template.prepExtraMinutes))（制备天数）；"
                          + "最佳使用时间按「最佳天数」自动填写，可手动改。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -444,9 +444,10 @@ struct CustomTemplatePage: View {
 
     /// 完成时间 = 现在 + 制备天数（制备模式专用）。
     private var completionDate: Date {
-        Calendar.current.date(byAdding: .day,
-                              value: max(1, template.prepDays),
-                              to: Date()) ?? Date()
+        // 天 + 额外分钟
+        let sec = Double(template.prepDays) * 86_400
+                + Double(template.prepExtraMinutes) * 60
+        return Date().addingTimeInterval(max(60, sec))
     }
 
     /// `yyyy/MM/dd HH:mm`，给"扫到的标签"那三行用。
@@ -522,7 +523,10 @@ struct CustomTemplatePage: View {
                                                       suffix: title,
                                                       now: now,
                                                       doneDays: template.usePrep ? template.prepDays
-                                                                                 : (template.defaultDays ?? 3),
+                                                                         : (template.defaultDays ?? 3),
+                                               doneExtraMinutes: template.usePrep
+                                                   ? template.prepExtraMinutes
+                                                   : template.defaultExtraMinutes,
                                                       sourceBestBefore: sourceBest,
                                                       bestDays: template.defaultDays ?? 0,
                                                       maker: makerFinal)
@@ -549,11 +553,10 @@ struct CustomTemplatePage: View {
         //     · `expireAt`  ← 制备型 = **完成时间**（决定"制作中 / 已完成制作"）
         //     · `bestBefore`← 始终是**最佳使用时间**（= 到期基准 / 倒计时 / 通知）
         let isPrep = template.usePrep || (template.useSecondary && scannedTitle != nil)
-        let completion = Calendar.current.date(
-            byAdding: .day,
-            value: max(1, template.usePrep ? template.prepDays : (template.defaultDays ?? 3)),
-            to: now
-        ) ?? now
+        let prepD = template.usePrep ? template.prepDays : (template.defaultDays ?? 3)
+        let prepM = template.usePrep ? template.prepExtraMinutes : template.defaultExtraMinutes
+        let completion = now.addingTimeInterval(
+            max(60, Double(prepD) * 86_400 + Double(prepM) * 60))
         let recordExpire = isPrep ? completion : expireDate
         // ★★★ 2026-10-22（用户截图：康普茶二发记录显示「今天到期」）——
         //   制备型的「最佳使用时间」**可以晚于完成时间**（完成 +3 天、最佳 +31 天），
