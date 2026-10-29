@@ -40,18 +40,12 @@ struct CustomTemplateEditor: View {
                         }
                     ))
 
-                    if let days = draft.defaultDays {
-                        Stepper(value: Binding(
-                            get: { days },
-                            set: { draft.defaultDays = max(1, $0) }
-                        ), in: 1...365) {
-                            HStack {
-                                Text("最佳天数")
-                                Spacer()
-                                Text("\(days) 天")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
+                    if draft.defaultDays != nil {
+                        DurationWheelRow(title: "最佳天数",
+                                         value: draft.defaultDays ?? 0,
+                                         allowsZero: false,
+                                         maxDays: 365) { v in
+                            draft.defaultDays = max(1.0 / 1440, v)
                         }
                     }
 
@@ -74,18 +68,12 @@ struct CustomTemplateEditor: View {
                     ))
                     .disabled(draft.usePrep || draft.useSecondary || anyNoExpiry)
 
-                    if let days = draft.originalDays {
-                        Stepper(value: Binding(
-                            get: { days },
-                            set: { draft.originalDays = max(1, $0) }
-                        ), in: 1...3650) {
-                            HStack {
-                                Text("原始天数")
-                                Spacer()
-                                Text("\(days) 天")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
+                    if draft.originalDays != nil {
+                        DurationWheelRow(title: "原始天数",
+                                         value: draft.originalDays ?? 0,
+                                         allowsZero: false,
+                                         maxDays: 3650) { v in
+                            draft.originalDays = max(1.0 / 1440, v)
                         }
                         .disabled(draft.usePrep || draft.useSecondary)
                     }
@@ -139,14 +127,12 @@ struct CustomTemplateEditor: View {
                     // ★★★ 2026-10-20（用户）：「开启制备功能后**没有需要制备的天数，
                     //   应该增加制备天数设置**」→ 制备版式的完成时间 = 制备 + prepDays。
                     if draft.usePrep {
-                        Stepper(value: $draft.prepDays, in: 1...365) {
-                            HStack {
-                                Text("制备天数")
-                                Spacer()
-                                Text("\(draft.prepDays) 天")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
+                        // ★ 2026-10-29：官方滚轮选「天/小时/分钟」，0 天 = 立即完成。
+                        DurationWheelRow(title: "制备天数",
+                                         value: draft.prepDays,
+                                         allowsZero: true,
+                                         maxDays: 365) { v in
+                            draft.prepDays = v
                         }
                     }
 
@@ -485,7 +471,7 @@ struct CustomTemplateEditor: View {
                 .foregroundStyle(row.node.name.isEmpty ? .secondary : .primary)
             Spacer(minLength: 8)
             if let days = row.node.days {
-                Text("\(days) 天")
+                Text(DurationFormat.short(days: days))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -621,17 +607,11 @@ struct CustomNodeSheet: View {
                         }
                     ))
                     if node.days != nil {
-                        Stepper(value: Binding(
-                            get: { node.days ?? 3 },
-                            set: { node.days = max(1, $0) }
-                        ), in: 1...365) {
-                            HStack {
-                                Text("最佳天数")
-                                Spacer()
-                                Text("\(node.days ?? 3) 天")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
+                        DurationWheelRow(title: "最佳天数",
+                                         value: node.days ?? 3,
+                                         allowsZero: false,
+                                         maxDays: 365) { v in
+                            node.days = max(1.0 / 1440, v)
                         }
                     }
                     // ★★★ 2026-10-20（用户）：「最佳使用时间下面**也增加无保质期和设原始保质期**，
@@ -645,18 +625,12 @@ struct CustomNodeSheet: View {
                     ))
                     .disabled(anyNoExpiry || templateLocksExpiry)
 
-                    if let days = node.originalDays {
-                        Stepper(value: Binding(
-                            get: { days },
-                            set: { node.originalDays = max(1, $0) }
-                        ), in: 1...3650) {
-                            HStack {
-                                Text("原始天数")
-                                Spacer()
-                                Text("\(days) 天")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
+                    if node.originalDays != nil {
+                        DurationWheelRow(title: "原始天数",
+                                         value: node.originalDays ?? 30,
+                                         allowsZero: false,
+                                         maxDays: 3650) { v in
+                            node.originalDays = max(1.0 / 1440, v)
                         }
                         .disabled(templateLocksExpiry)
                     }
@@ -677,7 +651,7 @@ struct CustomNodeSheet: View {
                                 TextField("未命名", text: $child.name)
                                 Spacer(minLength: 8)
                                 if let days = child.days {
-                                    Text("\(days) 天")
+                                    Text(DurationFormat.short(days: days))
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                 }
