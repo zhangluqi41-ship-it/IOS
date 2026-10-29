@@ -8,7 +8,8 @@ on:
 # ★ 构建失败时要把 .ci-error.log 推回仓库，必须给写权限
 #   （否则 GITHUB_TOKEN 默认只读，push 会被拒）。
 permissions:
-  contents: write
+  contents: read
+  issues: write
 
 jobs:
   # ---------------------------------------------------------------- 单元测试
@@ -109,17 +110,25 @@ jobs:
 
           exit "$status"
 
-      # ★ 失败时把错误日志提交回仓库（[skip ci] 避免递归触发）。
+      # ★ 失败时把错误日志发成一个 GitHub Issue —— 这是「无需任何额外权限就能读」的通道。
+      #   同一个 commit 重复失败会往同一个 issue 追加评论，不会刷出一堆 issue。
       - name: Publish error log
         if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
         run: |
           cd "$GITHUB_WORKSPACE"
           if [ ! -s .ci-error.log ]; then echo "无错误日志"; exit 0; fi
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@users.noreply.github.com"
-          git add -f .ci-error.log
-          git commit -m "ci: build error log [skip ci]" || exit 0
-          git push origin HEAD:main || echo "push 失败（可能无写权限）"
+          TITLE="CI 编译错误（自动，勿关）"
+          BODY=$(head -c 60000 .ci-error.log)
+          EXIST=$(gh issue list --search "$TITLE in:title" --state open --json number --jq '.[0].number // empty' 2>/dev/null)
+          if [ -n "$EXIST" ]; then
+            { echo "### $SHA"; echo '```'; echo "$BODY"; echo '```'; } | gh issue comment "$EXIST" --body-file - || true
+          else
+            { echo "每次构建失败都会在这里追加评论。"; echo; echo "### $SHA"; echo '```'; echo "$BODY"; echo '```'; } \
+              | gh issue create --title "$TITLE" --body-file - || true
+          fi
 
       - name: Patch Info.plist (scene manifest + 本地化 + 字体 + 缺失键)
         working-directory: swiftui
