@@ -298,7 +298,7 @@ struct CustomTemplatePage: View {
     /// ★★★ 2026-10-20（用户）：「设为**只有一个设最佳天数**……修改后台数据库逻辑」
     ///   ➜ 只有一个天数：模板级「设最佳使用时间」优先，否则按菜单层级继承。
     ///   ➜ 原始保质期不再单独设：无保质期 → 2099/12/31；否则与最佳一致。
-    private var appliedBestDays: Int? {
+    private var appliedBestDays: Double? {
         if let uniform = template.defaultDays { return uniform }
         let chain = chosenChain()
         guard !chain.isEmpty else { return nil }
@@ -409,7 +409,7 @@ struct CustomTemplatePage: View {
         title = makeTitle(chain: [])
         let name = materialName.trimmingCharacters(in: .whitespaces)
         if let days = template.defaultDays, days > 0, !name.isEmpty {
-            let due = Date().addingTimeInterval(max(60, days * 86_400))
+            let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
             expireDate = due
             bestDate = due
         }
@@ -478,7 +478,7 @@ struct CustomTemplatePage: View {
     }
 
     /// 原始保质期该用几天（模板级优先，其次按层级继承）。
-    private var appliedOriginalDays: Int? {
+    private var appliedOriginalDays: Double? {
         if let t = template.originalDays { return t }
         let chain = chosenChain()
         return chain.reversed().compactMap(\.originalDays).first

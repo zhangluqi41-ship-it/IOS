@@ -369,7 +369,7 @@ extension CustomNode {
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         days = try c.decodeIfPresent(Double.self, forKey: .days)
-        originalDays = try c.decodeIfPresent(Double.self, forKey: .originalDays)
+        originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays)
         noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
         children = try c.decodeIfPresent([CustomNode].self, forKey: .children) ?? []
     }

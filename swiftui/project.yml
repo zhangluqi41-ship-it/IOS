@@ -706,7 +706,7 @@ targets:
         # ★ 2026-10-19 第七批：自定义模板全套（并入 TemplateRoute.custom）+ 长按菜单 + 删除模式
         # ★ 2026-10-19 第八批：滑动顺序/用完不再隐藏/扫码不关相机+单广角/
         #   自定义模板单页+下拉菜单/编辑器一屏树形/天数单层+继承
-        CURRENT_PROJECT_VERSION: 141
+        CURRENT_PROJECT_VERSION: 142
         MARKETING_VERSION: 1.2.0
         # ★ 主 App 目标带这个宏；Widget 扩展带 EXPIRY_WIDGET。
         #   `Sources/Shared` 里的 `ExpiryActivityBridge` 靠它区分
