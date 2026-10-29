@@ -260,7 +260,17 @@ enum ExpiryActivityBridge {
     ///   肉类解冻记录同时挂着「完成时间」和「最佳使用时间」，记录级判据
     ///   会让后者的点击也"零操作"，而用户要求它标用完。
     static func markDone(recordID: String, milestoneLabel: String) {
-        ExpiryStore.shared.completeOrUse(byID: recordID, milestoneLabel: milestoneLabel)
+        // ★★★ 2026-10-29（用户）：
+        //   「『完成时间』的到点灵动岛，按钮名称改为**"已知道"**，点击后**不做任何操作**」
+        //   「"制作是否完成"跟灵动岛没关系……**过了完成时间就应该马上移动到已完成制作**，
+        //     这个是不需要人为操作的。因为人操作的只有**"用完"和"删除"**」。
+        //
+        //   ➜ 完成时间这条里程碑：点按钮**只收掉灵动岛**，记录一个字段都不改
+        //     （"已完成制作"由 `SummaryView` 按**时间**自动判定，与点击无关）。
+        //   ➜ 其余里程碑（最佳使用时间 / 原始保质期）：仍走 `completeOrUse` = 标用完。
+        if milestoneLabel != ExpiryActivityAttributes.completionMilestoneLabel {
+            ExpiryStore.shared.completeOrUse(byID: recordID, milestoneLabel: milestoneLabel)
+        }
         Task { await ExpiryActivityManager.shared.end(recordID: recordID) }
     }
 

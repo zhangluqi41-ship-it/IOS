@@ -681,20 +681,45 @@ private struct ActionButtons: View {
             //   ⚠️ Intent 里必须把 `milestoneLabel` 一起带回主 App ——
             //     点击行为也按里程碑判（见 `ExpiryStore.completeOrUse`）；
             //     光看记录会把肉类解冻的「最佳使用时间」也判成零操作（用户纠的点）。
-            Button(intent: ExpiryMarkDoneIntent(recordID: attributes.recordID,
-                                                milestoneLabel: attributes.milestoneLabel)) {
-                Label(isCompletion ? "已完成" : "已完成使用",
-                      systemImage: "checkmark.circle.fill")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
-                    // ★ 半透明绿底（保留「完成」的颜色语义）+ `.plain` 保证只有这一层。
-                    .background(Self.buttonFillDone, in: Capsule())
+            // ★★★ 2026-10-29（用户）：
+            //   「『完成时间』对应的两个灵动岛：1、倒计时灵动岛，**删除"已完成"按钮**，
+            //     灵动岛不会自动操作效期到已完成制作（因为现在会自动点完成制作）；
+            //     2、到点灵动岛按钮名称改为**"已知道"**，点击后**不做任何操作**」。
+            //
+            //   ➜ 完成时间这条里程碑：**倒计时态一个按钮都不给**（它只是倒计时，
+            //     没有"确认完成"这个动作需要用户做）；到点态只给一个「已知道」，
+            //     点下去仅收掉灵动岛，**记录数据一个字段都不改**。
+            //     真正决定"制作完成与否"的是**时间**（见 `SummaryView` 的
+            //     `inProgress/finished`：完成时间到点即自动归入"已完成制作"）。
+            if isCompletion {
+                if state.countdownInterval == nil {
+                    Button(intent: ExpiryMarkDoneIntent(recordID: attributes.recordID,
+                                                        milestoneLabel: attributes.milestoneLabel)) {
+                        Label("已知道", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
+                            .background(Self.buttonFillDone, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                Button(intent: ExpiryMarkDoneIntent(recordID: attributes.recordID,
+                                                    milestoneLabel: attributes.milestoneLabel)) {
+                    Label("已完成使用", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: Self.buttonMinHeight)
+                        .background(Self.buttonFillDone, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             // ★ 「稍后提醒」只在**到点后**且**不是完成时间**时出现。
             //   · 判据与倒计时**同源**（`countdownInterval == nil`）——

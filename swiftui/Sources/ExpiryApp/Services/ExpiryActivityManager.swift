@@ -689,8 +689,11 @@ final class ExpiryActivityManager {
         //   不存在的按钮 —— 「完成时间」现在只有一个「已完成」（没有「稍后提醒」，
         //   见 `ExpiryStore.registerCategories` 与灵动岛的 `ActionButtons`）。
         let isCompletion = attrs.milestoneLabel == ExpiryActivityAttributes.completionMilestoneLabel
+        // ★ 2026-10-29（用户）：「完成时间」到点只是**通知一声**，
+        //   不需要用户在灵动岛上做任何确认（制作完成与否由时间自动判定）。
+        //   → 文案不再点名「已完成」按钮，到点上的按钮也已经叫「已知道」。
         let alertBody = isCompletion
-            ? "\(attrs.milestoneLabel)已到，请在灵动岛上点「已完成」。"
+            ? "\(attrs.milestoneLabel)已到。"
             : "\(attrs.milestoneLabel)已到，请在灵动岛上点「已完成使用」或「稍后提醒」。"
         let alert = AlertConfiguration(
             title: "\(attrs.title)",
