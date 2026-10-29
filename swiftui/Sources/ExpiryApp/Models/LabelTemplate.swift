@@ -311,9 +311,9 @@ enum LabelTemplate {
     /// ★ 2026-10-19（用户）：「使用制备功能」开启后用这个，和康普茶一发同构。
     static func buildCustomPrep(title: String, now: Date, doneDays: Double,
                                bestBefore: Date, maker: String) -> LabelData {
-        // ⚠️ `Calendar.date(byAdding: .day, value:)` 的 value 只能是 Int，
-        //   而制备天数现在允许小数（0.5 天 = 12 小时）→ 一律换算成**秒**再加。
-        //   中国无夏令时，秒加与日历加法等价；最小 1 分钟，避免 0 天时"完成时间=制备时间"完全重合。
+        // ⚠️ `date(byAdding: .day, value:)` 的 value 只能是 Int；制备天数允许小数
+        //   （0.5 天 = 12 小时）→ 一律换算成**秒**加。中国无夏令时，两种加法等价。
+        //   下限 1 分钟：0 天时"完成时间"与"制备时间"完全重合没有意义。
         let done = now.addingTimeInterval(max(60, doneDays * 86_400))
         // ★★★ 2026-10-22（用户）：「这个标签设置最佳使用时间，**数据 +1 个月是对的，但是打印时间不对**，
         //   后台数据又是对的」——

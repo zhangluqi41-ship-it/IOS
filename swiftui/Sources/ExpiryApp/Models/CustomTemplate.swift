@@ -40,8 +40,7 @@ struct CustomTemplate: Codable, Identifiable, Equatable {
     /// ★ 2026-10-19（用户）：「这一项（模板名称）**也可以设置一个建议时间**」
     ///     下属各层不再设时间；打印时没选到具体天数就用它兜底。
     /// 模板级统一的**最佳使用时间**天数（没建菜单时用；建了菜单就按各级的 `days`）。
-    /// 默认天数。**单位是「天」，允许小数**（0.5 = 12 小时，5 分钟 = 5/1440 天）。
-    /// 旧 JSON 里的整数 `3` 由 `JSONDecoder` 直接解成 `3.0`，无需迁移。
+    /// 天数。**单位「天」，允许小数**（0.5 = 12 小时；5 分钟 = 5/1440 天）。
     var defaultDays: Double? = nil
     /// ★ 2026-10-19（用户）：「使用制备功能」——
     ///   开启后标签改用「制备时间 / 完成时间 / 最佳使用时间」三行（同康普茶一发）。
@@ -178,7 +177,7 @@ struct CustomNode: Codable, Identifiable, Equatable {
     ///     · `noExpiry` = **无保质期**（原始保质期记 2099/12/31）
     ///   ★ 2026-10-20（用户）：「**无保质期**和**设原始保质期**可以都不选……或者只能二选一，
     ///     选择了其中一个，另外一个**在任何一个层级都是灰色**」→ 由编辑器全局判定。
-    /// 最佳使用时间天数（天，允许小数：0.5 = 12 小时）。
+    /// 最佳使用时间天数（天，允许小数）。
     var days: Double?
     /// 原始保质期天数（天，允许小数；nil = 跟随最佳）
     var originalDays: Double?
@@ -349,19 +348,15 @@ extension CustomTemplate {
         iconColorName = try c.decodeIfPresent(String.self, forKey: .iconColorName) ?? "white"
         nodes = try c.decodeIfPresent([CustomNode].self, forKey: .nodes) ?? []
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-        defaultDays = try c.decodeIfPresent(Int.self, forKey: .defaultDays)
+        defaultDays = try c.decodeIfPresent(Double.self, forKey: .defaultDays)
         usePrep = try c.decodeIfPresent(Bool.self, forKey: .usePrep) ?? false
-        prepDays = try c.decodeIfPresent(Int.self, forKey: .prepDays) ?? 3
+        prepDays = try c.decodeIfPresent(Double.self, forKey: .prepDays) ?? 3
         needsManualName = try c.decodeIfPresent(Bool.self, forKey: .needsManualName) ?? true
         useSecondary = try c.decodeIfPresent(Bool.self, forKey: .useSecondary) ?? false
         sourceTemplateID = try c.decodeIfPresent(UUID.self, forKey: .sourceTemplateID)
         includeTemplateInTitle = try c.decodeIfPresent(Bool.self, forKey: .includeTemplateInTitle) ?? false
         noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
-        if let v = try? c.decodeIfPresent(Double.self, forKey: .originalDays) {
-            originalDays = v
-        } else {
-            originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays).map(Double.init)
-        }
+        originalDays = try c.decodeIfPresent(Double.self, forKey: .originalDays)
         sourceNodePath = try c.decodeIfPresent([String].self, forKey: .sourceNodePath) ?? []
         titleParts = try c.decodeIfPresent([TitlePart].self, forKey: .titleParts) ?? []
         titleSeparator = try c.decodeIfPresent(String.self, forKey: .titleSeparator) ?? "-"
@@ -373,18 +368,8 @@ extension CustomNode {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
-        // ⚠️ 先按 Double 读（JSON 数字无整数/浮点之分，`3` 也能读成 3.0）；
-        //   万一历史上存过字符串或其它形式，再退回 Int 兜一次。
-        if let v = try? c.decodeIfPresent(Double.self, forKey: .days) {
-            days = v
-        } else {
-            days = try c.decodeIfPresent(Int.self, forKey: .days).map(Double.init)
-        }
-        if let v = try? c.decodeIfPresent(Double.self, forKey: .originalDays) {
-            originalDays = v
-        } else {
-            originalDays = try c.decodeIfPresent(Int.self, forKey: .originalDays).map(Double.init)
-        }
+        days = try c.decodeIfPresent(Double.self, forKey: .days)
+        originalDays = try c.decodeIfPresent(Double.self, forKey: .originalDays)
         noExpiry = try c.decodeIfPresent(Bool.self, forKey: .noExpiry) ?? false
         children = try c.decodeIfPresent([CustomNode].self, forKey: .children) ?? []
     }

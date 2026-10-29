@@ -162,6 +162,11 @@ import SwiftUI
 struct LabelDatePicker: View {
     let title: String
     @Binding var date: Date
+    /// ★ 2026-10-29（用户）：「在现有日期上增加右边的时间」——
+    ///   `false`（默认）只选日期、值压到当天 0 点（原有行为，不动）；
+    ///   `true` 额外给一个时/分选择器（官方 `DatePicker(.hourAndMinute)` 滚轮），
+    ///   日期部分仍按天，时间部分保留。
+    var showsTime: Bool = false
 
     /// 日历浮层是否展开。
     ///
@@ -176,8 +181,23 @@ struct LabelDatePicker: View {
     /// 统一压到 0 点后：比较稳定、写入语义干净、`onChange` 的「值变了」判据才准确。
     private var day: Binding<Date> {
         Binding(
-            get: { AppCalendar.shared.startOfDay(for: date) },
-            set: { date = $0 }
+            get: {
+                // 只有「纯日期」模式才把值压到 0 点；带时分时原样保留。
+                showsTime ? date : AppCalendar.shared.startOfDay(for: date)
+            },
+            set: { newValue in
+                if showsTime {
+                    // 日期网格改动时，保留原有的时/分（否则每次点日期都会把时间归零）。
+                    let cal = AppCalendar.shared
+                    let time = cal.dateComponents([.hour, .minute], from: date)
+                    date = cal.date(bySettingHour: time.hour ?? 0,
+                                    minute: time.minute ?? 0,
+                                    second: 0,
+                                    of: newValue) ?? newValue
+                } else {
+                    date = newValue
+                }
+            }
         )
     }
 
@@ -189,6 +209,10 @@ struct LabelDatePicker: View {
     ///   会输出「2026年10月30日」，不是用户要的斜杠形式。
     private static let slashy = Date.FormatStyle(date: .numeric, time: .omitted)
         .year().month().day()
+
+    /// `2026/10/30 14:30`（带时分的行用它）。
+    private static let slashyTime = Date.FormatStyle(date: .numeric, time: .shortened)
+        .year().month().day().hour().minute()
 
     var body: some View {
         // ★★★ 关键结构：**外层是满宽容器，`.popover` 挂在容器上**（不挂在 `Button` 上）。
@@ -208,9 +232,15 @@ struct LabelDatePicker: View {
                         .foregroundStyle(.primary)
                     Spacer(minLength: 8)
                     // ★ 日期文字 = **系统标签色**（浅色下黑、深色下白），不是品牌蓝。
-                    Text(day.wrappedValue, format: Self.slashy)
-                        .foregroundStyle(.primary)
-                        .monospacedDigit()
+                    if showsTime {
+                        Text(date, format: Self.slashyTime)
+                            .foregroundStyle(.primary)
+                            .monospacedDigit()
+                    } else {
+                        Text(day.wrappedValue, format: Self.slashy)
+                            .foregroundStyle(.primary)
+                            .monospacedDigit()
+                    }
                 }
                 // ★ 撑满矩形，保证整行都能点中。
                 .contentShape(Rectangle())
@@ -230,9 +260,34 @@ struct LabelDatePicker: View {
         //   ⚠️ **不改 `attachmentAnchor`**，保持默认 `.rect(.bounds)` ——
         //      锚点 = 上面那个满宽容器的 bounds。
         .popover(isPresented: $showing) {
-            DatePicker(title, selection: day, displayedComponents: .date)
-                .datePickerStyle(.graphical)
-                .labelsHidden()
+            VStack(spacing: 8) {
+                DatePicker(title, selection: day, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+
+                // ★ 2026-10-29（用户要「右边的时间」）：同一个 popover 里再放一个
+                //   官方时/分滚轮。`hourAndMinute` 在 iOS 上就是那个滚轮外观。
+                //   ⚠️ 只改 `date` 的时/分，不动日期部分。
+                if showsTime {
+                    DatePicker("时间",
+                               selection: Binding(
+                                get: { date },
+                                set: { picked in
+                                    let cal = AppCalendar.shared
+                                    let t = cal.dateComponents([.hour, .minute], from: picked)
+                                    date = cal.date(bySettingHour: t.hour ?? 0,
+                                                    minute: t.minute ?? 0,
+                                                    second: 0,
+                                                    of: date) ?? picked
+                                }
+                               ),
+                               displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .frame(width: 320)
+                        .frame(height: 120)
+                        .clipped()
+                }
+            }
                 // ★★★ 第二十六轮的**真凶**：popover 内容必须**显式给宽度**！
                 //
                 //   实测现象（用户截图）：浮层变成一条 ~120pt 的**竖向细条**，
@@ -247,7 +302,6 @@ struct LabelDatePicker: View {
                 //
                 //   ➜ 社区通行且实测有效的写法：给日历一个 `.frame(width: 320)`。
                 //     （这是"给系统一个尺寸建议"的正规用法，不是自造控件。）
-                .frame(width: 320)
                 .padding()
                 .presentationCompactAdaptation(.popover)
                 .onChange(of: day.wrappedValue) { oldValue, newValue in

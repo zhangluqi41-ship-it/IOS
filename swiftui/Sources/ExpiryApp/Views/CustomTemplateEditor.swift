@@ -129,7 +129,7 @@ struct CustomTemplateEditor: View {
                     // ★★★ 2026-10-20（用户）：「开启制备功能后**没有需要制备的天数，
                     //   应该增加制备天数设置**」→ 制备版式的完成时间 = 制备 + prepDays。
                     if draft.usePrep {
-                        // ★ 2026-10-29（用户）：改成官方滚轮选「天/小时/分钟」，0 天 = 立即完成。
+                        // ★ 2026-10-29：官方滚轮选「天/小时/分钟」，0 天 = 立即完成。
                         DurationWheelRow(title: "制备天数",
                                          days: $draft.prepDays,
                                          allowsZero: true,

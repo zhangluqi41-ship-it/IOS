@@ -149,7 +149,7 @@ struct CustomTemplatePage: View {
                         .disabled(true)
                 } else {
                     // 二次制备 / 无保质期：原始保质期不允许改。
-                    LabelDatePicker(title: "原始保质期", date: $expireDate)
+                    LabelDatePicker(title: "原始保质期", date: $expireDate, showsTime: true)
                         .disabled(usesSourceExpire || isNoExpiry)
                     if !usesSourceExpire && !isNoExpiry {
                         QuickDateChips(selection: $expireDate)
@@ -157,7 +157,7 @@ struct CustomTemplatePage: View {
                 }
 
                 // ★ 无保质期时，最佳使用时间也固定为 2099/12/31（不可改）。
-                LabelDatePicker(title: "最佳使用时间", date: $bestDate)
+                LabelDatePicker(title: "最佳使用时间", date: $bestDate, showsTime: true)
                     .disabled(isNoExpiry)
                 if !isNoExpiry {
                     QuickDateChips(selection: $bestDate)
@@ -226,7 +226,7 @@ struct CustomTemplatePage: View {
                 expireDate = resolvedExpireDate(fallback: sourceBest)
             } else if let days = appliedBestDays, days > 0,
                       bestDate <= Date().addingTimeInterval(60) {
-                let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? bestDate
+                let due = Date().addingTimeInterval(max(60, days * 86_400))
                 bestDate = due
                 expireDate = resolvedExpireDate(fallback: due)
             } else if bestDate <= Date().addingTimeInterval(60) {
@@ -308,7 +308,7 @@ struct CustomTemplatePage: View {
     /// 点「按推荐填日期」：把两个日期重置成「今天 + 推荐天数」。
     private func applyRecommendedDates() {
         guard let days = appliedBestDays, days > 0 else { return }
-        let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+        let due = Date().addingTimeInterval(max(60, days * 86_400))
         withAnimation(.default) {
             bestDate = due
             expireDate = resolvedExpireDate(fallback: due)
@@ -409,7 +409,7 @@ struct CustomTemplatePage: View {
         title = makeTitle(chain: [])
         let name = materialName.trimmingCharacters(in: .whitespaces)
         if let days = template.defaultDays, days > 0, !name.isEmpty {
-            let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+            let due = Date().addingTimeInterval(max(60, days * 86_400))
             expireDate = due
             bestDate = due
         }
@@ -427,7 +427,7 @@ struct CustomTemplatePage: View {
         }
         title = makeTitle(chain: chain)
         if let best = appliedBestDays, best > 0 {
-            let due = Calendar.current.date(byAdding: .day, value: best, to: Date()) ?? Date()
+            let due = Date().addingTimeInterval(max(60, best * 86_400))
             bestDate = due
             expireDate = resolvedExpireDate(fallback: due)
         }
@@ -444,7 +444,7 @@ struct CustomTemplatePage: View {
 
     /// 完成时间 = 现在 + 制备天数（制备模式专用）。
     private var completionDate: Date {
-        // ⚠️ `byAdding: .day` 只吃 Int；制备天数允许小数 → 用秒加（最小 1 分钟）。
+        // ⚠️ `byAdding: .day` 只吃 Int；制备天数允许小数 → 用秒加（下限 1 分钟）。
         Date().addingTimeInterval(max(60, template.prepDays * 86_400))
     }
 
@@ -473,7 +473,7 @@ struct CustomTemplatePage: View {
         //   因为他是在**创建模板时设定的**」→ 只看模板/节点配置，页面不再有临时开关。
         if isNoExpiry { return Self.farFutureDate }
         if let orig = appliedOriginalDays, orig > 0 {
-            return Calendar.current.date(byAdding: .day, value: orig, to: Date()) ?? fallback
+            return Date().addingTimeInterval(max(60, orig * 86_400))
         }
         return fallback
     }
@@ -549,7 +549,7 @@ struct CustomTemplatePage: View {
         //     · `bestBefore`← 始终是**最佳使用时间**（= 到期基准 / 倒计时 / 通知）
         let isPrep = template.usePrep || (template.useSecondary && scannedTitle != nil)
         // ⚠️ 同上：小数天 → 秒加。
-        let prepDaysValue = template.usePrep
+        let prepDaysValue: Double = template.usePrep
             ? template.prepDays
             : (template.defaultDays ?? 3)
         let completion = now.addingTimeInterval(max(60, prepDaysValue * 86_400))
