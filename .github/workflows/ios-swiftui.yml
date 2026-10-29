@@ -5,6 +5,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# ★ 构建失败时要把 .ci-error.log 推回仓库，必须给写权限
+#   （否则 GITHUB_TOKEN 默认只读，push 会被拒）。
+permissions:
+  contents: write
+
 jobs:
   # ---------------------------------------------------------------- 单元测试
   # ★ 独立成一个 job 并且**不加 continue-on-error**：
