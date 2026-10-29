@@ -43,12 +43,12 @@ struct CustomTemplateEditor: View {
                     if let days = draft.defaultDays {
                         Stepper(value: Binding(
                             get: { days },
-                            set: { draft.defaultDays = max(1, $0) }
-                        ), in: 1...365) {
+                            set: { draft.defaultDays = max(1.0, $0) }
+                        ), in: 1.0...365.0) {
                             HStack {
                                 Text("最佳天数")
                                 Spacer()
-                                Text("\(days) 天")
+                                Text(DurationFormat.short(days: days))
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
@@ -77,12 +77,12 @@ struct CustomTemplateEditor: View {
                     if let days = draft.originalDays {
                         Stepper(value: Binding(
                             get: { days },
-                            set: { draft.originalDays = max(1, $0) }
-                        ), in: 1...3650) {
+                            set: { draft.originalDays = max(1.0, $0) }
+                        ), in: 1.0...3650.0) {
                             HStack {
                                 Text("原始天数")
                                 Spacer()
-                                Text("\(days) 天")
+                                Text(DurationFormat.short(days: days))
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
@@ -139,11 +139,11 @@ struct CustomTemplateEditor: View {
                     // ★★★ 2026-10-20（用户）：「开启制备功能后**没有需要制备的天数，
                     //   应该增加制备天数设置**」→ 制备版式的完成时间 = 制备 + prepDays。
                     if draft.usePrep {
-                        Stepper(value: $draft.prepDays, in: 1...365) {
+                        Stepper(value: $draft.prepDays, in: 1.0...365.0) {
                             HStack {
                                 Text("制备天数")
                                 Spacer()
-                                Text("\(draft.prepDays) 天")
+                                Text(DurationFormat.short(days: draft.prepDays))
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
@@ -485,7 +485,7 @@ struct CustomTemplateEditor: View {
                 .foregroundStyle(row.node.name.isEmpty ? .secondary : .primary)
             Spacer(minLength: 8)
             if let days = row.node.days {
-                Text("\(days) 天")
+                Text(DurationFormat.short(days: days))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -623,12 +623,12 @@ struct CustomNodeSheet: View {
                     if node.days != nil {
                         Stepper(value: Binding(
                             get: { node.days ?? 3 },
-                            set: { node.days = max(1, $0) }
-                        ), in: 1...365) {
+                            set: { node.days = max(1.0, $0) }
+                        ), in: 1.0...365.0) {
                             HStack {
                                 Text("最佳天数")
                                 Spacer()
-                                Text("\(node.days ?? 3) 天")
+                                Text(DurationFormat.short(days: node.days ?? 3))
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
@@ -648,12 +648,12 @@ struct CustomNodeSheet: View {
                     if let days = node.originalDays {
                         Stepper(value: Binding(
                             get: { days },
-                            set: { node.originalDays = max(1, $0) }
-                        ), in: 1...3650) {
+                            set: { node.originalDays = max(1.0, $0) }
+                        ), in: 1.0...3650.0) {
                             HStack {
                                 Text("原始天数")
                                 Spacer()
-                                Text("\(days) 天")
+                                Text(DurationFormat.short(days: days))
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
@@ -677,7 +677,7 @@ struct CustomNodeSheet: View {
                                 TextField("未命名", text: $child.name)
                                 Spacer(minLength: 8)
                                 if let days = child.days {
-                                    Text("\(days) 天")
+                                    Text(DurationFormat.short(days: days))
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                 }

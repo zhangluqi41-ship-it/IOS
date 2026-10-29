@@ -164,7 +164,7 @@ struct CustomTemplatePage: View {
                 }
 
                 if template.usePrep {
-                    Text("完成时间 = 现在 + \(template.prepDays) 天（制备天数）；"
+                    Text("完成时间 = 现在 + \(DurationFormat.short(days: template.prepDays))（制备天数）；"
                          + "最佳使用时间按「最佳天数」自动填写，可手动改。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -226,7 +226,7 @@ struct CustomTemplatePage: View {
                 expireDate = resolvedExpireDate(fallback: sourceBest)
             } else if let days = appliedBestDays, days > 0,
                       bestDate <= Date().addingTimeInterval(60) {
-                let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? bestDate
+                let due = Date().addingTimeInterval(max(60, days * 86_400))
                 bestDate = due
                 expireDate = resolvedExpireDate(fallback: due)
             } else if bestDate <= Date().addingTimeInterval(60) {
@@ -308,7 +308,7 @@ struct CustomTemplatePage: View {
     /// 点「按推荐填日期」：把两个日期重置成「今天 + 推荐天数」。
     private func applyRecommendedDates() {
         guard let days = appliedBestDays, days > 0 else { return }
-        let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+        let due = Date().addingTimeInterval(max(60, days * 86_400))
         withAnimation(.default) {
             bestDate = due
             expireDate = resolvedExpireDate(fallback: due)
@@ -409,7 +409,7 @@ struct CustomTemplatePage: View {
         title = makeTitle(chain: [])
         let name = materialName.trimmingCharacters(in: .whitespaces)
         if let days = template.defaultDays, days > 0, !name.isEmpty {
-            let due = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+            let due = Date().addingTimeInterval(max(60, days * 86_400))
             expireDate = due
             bestDate = due
         }
@@ -427,7 +427,7 @@ struct CustomTemplatePage: View {
         }
         title = makeTitle(chain: chain)
         if let best = appliedBestDays, best > 0 {
-            let due = Calendar.current.date(byAdding: .day, value: best, to: Date()) ?? Date()
+            let due = Date().addingTimeInterval(max(60, best * 86_400))
             bestDate = due
             expireDate = resolvedExpireDate(fallback: due)
         }
@@ -444,9 +444,7 @@ struct CustomTemplatePage: View {
 
     /// 完成时间 = 现在 + 制备天数（制备模式专用）。
     private var completionDate: Date {
-        Calendar.current.date(byAdding: .day,
-                              value: max(1, template.prepDays),
-                              to: Date()) ?? Date()
+        Date().addingTimeInterval(max(60, template.prepDays * 86_400))
     }
 
     /// `yyyy/MM/dd HH:mm`，给"扫到的标签"那三行用。
@@ -474,7 +472,7 @@ struct CustomTemplatePage: View {
         //   因为他是在**创建模板时设定的**」→ 只看模板/节点配置，页面不再有临时开关。
         if isNoExpiry { return Self.farFutureDate }
         if let orig = appliedOriginalDays, orig > 0 {
-            return Calendar.current.date(byAdding: .day, value: orig, to: Date()) ?? fallback
+            return Date().addingTimeInterval(max(60, orig * 86_400))
         }
         return fallback
     }
@@ -549,11 +547,10 @@ struct CustomTemplatePage: View {
         //     · `expireAt`  ← 制备型 = **完成时间**（决定"制作中 / 已完成制作"）
         //     · `bestBefore`← 始终是**最佳使用时间**（= 到期基准 / 倒计时 / 通知）
         let isPrep = template.usePrep || (template.useSecondary && scannedTitle != nil)
-        let completion = Calendar.current.date(
-            byAdding: .day,
-            value: max(1, template.usePrep ? template.prepDays : (template.defaultDays ?? 3)),
-            to: now
-        ) ?? now
+        let prepDaysValue: Double = template.usePrep
+            ? template.prepDays
+            : (template.defaultDays ?? 3)
+        let completion = now.addingTimeInterval(max(60, prepDaysValue * 86_400))
         let recordExpire = isPrep ? completion : expireDate
         // ★★★ 2026-10-22（用户截图：康普茶二发记录显示「今天到期」）——
         //   制备型的「最佳使用时间」**可以晚于完成时间**（完成 +3 天、最佳 +31 天），
