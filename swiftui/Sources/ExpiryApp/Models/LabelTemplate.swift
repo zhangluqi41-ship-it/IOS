@@ -309,9 +309,12 @@ enum LabelTemplate {
     /// 自定义模板的「制备版式」：制备时间 / 完成时间 / 最佳使用时间。
     ///
     /// ★ 2026-10-19（用户）：「使用制备功能」开启后用这个，和康普茶一发同构。
-    static func buildCustomPrep(title: String, now: Date, doneDays: Int,
+    static func buildCustomPrep(title: String, now: Date, doneDays: Double,
                                bestBefore: Date, maker: String) -> LabelData {
-        let done = AppCalendar.shared.date(byAdding: .day, value: max(1, doneDays), to: now) ?? now
+        // ⚠️ `Calendar.date(byAdding: .day, value:)` 的 value 只能是 Int，
+        //   而制备天数现在允许小数（0.5 天 = 12 小时）→ 一律换算成**秒**再加。
+        //   中国无夏令时，秒加与日历加法等价；最小 1 分钟，避免 0 天时"完成时间=制备时间"完全重合。
+        let done = now.addingTimeInterval(max(60, doneDays * 86_400))
         // ★★★ 2026-10-22（用户）：「这个标签设置最佳使用时间，**数据 +1 个月是对的，但是打印时间不对**，
         //   后台数据又是对的」——
         //   真因：这里原来有一句 `let best = min(bestBefore, done)`，
@@ -338,18 +341,17 @@ enum LabelTemplate {
     /// ★ 2026-10-19（用户）：「扫描二维码二次制备」——扫原标签后续做，
     ///   完成 = **扫描时刻 + `doneDays`**，最佳使用时间**沿用原标签**（和康普茶二发一致）。
     static func buildCustomSecondary(sourceTitle: String, suffix: String, now: Date,
-                                     doneDays: Int, sourceBestBefore: Date,
-                                     bestDays: Int = 0,
+                                     doneDays: Double, sourceBestBefore: Date,
+                                     bestDays: Double = 0,
                                      maker: String) -> LabelData {
-        let done = AppCalendar.shared.date(byAdding: .day,
-                                           value: max(1, doneDays), to: now) ?? now
+        let done = now.addingTimeInterval(max(60, doneDays * 86_400))
         // ★★★ 2026-10-22（用户）：「新解冻制备功能开启，**最佳使用时间应该是 +3 天，这里只 +1 天**」
         //   ➜ 最佳使用时间**按模板的「最佳天数」重新算**（现在 + bestDays），
         //     不再"承接原标签"（那是"原始保质期"的职责）。
         //     `bestDays <= 0` 时才退回原来的 min(原标签最佳, 完成时间)。
         let best: Date
         if bestDays > 0 {
-            best = AppCalendar.shared.date(byAdding: .day, value: bestDays, to: now) ?? now
+            best = now.addingTimeInterval(max(60, bestDays * 86_400))
         } else {
             // ★★★ 2026-10-22（用户截图）：康普茶二发**没设最佳天数**时，
             //   原来 `min(源最佳, 完成)` 把 11/22 压成 10/25（完成那天）→ 打印错。
